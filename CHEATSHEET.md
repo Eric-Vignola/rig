@@ -67,6 +67,7 @@ of rig names the cgmath commit it was verified on here and in
 | 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, several files in one namespace, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
 | 41 | [`rig.exec`: a string of code as if in a fresh Python](#41-rigexec-a-string-of-code-as-if-in-a-fresh-python) | `rig.exec(source, inputs, argv=, shared=)`: the code as `python -c` runs it, dedented first, the session's `sys.path`, `rig.run`'s imports and `Run`, one undo step named after the first line, outside `__all__` |
 | 42 | [A cgmath Scene in Maya](#42-a-cgmath-scene-in-maya) | `rig.load_scene(path)` and `rig.create_scene(scene)`: the nodes, each mesh, its blendShape and its skin, then the take; any number of copies, `uuids=True` for the data's uuids; the steps by hand (`Mesh` / `BlendShape` / `SkinCluster.create(item)`, `node.key_hierarchy(clip)`), what is left out |
+| 43 | [`rig.fuse()`: math in one node](#43-rigfuse-math-in-one-node) | `with rig.fuse():` and `set_options(fuse=True)`: scalar and vector math as a `Fused` value, compiled into `rigExpr` nodes when it is connected or used; what joins a node, what fuses, numpy's rules, the rigExpr plug-in, one undo step |
 
 ---
 
@@ -1700,7 +1701,8 @@ from rig import ContainerOptions, get_options, set_options
 print(get_options())
 # {'create_containers': True, 'use_shorthand': True, 'skip_selection': True, 'cleanup_on_exit': False,
 #  'cleanup_tags': False, 'maya_version': None, 'flatten_containers': True, 'publish_attributes': True,
-#  'absorb_unit_conversions': False, 'native_multi_publish': False, 'constant_folding': True}
+#  'absorb_unit_conversions': False, 'native_multi_publish': False, 'constant_folding': True,
+#  'fuse': False}
 set_options(create_containers=False)          # every with container(): becomes scope-only
 with container("ghost") as ghost:
     Node.create("transform", name="free")
@@ -4323,6 +4325,106 @@ has no class for them) and materials (a later release; the shapes join
 `initialShadingGroup`). A mesh with targets of two blendShape deformers is
 refused (`BlendShape.create(mesh, item, deformer=...)` builds each), and so
 is a skin in a scene of takes alone (no bind pose to bind at).
+
+## 43. `rig.fuse()`: math in one node
+
+Prototype. Inside `with rig.fuse():`, rig's scalar and vector math builds no
+node: an operator or a math function given plugs (scalars or vectors), numbers
+or fused values returns a `rig.Fused` value, an expression. It becomes a plug
+when rig needs one: when it is connected (`plug << value`, a List or a Node
+`<<`), given to a function that does not fuse, put in a List, or read
+(`str()`, `.get()`). rig then compiles it into a `rigExpr` node, the rigExpr
+plug-in's: one node computes a whole chain of math, and the Attribute
+Editor's Notes show what it computes.
+
+```python
+import rig
+from maya import cmds
+from rig import Node, condition, functions as F, vector as V
+
+cmds.file(new=True, force=True)
+a = Node.create("transform", name="a")
+b = Node.create("transform", name="b")
+out = Node.create("transform", name="out")
+far = Node.create("transform", name="far")
+a.t << [1.5, -2, 3.25]
+b.t << [0.5, 4, -1]
+
+with rig.fuse("demo"):
+    u = (a.tx * 2 + b.ty) * F.rev(a.sx * 0.5)   # a Fused value: no node yet
+    print(repr(u))           # Fused(scalar: (((a.translateX * 2) + b.translateY) * rev((a.scaleX * 0.5))))
+    out.tx << u                                   # one node now: demo_fused1
+    out.ty << condition(u > 3, a.ty, u)           # uses u: joins demo_fused1
+    far.t << V.normalize(a.t - b.t) * F.clamp(u, 0, 5)   # joins it too
+
+print(cmds.ls(type="rigExpr"))                    # ['demo_fused1']
+print(cmds.getAttr("out.ty"), cmds.getAttr("far.ty"))   # -2.0 -2.830031906222678
+print(cmds.getAttr("demo_fused1.notes").splitlines()[-1])
+# vectorOut[0] = (normalize((a.translate - b.translate)) * clamp(scalarOut[0], 0, 5))
+```
+
+Where a value goes:
+
+* values materialized together (the fused arguments of one call, the fused
+  elements of one list) go into one node;
+* a value joins the node made just before it when it uses what that node
+  computes and no input it adds is downstream of that node (it would be a
+  cycle), in the same container; otherwise it gets a new node. A value
+  another node already outputs is read from that output;
+* a value made once (before a loop, say) and needed by a second node gets a
+  node of its own, which every later use reads: the passes of a loop stay
+  independent. `examples/rail_spine.py` inside `with rig.fuse():` builds 2
+  nodes per rider (975 nodes at 100 riders, rig's own network about 7,983).
+
+What fuses: the operators (`+ - * / // % **`, unary `-`, `< <= > >= == !=`,
+`& | ^ ~`), `.x` / `.y` / `.z` of a vector, a `[a, b, c]` vector, and
+`functions` (`abs floor ceil trunc int round sign sqrt exp log pow rev clamp
+min max sum avg equal`, the comparisons and `logical_*`), `condition`,
+`lerp`, all of `trigonometry` but an angle plug given straight to a trig
+function, and `vector` (`dot cross length normalize dist lerp`). Anything
+else (matrices, quaternions, eulers, a `List`, any other function) builds
+rig's nodes as without the block, from the fused values' plugs; a block
+never fails because of what it holds.
+
+```python
+with rig.fuse():
+    m = a.worldMatrix[0] * b.worldInverseMatrix[0]    # matrices: rig's own nodes
+    print(type(m).__name__)                            # Plug
+    try:
+        if a.tx > 0:                                  # no truth value, as a plug
+            pass
+    except TypeError as err:
+        print(type(err).__name__)                     # TypeError
+    print(a.tx in [b.tx, a.tx])                       # True (two plugs: the same plug?)
+```
+
+The fused node follows numpy, in doubles: `%` is floor modulo (`-1.25 % 3`
+is `1.75`), `round` is half to even, `sign(0)` is `0`, a division by zero is
+`inf` or `nan`, a test is true when it is not `0`. rig's network keeps
+Maya's node rules (see `rig_network_fixes_todo.md`), so the two can differ
+there, and in rig's float32 stages (under 1e-6).
+
+A fused value is built when it is used, not when it is written, so:
+
+* what rig checks when it builds (a locked container, a deleted input)
+  raises where the value is used: an input deleted in between raises
+  rig's `"... already deleted!"`, before anything is built;
+* a fused call is not memoized: the same call twice gives two equal
+  values, which build to one output;
+* rig's node counts and node types are not those of its network (one
+  `rigExpr` node instead), and a value has no node name until it is built.
+
+* The block is one undo step. `rig.fuse("arm")` names its nodes
+  `arm_fused1`, ...
+* `rig.set_options(fuse=True)` fuses everywhere, as one endless block (and
+  `fuse = true` in `_defaults.toml`).
+* The rigExpr plug-in is loaded on first use: already loaded, from
+  `RIG_EXPR_PLUGIN` (its `.mll`), or by name from `MAYA_PLUG_IN_PATH`.
+  Without it, the block builds rig's nodes, with one warning per session.
+* A saved scene needs only the plug-in: the program is an int array and the
+  constants a double array on the node.
+* `set_options(maya_version=...)` targeting another Maya turns fusing off
+  (one warning): the scene must open where the plug-in may not exist.
 
 ---
 

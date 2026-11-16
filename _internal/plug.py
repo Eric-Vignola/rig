@@ -124,6 +124,9 @@ from maya.api import OpenMaya
 from rig._internal import anim_keys as _anim_keys
 from rig._internal.anim_keys import _Keys
 from rig._internal.declared import Declared as _Declared
+from rig._internal import fuse as _fuse
+from rig._internal.fuse import FUSE as _FUSE
+from rig._internal.journal import _S as _JOURNAL
 from rig._internal.journal import cmds_edit, container_cmd, one_step, run_statement, statement, user_call
 from rig.nodetypes._base import (
     _name_of,
@@ -729,6 +732,8 @@ class Plug(Attribute):
         a = d.get("_attrh")
         if (h is not None and not h.isAlive()) or (a is not None and not a.isAlive()):
             _ensure_owner_alive(self)
+        if _FUSE.alive and _fuse._has_fused(other):
+            other = _fuse.materialized(other)   # rig.fuse(): a fused value connects as its plug
         if type(other) in _PLUG_TYPES:
             d = other.__dict__
             h = d.get("_handle")
@@ -1586,6 +1591,16 @@ def _checking_operands(method: Any) -> Any:
         a = d.get("_attrh")
         if (h is not None and not h.isAlive()) or (a is not None and not a.isAlive()):
             _ensure_owner_alive(self)
+        # rig.fuse(): user code fuses; a fused operand rig cannot fuse here is a plug
+        if _FUSE.on and not _JOURNAL.open:
+            fused = _fuse.operator(dunder, self, other)
+            if fused is not NotImplemented:
+                return fused
+        if _FUSE.alive and other and _fuse._has_fused(other[0]) and not (
+            type(other[0]) is not _fuse.Fused and _text_operand(other[0]) is not None
+        ):
+            # (a list holding a str is refused below, before anything is built)
+            return checked(self, _fuse.materialized(other[0]))
         for operand in other:
             if type(operand) in _PLUG_TYPES:
                 d = operand.__dict__

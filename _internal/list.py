@@ -117,7 +117,9 @@ from rig._internal import anim_keys as _anim_keys
 from rig._internal.anim_keys import _Keys
 from rig._internal.generators import sequences
 from rig._internal.introspect import _stack_values
+from rig._internal import fuse as _fuse
 from rig._internal import journal as _journal
+from rig._internal.fuse import FUSE as _FUSE
 from rig._internal.journal import statement, user_call
 from rig._internal.node import Node
 from rig._internal.operands import (
@@ -704,6 +706,8 @@ class List(list):
     def __lshift__(self, other: Any) -> Any:
         if self._epoch != _EPOCH[0]:
             _check(self)
+        if _FUSE.alive and _fuse._has_fused(other):
+            other = _fuse.materialized(other)   # rig.fuse(): fused values connect as plugs
         # Retired connection-query sentinel (the class itself on the right).
         if other is List:
             raise TypeError(
@@ -1091,6 +1095,18 @@ class List(list):
 
 
 # each broadcast operator is one journal statement
+def _plug_operands(method: Callable[..., Any]) -> Callable[..., Any]:
+    """`method` (a List operator) with a fused operand a plug (`rig._internal.fuse`)"""
+
+    @functools.wraps(method)
+    def operator_method(self: "List", *other: Any) -> Any:
+        if _FUSE.alive and other and _fuse._has_fused(other[0]):
+            other = (_fuse.materialized(other[0]),)
+        return method(self, *other)
+
+    return operator_method
+
+
 for _operator in (
     "__add__", "__radd__", "__sub__", "__rsub__", "__mul__", "__rmul__",
     "__truediv__", "__rtruediv__", "__pow__", "__rpow__", "__floordiv__",
@@ -1098,7 +1114,7 @@ for _operator in (
     "__ror__", "__xor__", "__rxor__", "__neg__", "__invert__",
     "__eq__", "__ne__", "__ge__", "__le__", "__gt__", "__lt__",
 ):
-    setattr(List, _operator, statement(List.__dict__[_operator]))
+    setattr(List, _operator, _plug_operands(statement(List.__dict__[_operator])))
 del _operator
 
 
@@ -1427,6 +1443,8 @@ def _user_items(items: Iterable[Any], start: Any) -> list:
     checked before any is added. `start` is the index the first one takes,
     named by an error.
 
+    * a fused value (`rig.fuse`): its plug (the values of one call in one node);
+
     * a List: its elements as they are (a List holds what it was given or
       what rig computed);
     * a number (``numbers.Real``, bool, a numpy scalar), ``None``, a rig
@@ -1448,6 +1466,8 @@ def _user_items(items: Iterable[Any], start: Any) -> list:
     sequence holding anything else (a nested List is
     ``List([List([...]), ...])``), a set or a dict, a class or a function, an
     object whose ``str`` names no node or plug."""
+    if _FUSE.alive and type(items) in (list, tuple) and _fuse._has_fused(items):
+        items = _fuse.materialized(items)    # rig.fuse(): the plugs, in one node
     if isinstance(items, List):
         # its elements as they are; giving it is a use (a copy, user decision 2A)
         if items._epoch != _EPOCH[0]:

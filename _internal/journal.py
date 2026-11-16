@@ -455,11 +455,17 @@ def rig_code(fn: Any) -> bool:
 
 
 def user_call(fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
-    """``fn(*args, **kwargs)``, outside the open statement unless ``fn`` is rig's own."""
+    """``fn(*args, **kwargs)``, outside the open statement unless ``fn`` is rig's own.
+    What user code returns to rig's has no fused value (`rig._internal.fuse`)."""
     if not _S.open or rig_code(fn):
         return fn(*args, **kwargs)
     with outside():
-        return fn(*args, **kwargs)
+        result = fn(*args, **kwargs)
+    return result if USER_RESULT is None else USER_RESULT(result)
+
+
+# `rig._internal.fuse.materialized_result`, set when that module loads
+USER_RESULT: Any = globals().get("USER_RESULT")
 
 
 # The List rule (`rig._internal.list`, user decision 6C 2026-10-17): every rig operation on a

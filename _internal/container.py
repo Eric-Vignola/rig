@@ -220,6 +220,7 @@ class ContainerOptions(metaclass=_ReadOnlyOptions):
     publish_attributes:      bool = True           # if False, publish_input/publish_output passthrough -- return source unchanged (no addAttr / no wiring)
     absorb_unit_conversions: bool = False          # if True, auto-inserted unitConversion nodes are pulled into the active container. Default is False because Maya's Node Editor "Hide Unit Conversion Nodes" view option (recently added) makes any container-member node that connects to a unitConversion render OUTSIDE its container -- so absorbing the conversion makes the rest of the container appear to leak. Set True if you want the conversions inside (closer to v3.A behavior) at the cost of the visual leak.
     native_multi_publish:    bool = False          # if False (default), MULTI/array attrs are NOT natively published on the container -- they stay on the real functional / attributes node and ``ctn.<name>`` resolves via ``Container.__getattr__`` + the multi registry. Maya's Node Editor renders a published array alias WITHOUT indices and rejects interactive (bare-parent) fan-in connects, so publishing arrays degrades the surface. Set True once Autodesk fixes array publishing to flip multis to native publishName/bindAttr like single plugs.
+    fuse:                    bool = False          # if True, everything fusable fuses, as inside ``with rig.fuse():`` (rig._internal.fuse): rig's scalar and vector math compiles into rigExpr nodes (the rigExpr plug-in; without it, rig's nodes and one warning)
     constant_folding:        bool = True           # if True (default), math ops given only literal numbers return a Python value instead of building a Maya node (``abs(-5)`` -> ``5``). Set False (or use ``with force_nodes():``) so EVERY rig command materializes its node network even for all-literal inputs -- a debug/demo aid for inspecting the graph a literal call would build. Folds are never cached, so a node built under ``constant_folding=False`` and a folded scalar never collide, and dedupe of node-building calls is preserved in both modes.
 
 
@@ -235,6 +236,7 @@ def set_options(
     absorb_unit_conversions: Optional[bool] = None,
     native_multi_publish:    Optional[bool] = None,
     constant_folding:        Optional[bool] = None,
+    fuse:                    Optional[bool] = None,
 ) -> None:
     """Set one or more global options. Unspecified args leave the current value
     unchanged. Always returns a snapshot dict of the current settings.
@@ -283,10 +285,18 @@ def set_options(
         _write_option("native_multi_publish", native_multi_publish)
     if constant_folding is not None:
         _write_option("constant_folding", constant_folding)
+    if fuse is not None:
+        from rig._internal import fuse as _fuse
+
+        _write_option("fuse", bool(fuse))
+        _fuse.set_option(bool(fuse))
     if maya_version is not _UNSET:
         previous = get_target_version()
         _write_option("maya_version", maya_version)
         set_target_version(maya_version)
+        from rig._internal import fuse as _fuse
+
+        _fuse._refresh()   # rig.fuse() builds only for the running Maya
         new = get_target_version()
         if new != previous:
             # Caches were keyed under the previous target version's
@@ -319,6 +329,7 @@ def get_options() -> dict:
         "absorb_unit_conversions": ContainerOptions.absorb_unit_conversions,
         "native_multi_publish":    ContainerOptions.native_multi_publish,
         "constant_folding":        ContainerOptions.constant_folding,
+        "fuse":                    ContainerOptions.fuse,
     }
 
 
@@ -427,6 +438,10 @@ def _load_defaults_from_file() -> None:
     for key, value in options.items():
         if key in ContainerOptions.__annotations__:
             _write_option(key, value)
+            if key == "fuse":
+                from rig._internal import fuse as _fuse
+
+                _fuse.set_option(bool(value))
             LOGGER.debug("Loaded default %s=%r from %s", key, value, config_path)
 
 

@@ -26,6 +26,8 @@ import numbers
 from typing import Any, Union
 
 import numpy as np
+from rig._internal import fuse as _fuse
+from rig._internal.fuse import FUSE as _FUSE
 from rig._internal.journal import user_call
 from rig.nodetypes._base import Attribute, Node
 from rig._internal.plug import Plug, _lazy
@@ -67,6 +69,8 @@ def _node_lshift(node: Any, other: Any) -> Any:
     _is_attribute_spec = types._is_attribute_spec
     _is_matrix         = types._is_matrix
     _is_membership     = types._is_membership
+    if _FUSE.alive and _fuse._has_fused(other):
+        other = _fuse.materialized(other)   # rig.fuse(): a fused value as its plug
 
     # 0. Membership -- returns the node.
     if _is_membership(other):

@@ -254,6 +254,7 @@ from rig._internal.container import (
     set_options,
 )
 from rig._internal.generators import arguments, sequences
+from rig._internal.fuse import Fused, fuse
 from rig._internal.list import List
 from rig._internal.math_nodes import condition, constant
 from rig._internal.memoize import memoize, prune_memoize_caches, vectorize
@@ -346,6 +347,8 @@ __all__ = [
     "RunExitError",
     # Helpers
     "condition",
+    "fuse",
+    "Fused",
     "constant",
     # Iteration helpers
     "sequences",

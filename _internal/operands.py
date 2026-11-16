@@ -55,7 +55,10 @@ import inspect
 from typing import Any, Callable, Iterable, Optional, Tuple
 
 import numpy as np
-from rig._internal.journal import outside, statement
+from rig._internal import fuse as _fuse
+from rig._internal.fuse import FUSE as _FUSE
+from rig._internal.journal import _S as _JOURNAL
+from rig._internal.journal import outside, run_statement, statement
 from rig.nodetypes._base import _ensure_owner_alive, _match_enum_field, _PLUG_TYPES, Attribute, _name_of
 
 
@@ -484,6 +487,8 @@ def operands(
                     args, kwargs = _rotate_order_arguments(
                         label, args, kwargs, rotate_positions, rotate_keywords
                     )
+                if _FUSE.alive:
+                    args, kwargs = _fuse.materialized_arguments(args, kwargs)
                 return func(*args, **kwargs)
         # A set / frozenset / dict operand raises and an iterator is read into
         # a list (see `_prepared_operand`), then checked as that list. A plug
@@ -526,7 +531,28 @@ def operands(
             args, kwargs = _rotate_order_arguments(
                 label, args, kwargs, rotate_positions, rotate_keywords
             )
+        if _FUSE.alive:
+            # rig.fuse(): fused arguments become plugs (one node), once every check passed
+            args, kwargs = _fuse.materialized_arguments(args, kwargs)
         return func(*args, **kwargs)
 
     wrapper._operand_config = config
-    return statement(wrapper)
+    statement(wrapper)   # (refuses a generator or a coroutine function)
+    fuse_key = f"{func.__module__}.{func.__qualname__}"
+
+    # the statement entry (`journal.statement`), where rig.fuse() hooks in: user code
+    # fusing gets the fused form of a fusable function, and any other call gets its
+    # fused arguments as plugs (one node for all of them)
+    @functools.wraps(wrapper)
+    def entry(*args: Any, **kwargs: Any) -> Any:
+        if _JOURNAL.open:
+            return wrapper(*args, **kwargs)
+        if _FUSE.on:
+            args, kwargs = _fuse.listed(args, kwargs)
+            fused = _fuse.call(fuse_key, args, kwargs)
+            if fused is not NotImplemented:
+                return fused
+        return run_statement(wrapper, args, kwargs)
+
+    entry._rig_statement = True
+    return entry
