@@ -75,6 +75,16 @@ class TestValues(_Case):
         np.testing.assert_allclose(self.value(plug), expected, rtol=1e-12, atol=1e-12)
 
     def test_scalars(self):
+        for name, (build, expected) in self.scalar_cases().items():
+            with self.subTest(name):
+                self.check(build, expected)
+
+    def test_vectors(self):
+        for name, (build, expected) in self.vector_cases().items():
+            with self.subTest(name):
+                self.check(build, expected)
+
+    def scalar_cases(self):
         a = np.array([1.5, -2.0, 3.25])
         b = np.array([0.5, 4.0, -1.0])
         w, k = 0.25, 2.0
@@ -100,11 +110,9 @@ class TestValues(_Case):
             "dist": (lambda: V.dist(A.t, B.t), np.linalg.norm(a - b)),
             "component": (lambda: (A.t * 2).y, a[1] * 2),
         }
-        for name, (build, expected) in cases.items():
-            with self.subTest(name):
-                self.check(build, expected)
+        return cases
 
-    def test_vectors(self):
+    def vector_cases(self):
         a = np.array([1.5, -2.0, 3.25])
         b = np.array([0.5, 4.0, -1.0])
         A, B = self.a, self.b
@@ -119,9 +127,7 @@ class TestValues(_Case):
             "abs_floor": (lambda: F.floor(F.abs(A.t)), np.floor(np.abs(a))),
             "clamp_vector": (lambda: F.clamp(A.t, -1, [0, 1, 2]), np.clip(a, -1, [0, 1, 2])),
         }
-        for name, (build, expected) in cases.items():
-            with self.subTest(name):
-                self.check(build, expected)
+        return cases
 
 
 class TestNodes(_Case):
@@ -490,13 +496,7 @@ class _MatrixCase(_Case):
         made = sorted({cmds.nodeType(n) for n in set(cmds.ls()) - before})
         return network, self.read(plugs), made
 
-
-
-class TestMatrices(_MatrixCase):
-    """matrices, quaternions and eulers: every rig function and operator on them, fused,
-    against rig's network (Maya's nodes, whose rules rig.mll's ops follow)"""
-
-    def test_each_function_fuses_and_gives_rigs_values(self):
+    def matrix_cases(self):
         M, Q, Eu = rig.matrix, rig.quaternion, rig.euler
         cases = {
             "matrix * matrix": lambda: self.a.worldMatrix[0] * self.b.worldInverseMatrix[0],
@@ -588,12 +588,22 @@ class TestMatrices(_MatrixCase):
             "a rider's twist": lambda: rig.matrix.compose(rotate=Q.pow(Node("qa").outputQuat, self.a.w)) * self.b.worldInverseMatrix[0],
             "the euler of a product": lambda: M.decompose(self.a.worldMatrix[0] * self.b.worldInverseMatrix[0]).outputRotate,
         }
+        return cases
+
+
+
+class TestMatrices(_MatrixCase):
+    """matrices, quaternions and eulers: every rig function and operator on them, fused,
+    against rig's network (Maya's nodes, whose rules rig.mll's ops follow)"""
+
+    def test_each_function_fuses_and_gives_rigs_values(self):
         loose = {"lerp": 1e-5, "rig.lerp, matrices": 1e-5, "add, weights": 1e-5}   # rig's reverse node: floats
-        for name, build in cases.items():
+        for name, build in self.matrix_cases().items():
             with self.subTest(name):
                 network, fused, made = self.built(build)
                 self.assertEqual(made, ["rigExpression"])
                 np.testing.assert_allclose(fused, network, atol=loose.get(name, 1e-6), rtol=0)
+
 
     def test_an_aim_with_an_opposite_axis(self):
         """the up axis exactly opposite the up turns half a turn about the aim, as
@@ -720,6 +730,306 @@ class TestStandIns(_MatrixCase):
         self.assertEqual(len(cmds.ls(type="composeMatrix")), 1)
         np.testing.assert_allclose(cmds.xform("out", query=True, worldSpace=True, translation=True),
                                    [3.0, -4.0, 6.5], atol=1e-9)
+
+
+def _sink(holder: str, name: str, value) -> str:
+    """an attribute of ``value``'s type on ``holder`` (a network node), driven by it"""
+    from rig._internal.types import math_type
+    kind = value.math_type if isinstance(value, rig.Fused) else math_type(value)
+    if kind == "scalar":
+        cmds.addAttr(holder, longName=name, attributeType="double")
+    elif kind == "matrix":
+        cmds.addAttr(holder, longName=name, attributeType="matrix")
+    else:
+        n = 4 if kind == "quaternion" else 3
+        cmds.addAttr(holder, longName=name, attributeType="double3" if n == 3 else "compound", numberOfChildren=n)
+        for channel in "XYZW"[:n]:
+            cmds.addAttr(holder, longName=name + channel, attributeType="double", parent=name)
+    getattr(Node(holder), name) << value
+    return f"{holder}.{name}"
+
+
+class TestUnfuse(_MatrixCase):
+    """rig.unfuse: a fused node back into rig's network, read off its program alone"""
+
+    def base_inputs(self):
+        _Case.inputs(self)
+        self.a.s << [0.5, 2.0, 1.25]
+        self.b.s << [3.0, 0.75, 1.5]
+        cmds.addAttr("a", longName="u", attributeType="double", keyable=True)
+        cmds.setAttr("a.u", 1.4)
+
+    def roundtrip(self, build, inputs=None, tol=1e-5):
+        """the values ``build`` makes in a block, read through attributes they drive: the
+        fused ones, then the ones rig.unfuse() builds (no fused node left). The nodes made."""
+        cmds.file(new=True, force=True)          # (a new scene clears memoize)
+        (inputs or self.inputs)()
+        holder = cmds.createNode("network", name="sinks")
+        with rig.fuse():
+            values = build()
+            values = values if type(values) is tuple else (values,)
+            sinks = [_sink(holder, f"v{i}", v) for i, v in enumerate(values)]
+        self.assertTrue(self.fused_nodes())
+        fused = [self.read(s) for s in sinks]
+        made = rig.unfuse()
+        self.assertEqual(self.fused_nodes(), [])
+        for s, f in zip(sinks, fused):
+            source = cmds.listConnections(s, source=True, destination=False) or []
+            self.assertNotIn("rigExpression", [cmds.nodeType(n) for n in source], s)
+            np.testing.assert_allclose(self.read(s), f, atol=tol, rtol=tol, err_msg=s)
+        return made
+
+    # (each case is read again in its own scene: a case holds the nodes of the scene it
+    # was read in)
+    def value_cases(self):
+        return {**TestValues.scalar_cases(self), **TestValues.vector_cases(self)}
+
+    def test_scalars_and_vectors(self):
+        # Maya's nodes' rules, where the fused node computes numpy's: a mod of a negative
+        # number, a round half, x / 0. Unfused, they are rig's network's
+        rules = ("mod", "round_half_even", "div_zero")
+        for name in self.value_cases():
+            if name in rules:
+                continue
+            with self.subTest(name):
+                self.roundtrip(lambda: self.value_cases()[name][0](), self.base_inputs)
+        for name in rules:
+            with self.subTest(name):
+                cmds.file(new=True, force=True)
+                self.base_inputs()
+                plug = self.value_cases()[name][0]()
+                network = self.value(plug), cmds.nodeType(str(plug).split(".")[0])
+                cmds.file(new=True, force=True)
+                self.base_inputs()
+                with rig.fuse():
+                    self.out.tx << self.value_cases()[name][0]()
+                fused = cmds.getAttr("out.tx")
+                rig.unfuse()
+                driver = cmds.listConnections("out.tx", source=True, destination=False)[0]
+                self.assertEqual(cmds.nodeType(driver), network[1])
+                if name == "div_zero":
+                    continue    # Maya's divide leaves its output stale: what it held before
+                self.assertNotEqual(fused, network[0])
+                self.assertEqual(cmds.getAttr("out.tx"), network[0])
+
+    def test_rigs_functions(self):
+        for name in TestRigFunctions.calls(self):
+            with self.subTest(name):
+                self.roundtrip(lambda: TestRigFunctions.calls(self)[name](), self.base_inputs, tol=2e-6)
+
+    def test_matrices_quaternions_eulers(self):
+        for name in self.matrix_cases():
+            with self.subTest(name):
+                self.roundtrip(lambda: self.matrix_cases()[name]())
+
+    def test_angles_into_rotations(self):
+        def build():
+            self.out.rx << self.a.tx * 10                       # degrees into an angle
+            self.out.r << rig.matrix.to_euler(self.a.worldMatrix[0] * self.b.worldInverseMatrix[0])
+            self.b.rz << rig.matrix.to_euler(self.a.worldMatrix[0]).y
+        cmds.file(new=True, force=True)
+        self.inputs()
+        with rig.fuse():
+            build()
+        expected = cmds.getAttr("out.r")[0], cmds.getAttr("b.rz")
+        rig.unfuse()
+        self.assertEqual(self.fused_nodes(), [])
+        np.testing.assert_allclose(cmds.getAttr("out.r")[0], expected[0], atol=1e-9)
+        self.assertAlmostEqual(cmds.getAttr("b.rz"), expected[1], places=9)
+
+    def test_a_saved_scene_unfuses(self):
+        cmds.file(new=True, force=True)
+        self.inputs()
+        with rig.fuse():
+            self.out.t << V.normalize(self.a.t - self.b.t) * self.a.k
+            self.out.r << rig.matrix.rotation(self.a.worldMatrix[0] * self.b.worldInverseMatrix[0])
+        expected = cmds.getAttr("out.t")[0], cmds.getAttr("out.r")[0]
+        path = os.path.join(tempfile.mkdtemp(), "fused.ma")
+        cmds.file(rename=path)
+        cmds.file(save=True, type="mayaAscii", force=True)
+        cmds.file(new=True, force=True)
+        cmds.file(path, open=True, force=True)              # nothing of the session that fused it
+        rig.unfuse()
+        self.assertEqual(self.fused_nodes(), [])
+        np.testing.assert_allclose(cmds.getAttr("out.t")[0], expected[0], atol=1e-6)
+        np.testing.assert_allclose(cmds.getAttr("out.r")[0], expected[1], atol=1e-9)
+        cmds.setAttr("a.k", 4.0)                            # and it is live
+        np.testing.assert_allclose(cmds.getAttr("out.t")[0], np.array(expected[0]) * 2, atol=1e-6)
+
+    def test_a_node_reading_another(self):
+        cmds.file(new=True, force=True)
+        self.inputs()
+        with rig.fuse("one"):
+            x = self.a.tx * 2
+            self.out.tx << x
+        with rig.fuse("two"):
+            self.out.ty << x + self.b.ty                     # reads one's output
+        self.assertEqual(sorted(self.fused_nodes()), ["one_fused1", "two_fused1"])
+        expected = cmds.getAttr("out.tx"), cmds.getAttr("out.ty")
+        rig.unfuse("one_fused1")
+        self.assertEqual(self.fused_nodes(), ["two_fused1"])
+        self.assertEqual((cmds.getAttr("out.tx"), cmds.getAttr("out.ty")), expected)
+        cmds.setAttr("a.tx", 5)
+        self.assertEqual((cmds.getAttr("out.tx"), cmds.getAttr("out.ty")), (10.0, 14.0))
+        rig.unfuse()
+        self.assertEqual(self.fused_nodes(), [])
+        self.assertEqual((cmds.getAttr("out.tx"), cmds.getAttr("out.ty")), (10.0, 14.0))
+
+    def test_in_a_container_the_network_is_made_in_it(self):
+        from rig import container
+        cmds.file(new=True, force=True)
+        self.inputs()
+        set_options(create_containers=True)
+        with container("box"):
+            with rig.fuse():
+                self.out.t << V.normalize(self.a.t) * F.clamp(self.a.k, 0, 5) + self.b.t
+        made = rig.unfuse()
+        members = set(cmds.container("box", query=True, nodeList=True) or [])
+        self.assertTrue(made)
+        self.assertLessEqual({str(n) for n in made}, members)
+        self.assertEqual(cmds.ls(type="container"), ["box"])   # no container of its own
+
+    def test_one_undo_step(self):
+        cmds.file(new=True, force=True)
+        self.inputs()
+        with rig.fuse():
+            self.out.t << self.a.t * self.a.k - self.b.t
+        expected = cmds.getAttr("out.t")[0]
+        nodes = set(cmds.ls())
+        rig.unfuse()
+        self.assertEqual(self.fused_nodes(), [])
+        cmds.undo()
+        self.assertEqual(set(cmds.ls()), nodes)
+        self.assertEqual(self.fused_nodes(), ["fused1"])
+        np.testing.assert_allclose(cmds.getAttr("out.t")[0], expected)
+        cmds.redo()
+        self.assertEqual(self.fused_nodes(), [])
+        np.testing.assert_allclose(cmds.getAttr("out.t")[0], expected)
+
+    def test_a_stand_in_comes_back_as_its_node(self):
+        from rig.bridges import nodes as rn
+        cmds.file(new=True, force=True)
+        self.inputs()
+        with rig.fuse():
+            cm = rn.composeMatrix()
+            cm.inputTranslate << self.a.t * 2
+            cm.inputRotate << self.b.t * 10
+            self.out.offsetParentMatrix << cm.outputMatrix
+        expected = cmds.getAttr("out.worldMatrix[0]")
+        self.assertEqual(cmds.ls(type="composeMatrix"), [])
+        rig.unfuse()
+        self.assertEqual(len(cmds.ls(type="composeMatrix")), 1)
+        np.testing.assert_allclose(cmds.getAttr("out.worldMatrix[0]"), expected, atol=1e-9)
+
+    def test_limb_twist_and_rail_spine(self):
+        from rig.examples import rail_spine
+        from rig.examples.limb_twist import create_limb_twist
+
+        def limb():
+            up, low = Node.create("joint", name="upperarm"), Node.create("joint", name="lowerarm")
+            low.t << (10, 0, 0)
+            low.r << (-90, 0, 0)
+            with rig.fuse("limb"):
+                create_limb_twist(up.wm, low.wm, start_axis=2, end_axis=1, end_invert=True)
+
+        def rail():
+            controls = List()
+            for i in range(4):
+                controls.append(Node(cmds.spaceLocator(name=f"ctl{i}")[0]))
+                controls[i].ty << i * 5
+            with rig.fuse("rail"):
+                rail_spine.create_rail(controls, 4, orient_controls=controls, scale_controls=controls,
+                                       degree=3, periodic=False, aim_axis=1, up_axis=0, debug=False)
+
+        for name, build, edits in (
+                ("limb_twist", limb, [("lowerarm.rx", 0.0), ("lowerarm.rx", -180.0), ("lowerarm.rx", -45.0)]),
+                ("rail_spine", rail, [("ctl2.tx", 3.0), ("ctl3.rz", 40.0), ("ctl1.sx", 2.0)])):
+            with self.subTest(name):
+                states = []
+                for unfused in (False, True):
+                    cmds.file(new=True, force=True)
+                    build()
+                    if unfused:
+                        rig.unfuse()
+                        self.assertEqual(self.fused_nodes(), [])
+                    joints = sorted(cmds.ls(type=("joint", "transform")))
+                    state = []
+                    for attr, value in [(None, None)] + edits:
+                        if attr:
+                            cmds.setAttr(attr, value)
+                        state.append([cmds.xform(j, query=True, worldSpace=True, matrix=True) for j in joints])
+                    states.append(np.array(state))
+                np.testing.assert_allclose(states[1], states[0], atol=2e-5)
+
+    def test_under_the_option(self):
+        cmds.file(new=True, force=True)
+        self.inputs()
+        set_options(fuse=True)
+        self.out.t << V.normalize(self.a.t - self.b.t) * self.a.k
+        self.out.r << rig.matrix.to_euler(self.a.worldMatrix[0])
+        expected = cmds.getAttr("out.t")[0], cmds.getAttr("out.r")[0]
+        self.assertTrue(self.fused_nodes())
+        rig.unfuse()                       # nothing in it fuses again
+        self.assertEqual(self.fused_nodes(), [])
+        np.testing.assert_allclose(cmds.getAttr("out.t")[0], expected[0], atol=1e-6)
+        np.testing.assert_allclose(cmds.getAttr("out.r")[0], expected[1], atol=1e-9)
+        self.out.tx << self.a.tx * 3       # and the option still fuses after it
+        self.assertEqual(len(self.fused_nodes()), 1)
+
+    def test_a_program_it_cannot_rebuild_changes_nothing(self):
+        from unittest import mock
+        from rig._internal import unfuse
+        cmds.file(new=True, force=True)
+        self.inputs()
+        with rig.fuse("one"):
+            self.out.tx << self.a.tx * 2
+        with rig.fuse("two"):
+            self.out.s << V.cross(self.a.t, self.b.t)
+        nodes = set(cmds.ls())
+        plan = unfuse._Rebuild.plan
+
+        def refusing(rebuild, e):
+            if e.op == "cross":
+                raise ValueError("rig.unfuse: no rig call makes a fused 'cross' (a test)")
+            return plan(rebuild, e)
+
+        with mock.patch.object(unfuse._Rebuild, "plan", refusing):
+            with self.assertRaisesRegex(ValueError, "a test"):
+                rig.unfuse()                   # one_fused1 comes first: every node is planned before
+        self.assertEqual(set(cmds.ls()), nodes)
+        self.assertEqual(sorted(self.fused_nodes()), ["one_fused1", "two_fused1"])
+
+    def test_returns_the_nodes_it_made(self):
+        cmds.file(new=True, force=True)
+        self.inputs()
+        with rig.fuse():
+            self.out.t << V.cross(self.a.t, self.b.t)
+        made = rig.unfuse()
+        self.assertIsInstance(made, List)
+        self.assertEqual([cmds.nodeType(str(n)) for n in made], ["crossProduct"])
+
+    def test_refusals_change_nothing(self):
+        cmds.file(new=True, force=True)
+        self.inputs()
+        with rig.fuse():
+            self.out.tx << self.a.tx * 2
+        with self.assertRaisesRegex(TypeError, "is a transform, not a rigExpression"):
+            rig.unfuse("fused1", "a")
+        with self.assertRaisesRegex(RuntimeError, "inside rig.fuse"):
+            with rig.fuse():
+                rig.unfuse()
+        self.assertEqual(self.fused_nodes(), ["fused1"])
+        self.assertEqual(cmds.getAttr("out.tx"), 3.0)
+
+    def test_describe_reads_the_program(self):
+        from rig._internal import unfuse
+        cmds.file(new=True, force=True)
+        self.inputs()
+        with rig.fuse():
+            self.out.tx << (self.a.tx + self.b.ty) * 2
+        text = unfuse.describe("fused1")
+        self.assertIn("- `scalarIn[0] <- a.translateX`", text)
+        self.assertIn("- `scalarOut[0] = ((a.translateX + b.translateY) * 2)`", text)
 
 
 class _nothing:

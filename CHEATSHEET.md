@@ -67,7 +67,7 @@ of rig names the cgmath commit it was verified on here and in
 | 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, several files in one namespace, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
 | 41 | [`rig.exec`: a string of code as if in a fresh Python](#41-rigexec-a-string-of-code-as-if-in-a-fresh-python) | `rig.exec(source, inputs, argv=, shared=)`: the code as `python -c` runs it, dedented first, the session's `sys.path`, `rig.run`'s imports and `Run`, one undo step named after the first line, outside `__all__` |
 | 42 | [A cgmath Scene in Maya](#42-a-cgmath-scene-in-maya) | `rig.load_scene(path)` and `rig.create_scene(scene)`: the nodes, each mesh, its blendShape and its skin, then the take; any number of copies, `uuids=True` for the data's uuids; the steps by hand (`Mesh` / `BlendShape` / `SkinCluster.create(item)`, `node.key_hierarchy(clip)`), what is left out |
-| 43 | [`rig.fuse()`: math in one node](#43-rigfuse-math-in-one-node) | `with rig.fuse():` and `set_options(fuse=True)`: scalar, vector, euler, quaternion and matrix math as a `Fused` value, compiled into `rigExpression` nodes when it is connected or used; what joins a node, what fuses (rig's own functions and its type shorthand too), numpy's rules and Maya's nodes', rig's plug-in `rig.mll`, one undo step |
+| 43 | [`rig.fuse()`: math in one node](#43-rigfuse-math-in-one-node) | `with rig.fuse():` and `set_options(fuse=True)`: scalar, vector, euler, quaternion and matrix math as a `Fused` value, compiled into `rigExpression` nodes when it is connected or used; what joins a node, what fuses (rig's own functions and its type shorthand too), numpy's rules and Maya's nodes', rig's plug-in `rig.mll`, one undo step; `rig.unfuse()`, back into rig's network |
 
 ---
 
@@ -4541,6 +4541,37 @@ A fused value is built when it is used, not when it is written, so:
   constants a double array on the node.
 * `set_options(maya_version=...)` targeting another Maya turns fusing off
   (one warning): the scene must open where the plug-in may not exist.
+
+`rig.unfuse()` turns fused nodes back into rig's own network. What each
+connected output computes is built with rig's functions and operators, as
+without `rig.fuse()`, and drives what the output drove; the node is
+deleted. It reads the node alone (its program, its numbers and its inputs),
+so a scene saved and opened again unfuses too.
+
+```python
+src = Node.create("transform", name="src")
+src.t << [1, 2, 3]
+dst = Node.create("transform", name="dst")
+with rig.fuse("calc"):
+    dst.t << rig.vector.normalize(src.t) * 2 + rig.matrix.translation(src.worldMatrix[0])
+print(cmds.ls("calc_*"))                           # ['calc_fused1']
+made = rig.unfuse("calc_fused1")
+print(sorted(cmds.nodeType(str(n)) for n in made))  # ['multiplyDivide', 'normalize', 'plusMinusAverage', 'translationFromMatrix']
+print([round(v, 4) for v in cmds.getAttr("dst.t")[0]])   # [1.5345, 3.069, 4.6036] (as fused)
+```
+
+* `rig.unfuse("calc_fused1", ...)` unfuses the nodes given; no argument,
+  every one in the scene. It returns a List of the nodes it made, and is one
+  undo step. A node in a container has its network made in it.
+* An operation comes back as the rig call that makes it (`a + b`,
+  `rig.matrix.aim`, `rig.quaternion.slerp` ...), a decomposition's parts
+  off one `decomposeMatrix`, a `choice` of three tokens or more as one
+  `choice` node. A rig function
+  the block traced (`smoothstep`, `sequence` ...) comes back as the
+  operations it is made of.
+* The values are rig's network's: where Maya's nodes and numpy differ
+  (above), they follow Maya's nodes. Inside a `rig.fuse()` block it raises
+  RuntimeError (the block would fuse the network again).
 
 ---
 

@@ -255,6 +255,7 @@ from rig._internal.container import (
 )
 from rig._internal.generators import arguments, sequences
 from rig._internal.fuse import Fused, fuse
+from rig._internal.unfuse import unfuse
 from rig._internal.list import List
 from rig._internal.math_nodes import condition, constant
 from rig._internal.memoize import memoize, prune_memoize_caches, vectorize
@@ -348,6 +349,7 @@ __all__ = [
     # Helpers
     "condition",
     "fuse",
+    "unfuse",
     "Fused",
     "constant",
     # Iteration helpers
