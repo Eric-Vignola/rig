@@ -196,7 +196,9 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
   maps over the list (`cubes.t` is a `List` of plugs, and so is
   `cubes.__tag__` when every element has that attr). The
   **operators** (`<<`, `+`, `==`...) pair elements and cap the shorter
-  operand to its last element: `cubes.ty << [1, 2]` sets 1, 2, 2. The
+  operand to its last element: `cubes.ty << [1, 2]` sets 1, 2, 2. `<<`
+  writes each element once, so a longer right side stops at the List's
+  end: `cubes.ty << range(10)` sets 0, 1, 2. The
   **function libraries** (`rig.functions`, `lerp`, `dist`...) are
   NumPy-strict: every list must be the same length, or length 1, or a
   scalar, and a mismatch is a `ValueError`. An operand is a plug, a number
