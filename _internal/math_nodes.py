@@ -788,6 +788,12 @@ def _picks_in_python(args: tuple, kwargs: dict) -> bool:
     )
 
 
+def _has_channels(value: Any) -> bool:
+    """True for a compound plug, or a sequence of more than one value (a Plug is a str:
+    never a sequence)"""
+    return _is_compound(value) or (_is_sequence(value) and len(value) > 1)
+
+
 @operands(skip_when=_picks_in_python)
 @vectorize
 @memoize
@@ -823,7 +829,9 @@ def condition(condition_op: Any, if_true: Any, if_false: Any) -> Any:
         node.operation    << 0
         node.colorIfTrue  << if_true
         node.colorIfFalse << if_false
-        if _is_compound(if_true) or _is_compound(if_false):
+        # a branch with channels -- a compound plug, or a sequence of values such as
+        # ``[0, 0, 1]`` or ``[a.tx, a.ty, 1]`` -- gives the whole colour
+        if _has_channels(if_true) or _has_channels(if_false):
             return node.outColor
         return node.outColorR
 
