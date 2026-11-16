@@ -448,7 +448,8 @@ class _Rebuild:
             if picked is not None:
                 selector, items = picked
                 return (lambda s, *p: self.R.RF.choice(list(p), selector=s)), (selector, *items)
-            return (lambda t, p, q: self.condition(e, t, p, q)), a
+            # (rig's condition: a number test picks its branch)
+            return (lambda t, p, q: self.R.mn.condition(t, p, q)), a
         if op == "clamp":
             args = tuple(v.args[0] if v.op == "splat" else v for v in a)
             return (lambda v, lo, hi: _out(np.clip(_np(v), _np(lo), _np(hi))) if _numbers(v, lo, hi)
@@ -664,18 +665,6 @@ class _Rebuild:
     @staticmethod
     def order(o):
         return int(o) if _numbers(o) else o
-
-    def condition(self, e: Fused, t, p, q):
-        """rig's condition; a vector one is its node's outColor (rig gives outColorR
-        when no branch is a compound plug: two vectors of numbers)"""
-        if _numbers(t):
-            return p if t != 0 else q
-        out = self.R.mn.condition(t, p, q)
-        if e.kind in "ve" and type(out).__name__ != "list":
-            node = type(out)._raw_get_node(out)
-            if str(out).endswith(".outColorR"):
-                out = node.outColor
-        return out
 
     def binary(self, name, p, q):
         if _numbers(p, q):
