@@ -44,6 +44,9 @@ class _Case(MayaTestCase):
         options = dict(get_options())
         self.addCleanup(lambda: set_options(**options))
         _fuse.FUSE.plugin = None          # found again (a test may have refused it)
+        # what fuses and how, one op as well as many: the one-op rule off (TestOneOpRule)
+        self.addCleanup(setattr, _fuse, "ONE_OP_RULE", _fuse.ONE_OP_RULE)
+        _fuse.ONE_OP_RULE = False
         self.inputs()
 
     def inputs(self):
@@ -999,6 +1002,17 @@ class TestUnfuse(_MatrixCase):
         self.assertEqual(set(cmds.ls()), nodes)
         self.assertEqual(sorted(self.fused_nodes()), ["one_fused1", "two_fused1"])
 
+    def test_a_locked_destination_stays_locked(self):
+        cmds.file(new=True, force=True)
+        self.inputs()
+        with rig.fuse():
+            self.out.t << self.a.t * self.a.k - self.b.t
+        cmds.setAttr("out.t", lock=True)
+        rig.unfuse()
+        self.assertEqual(self.fused_nodes(), [])
+        self.assertTrue(cmds.getAttr("out.t", lock=True))
+        np.testing.assert_allclose(cmds.getAttr("out.t")[0], [2.5, -8.0, 7.5])
+
     def test_returns_the_nodes_it_made(self):
         cmds.file(new=True, force=True)
         self.inputs()
@@ -1391,6 +1405,104 @@ class TestScene(_Case):
         set_options(fuse=False)
         self.assertNotIsInstance(self.a.tx * 2, rig.Fused)
         self.assertEqual(cmds.getAttr("out.tx"), 3.0)
+
+
+class TestOneOpRule(_Case):
+    """as a block ends, a node of it that rig's network makes in one node becomes it"""
+
+    def setUp(self):
+        super().setUp()
+        _fuse.ONE_OP_RULE = True
+
+    def driver(self, plug):
+        return cmds.nodeType(cmds.listConnections(plug, source=True, destination=False)[0])
+
+    def test_one_op_is_rigs_node(self):
+        before = set(cmds.ls())
+        with rig.fuse():
+            self.out.tx << self.a.tx + self.b.tx
+        made = [cmds.nodeType(n) for n in set(cmds.ls()) - before]
+        self.assertEqual(len(made), 1)
+        self.assertNotIn("rigExpression", made)
+        self.assertEqual(self.driver("out.tx"), made[0])
+        self.assertEqual(cmds.getAttr("out.tx"), 2.0)
+
+    def test_more_than_one_op_stays_fused(self):
+        with rig.fuse():
+            self.out.ty << (self.a.tx + self.b.tx) * 2 - 1
+        self.assertEqual(self.driver("out.ty"), "rigExpression")
+        self.assertEqual(cmds.getAttr("out.ty"), 3.0)
+
+    def test_two_values_of_one_op_each_stay_one_node(self):
+        with rig.fuse():
+            self.out.tx << self.a.tx + 1
+            self.out.ty << self.b.ty * 2            # the block's node: two rig nodes
+        self.assertEqual(len(self.fused_nodes()), 1)
+
+    def test_a_decomposition_is_one_node(self):
+        cmds.setAttr("a.r", 30, 45, 0)
+        with rig.fuse():
+            self.out << self.a.worldMatrix[0]       # t, r, s and shear off one decomposeMatrix
+        self.assertEqual(self.fused_nodes(), [])
+        self.assertEqual({self.driver(f"out.{c}") for c in ("t", "r", "s", "shear")}, {"decomposeMatrix"})
+        np.testing.assert_allclose(cmds.getAttr("out.r")[0], [30, 45, 0], atol=1e-9)
+
+    def test_what_needs_a_unit_conversion_or_more_nodes_stays_fused(self):
+        with rig.fuse():
+            self.out.rx << self.a.tx * 10           # rig's node and a unitConversion
+        with rig.fuse():
+            self.out.t << F.clamp(self.a.t, 0, 1)   # rig's vector clamp: several nodes
+        self.assertEqual(self.driver("out.rx"), "rigExpression")
+        self.assertEqual(self.driver("out.t"), "rigExpression")
+        self.assertEqual(cmds.ls(type="unitConversion"), [])
+
+    def test_a_value_used_after_the_block_reads_the_node(self):
+        with rig.fuse():
+            v = self.a.tx + self.b.tx
+            self.out.tx << v
+        self.out.ty << v
+        self.assertEqual(self.fused_nodes(), [])
+        self.assertEqual(cmds.listConnections("out.tx", source=True, destination=False),
+                         cmds.listConnections("out.ty", source=True, destination=False))
+
+    def test_a_value_used_after_the_block_reads_the_node_under_the_option(self):
+        set_options(fuse=True)                       # the deleted node stays among the owners
+        with rig.fuse():
+            v = self.a.tx + self.b.tx
+            self.out.tx << v
+        self.out.ty << v
+        set_options(fuse=False)
+        self.assertEqual(self.fused_nodes(), [])
+        self.assertEqual(cmds.listConnections("out.tx", source=True, destination=False),
+                         cmds.listConnections("out.ty", source=True, destination=False))
+
+    def test_a_locked_destination_stays_locked(self):
+        with rig.fuse():
+            self.out.tx << self.a.tx + self.b.tx
+            cmds.setAttr("out.tx", lock=True)        # (rail_spine locks its controls' u so)
+        self.assertEqual(self.fused_nodes(), [])
+        self.assertNotEqual(self.driver("out.tx"), "rigExpression")
+        self.assertTrue(cmds.getAttr("out.tx", lock=True))
+        self.assertEqual(cmds.getAttr("out.tx"), 2.0)
+
+    def test_a_value_only_made_a_plug_stays(self):
+        with rig.fuse():
+            name = str(self.a.tx + self.b.tx)        # read in Python, connected to nothing
+        self.assertEqual(cmds.nodeType(name.split(".")[0]), "rigExpression")
+
+    def test_one_undo_step(self):
+        nodes = set(cmds.ls())
+        with rig.fuse():
+            self.out.tx << self.a.tx + self.b.tx
+        cmds.undo()
+        self.assertEqual(set(cmds.ls()), nodes)
+        self.assertEqual(cmds.getAttr("out.tx"), 0.0)
+
+    def test_not_under_the_option(self):
+        set_options(fuse=True)                       # no block ends
+        self.out.tx << self.a.tx + self.b.tx
+        set_options(fuse=False)
+        self.assertEqual(self.driver("out.tx"), "rigExpression")
 
 
 class TestScopes(_Case):

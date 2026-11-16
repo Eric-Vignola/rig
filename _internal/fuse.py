@@ -115,6 +115,14 @@ DEG, RAD = 57.29577951308232, 0.017453292519943295
 # what one costs; measured on rail_spine, fewer bigger nodes are faster, serial and
 # parallel (100 riders: 4 nodes at 5,000, 13 at 1,000)
 MAX_INSTRUCTIONS = 10000
+# the one-op rule: as a block ends, a node of it whose network rig makes in at most
+# ONE_OP_NODES nodes (the unitConversions its connections need counted) becomes that
+# network: a one-op rigExpression is slower than Maya's own node in EM serial and no
+# faster anywhere, and the native node reads as rig's network does. A node of more than
+# _ONE_OP_INSTRUCTIONS computing instructions is not tried (one decomposition is five)
+ONE_OP_RULE = True
+ONE_OP_NODES = 1
+_ONE_OP_INSTRUCTIONS = 8
 PLUGIN      = "rig"              # rig.mll: every node type rig builds
 NODE_TYPE   = "rigExpression"
 # rig.mll's lowest version this program format runs on (version 2: matrices and quaternions)
@@ -132,7 +140,7 @@ class _State:
     outputs of the nodes of the open blocks (or of the session, with the option)."""
 
     __slots__ = ("on", "alive", "depth", "names", "blocks", "option", "plugin", "warned", "owners", "serial",
-                 "leaves", "dirty", "last", "inlined", "warned_target", "tracing", "outputs", "frames")
+                 "leaves", "dirty", "last", "inlined", "warned_target", "tracing", "outputs", "frames", "rebuilt")
 
     def __init__(self) -> None:
         self.on      = False
@@ -147,6 +155,9 @@ class _State:
         # whether each open scope fuses, innermost last: a block (True as it opens), a
         # rig.run / rig.exec (as what runs it); set_options(fuse=...) sets the innermost
         self.frames  = []
+        # {expression key: (its owner, ...)} of the values the one-op rule made rig's
+        # network (`_one_op_rule`): kept after their block, read by `_owner` after `owners`
+        self.rebuilt = {}
         self.option  = False
         self.plugin  = None
         self.warned  = False
@@ -1911,13 +1922,16 @@ class _Record:
 
 
 def _owner(e: Fused):
-    found = FUSE.owners.get(e.key)
-    if found is None:
-        return None
-    if not found[0].alive():
-        del FUSE.owners[e.key]
-        return None
-    return found
+    # then FUSE.rebuilt: a value the one-op rule made rig's network, read off it after its
+    # block too (under the option, the fused node it deleted is still in FUSE.owners)
+    for table in (FUSE.owners, FUSE.rebuilt):
+        found = table.get(e.key)
+        if found is None:
+            continue
+        if found[0].alive():
+            return found
+        del table[e.key]
+    return None
 
 
 def _scope():
@@ -3025,6 +3039,58 @@ class _External:
         return getattr(self.node, attr)
 
 
+class _Rebuilt:
+    """a value the one-op rule made rig's network (`_one_op_rule`): a value built on it
+    later reads that network's plug"""
+
+    __slots__ = ("out", "handle", "serial", "looped")
+
+    def __init__(self, out) -> None:
+        FUSE.serial += 1
+        self.out = out
+        self.handle = om.MObjectHandle(out.__dict__["_mplug"].node())
+        self.serial = FUSE.serial
+        self.looped = False
+
+    def alive(self) -> bool:
+        return self.handle.isValid() and self.handle.isAlive()
+
+    def output(self, attr: str, index: int):
+        return self.out
+
+
+_NOT_COMPUTING = frozenset(OP[k] for k in ("LOAD_S", "LOAD_V", "LOAD_A", "LOAD_E", "LOAD_Q", "LOAD_M", "CONST_S",
+                                           "CONST_V", "CONST_Q", "CONST_M", "NOP", "EXT", "MOVE"))
+
+
+def _computing(record: "_Record") -> int:
+    """the instructions of ``record``'s program that compute (not a load, a number ...)"""
+    body = record.body
+    return sum(1 for j in range(0, len(body), 5) if body[j] not in _NOT_COMPUTING)
+
+
+def _one_op_rule(records: list) -> None:
+    """As a block ends: each of its nodes that rig's network makes in at most
+    `ONE_OP_NODES` nodes becomes that network (`rig._internal.unfuse.one_op`). A value
+    it computed, used after the block, reads that network."""
+    if not ONE_OP_RULE:
+        return
+    from rig._internal import unfuse
+    plugs = _bind()[0]
+    for record in records:
+        if not record.alive() or _computing(record) > _ONE_OP_INSTRUCTIONS:
+            continue
+        outs = {k: list(v) for k, v in record.outs.items()}
+        try:
+            made = unfuse.one_op(str(record.node), ONE_OP_NODES)
+        except Exception as error:  # noqa: BLE001 (the rule never breaks a block)
+            cmds.warning(f"rig.fuse: the one-op rule could not rebuild {record.node}: {error}")
+            continue
+        for (kind, index), plug in (made or {}).items():
+            if type(plug) in plugs and index < len(outs.get(kind, ())):
+                FUSE.rebuilt[outs[kind][index].key] = (_Rebuilt(plug), "plug", 0)
+
+
 def _redirect(value: Fused, node, name: str) -> None:
     """``value``, a stand-in's output ``name`` read before the stand-in became ``node``,
     read off ``node`` from now on: in every node that computes it, its instruction (a
@@ -3239,6 +3305,8 @@ class fuse:
         from rig._internal.undo import undo_chunk
         self.chunk = undo_chunk(f"rig.fuse {self.name}" if self.name else "rig.fuse")
         self.chunk.__enter__()
+        if not FUSE.alive or len(FUSE.rebuilt) > 100000:
+            FUSE.rebuilt.clear()       # (no value left to read one off)
         FUSE.depth += 1
         FUSE.names.append(self.name)
         FUSE.blocks.append([])
@@ -3247,12 +3315,15 @@ class fuse:
         return self
 
     def __exit__(self, *exc) -> bool:
+        records = FUSE.blocks[-1]
         FUSE.depth -= 1
         FUSE.names.pop()
         FUSE.blocks.pop()
         FUSE.frames.pop()
         try:
             try:
+                if exc[0] is None:
+                    _one_op_rule(records)       # (in the block's undo step)
                 if not FUSE.depth:
                     _write_notes()
             finally:

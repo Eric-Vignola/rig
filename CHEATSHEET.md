@@ -4532,6 +4532,14 @@ A fused value is built when it is used, not when it is written, so:
 
 * The block is one undo step. `rig.fuse("arm")` names its nodes
   `arm_fused1`, ...
+* As the block ends, a node of it whose network rig makes in one node
+  becomes that node (the one-op rule): `dst.tx << a.tx + b.tx` alone in a
+  block leaves a `sum`, `node << matrix` one `decomposeMatrix`. A node rig's
+  network makes in more stays fused: two values of one op each, a vector
+  clamp, a scalar written into an angle (rig's node needs a
+  `unitConversion`). A value of the block used after it reads the node. The
+  rule runs as a block ends, under `set_options(fuse=True)` too; what the
+  option alone fuses is in no block, and stays fused.
 * `rig.set_options(fuse=True)` fuses everywhere, as one endless block (and
   `fuse = true` in `_defaults.toml`).
 * Inside a block, `rig.set_options(fuse=False)` turns fusing off for the
@@ -4569,7 +4577,8 @@ print([round(v, 4) for v in cmds.getAttr("dst.t")[0]])   # [1.5345, 3.069, 4.603
 
 * `rig.unfuse("calc_fused1", ...)` unfuses the nodes given; no argument,
   every one in the scene. It returns a List of the nodes it made, and is one
-  undo step. A node in a container has its network made in it.
+  undo step. A node in a container has its network made in it; a locked
+  destination is connected and stays locked.
 * An operation comes back as the rig call that makes it (`a + b`,
   `rig.matrix.aim`, `rig.quaternion.slerp` ...), a decomposition's parts
   off one `decomposeMatrix`, a `choice` of three tokens or more as one

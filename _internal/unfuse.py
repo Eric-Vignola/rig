@@ -729,35 +729,148 @@ def _destinations(fn: om.MFnDependencyNode, kind: str, index: int) -> list:
     return out
 
 
+def _wired(fn: om.MFnDependencyNode, values: dict) -> dict:
+    """``{(kind, index): [(channel or None, the plug it drives)]}``: the outputs that
+    drive something"""
+    wired = {key: _destinations(fn, *key) for key in values}
+    return {key: d for key, d in wired.items() if d}
+
+
+class _Scope:
+    """the container scope a rebuild is made in: the fused node's container, or none (a
+    rig function's own container flattens into it); ``members``, the UUIDs of the nodes
+    rig made in it"""
+
+    def __init__(self, name: str) -> None:
+        from rig._internal.container import Container, _StackFrame, container
+        holder = _container_of(name)
+        if holder is not None and cmds.lockNode(holder, query=True, lock=True)[0]:
+            raise RuntimeError(f"rig.unfuse: {name!r} is in the locked container {holder!r}: unlock it first")
+        self.stack = container._stack
+        self.frame = _StackFrame(name=name, container_node=Container._wrap(holder) if holder else None,
+                                 preserve=False, enabled=holder is not None, depth=len(self.stack))
+
+    def __enter__(self) -> "_Scope":
+        self.stack.append(self.frame)
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        self.stack.remove(self.frame)
+        return False
+
+    @property
+    def members(self) -> list:
+        return list(self.frame.members)
+
+
+def _rewire(wired: dict, made: dict) -> None:
+    """each destination driven by its output's rebuilt value (in the scope: a
+    unitConversion a connection makes joins the container too). A locked destination
+    (rail_spine's controls' ``u``) is unlocked for it and locked again."""
+    from rig._internal.plug import Plug
+    for key, destinations in wired.items():
+        value = made[key]
+        for channel, dst in destinations:
+            target = Plug(dst)
+            locked = dst.isLocked
+            if locked:
+                journal.cmds_edit.setAttr(str(target), lock=False)
+            journal.cmds_edit.disconnectAttr(str(Plug(dst.source())), str(target))
+            target << (value if channel is None else value[channel])
+            if locked:
+                journal.cmds_edit.setAttr(str(target), lock=True)
+
+
 def _unfuse_one(name: str) -> list:
     """``name`` (a rigExpression) rebuilt as rig's network: its connected outputs made,
     connected where they went, the node deleted. The UUIDs of the nodes made."""
-    from rig._internal.container import Container, _StackFrame, container
-    from rig._internal.plug import Plug
     fn, name = _node_fn(name)
     values = decompile(name)
-    wired = {key: _destinations(fn, *key) for key in values}
-    wired = {key: d for key, d in wired.items() if d}
-    holder = _container_of(name)
-    if holder is not None and cmds.lockNode(holder, query=True, lock=True)[0]:
-        raise RuntimeError(f"rig.unfuse: {name!r} is in the locked container {holder!r}: unlock it first")
-    frame = _StackFrame(name=name, container_node=Container._wrap(holder) if holder else None, preserve=False,
-                        enabled=holder is not None, depth=len(container._stack))
-    container._stack.append(frame)
-    try:
+    wired = _wired(fn, values)
+    with _Scope(name) as scope:
         rebuild = _Rebuild([values[key] for key in wired])
         made = {key: rebuild.value(values[key]) for key in wired}
-        # (in the scope: a unitConversion a connection makes joins the container too)
-        for key, destinations in wired.items():
-            value = made[key]
-            for channel, dst in destinations:
-                target = Plug(dst)
-                journal.cmds_edit.disconnectAttr(str(Plug(dst.source())), str(target))
-                target << (value if channel is None else value[channel])
-    finally:
-        container._stack.remove(frame)
+        _rewire(wired, made)
     journal.cmds_edit.delete(name)
-    return list(frame.members)
+    return scope.members
+
+
+class _Added:
+    """every node Maya adds while it is open (MDGMessage): what a trial made, whichever
+    way rig made it"""
+
+    def __enter__(self) -> "_Added":
+        self.handles: list = []
+        self.callback = om.MDGMessage.addNodeAddedCallback(self._added, "dependNode")
+        return self
+
+    def _added(self, node, *_args) -> None:
+        self.handles.append(om.MObjectHandle(node))
+
+    def __exit__(self, *exc) -> bool:
+        om.MMessage.removeCallback(self.callback)
+        return False
+
+    def names(self) -> list:
+        out = []
+        for h in self.handles:
+            if h.isValid() and h.isAlive():
+                node = h.object()
+                out.append(om.MDagPath.getAPathTo(node).partialPathName() if node.hasFn(om.MFn.kDagNode)
+                           else om.MFnDependencyNode(node).name())
+        return out
+
+
+def _is_angle(value) -> bool:
+    """True for a plug of angles (a rotate, an rx, a decomposition's outputRotate ...)"""
+    mplug = getattr(value, "__dict__", {}).get("_mplug")
+    if mplug is None:
+        return False
+    attr = mplug.child(0).attribute() if mplug.isCompound else mplug.attribute()
+    return attr.hasFn(om.MFn.kUnitAttribute) and om.MFnUnitAttribute(attr).unitType() == om.MFnUnitAttribute.kAngle
+
+
+def _conversions(wired: dict, made: dict) -> int:
+    """the unitConversions the connections will make: an angle output (angleOut, eulerOut)
+    whose rebuilt value is a plug of no angles, one per destination"""
+    from rig._internal.plug import Plug
+    count = 0
+    for key, destinations in wired.items():
+        value = made[key]
+        if key[0] in "ae" and isinstance(value, Plug) and not _is_angle(value):
+            count += len(destinations)
+    return count
+
+
+@statement
+def one_op(name: str, budget: int = 1):
+    """The one-op rule (``rig.fuse()``, as its block ends): the rigExpression ``name``
+    back into rig's network when that network is at most ``budget`` nodes (and the
+    unitConversions its connections will make). ``{(kind, index): the value that drives
+    the output's destinations now}`` then; else None, and the node is as it was (what the
+    trial made is deleted). A rebuild that fails keeps the node too: the rule never
+    breaks a block."""
+    fn, name = _node_fn(name)
+    values = decompile(name)
+    wired = _wired(fn, values)
+    if not wired:
+        return None                # (a value made a plug and read in Python: it stays)
+    with _Scope(name), _Added() as added:
+        try:
+            rebuild = _Rebuild([values[key] for key in wired])
+            made = {key: rebuild.value(values[key]) for key in wired}
+            fits = len(added.names()) + _conversions(wired, made) <= budget
+        except Exception:  # noqa: BLE001 (the rule never breaks a block: the node stays)
+            fits = False
+        if fits:
+            _rewire(wired, made)
+    if not fits:
+        trial = added.names()
+        if trial:
+            journal.cmds_edit.delete(trial)
+        return None
+    journal.cmds_edit.delete(name)
+    return made
 
 
 def unfuse(*nodes):
