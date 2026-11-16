@@ -642,6 +642,10 @@ _VALUE_DATA = {
     ("_internal/shorthand.py", "dst_facts", "is_quaternion"),
     ("_internal/shorthand.py", "dst_facts", "is_vector"),
     ("_internal/shorthand.py", "self", "is_compound"),
+    # rig.fuse()'s shorthand for a fused source reads the destination's facts as rig's does
+    ("_internal/fuse.py", "dst_facts", "is_matrix"),
+    ("_internal/fuse.py", "dst_facts", "is_quaternion"),
+    ("_internal/fuse.py", "dst_facts", "is_vector"),
     # (re-pinned, fix round 2026-10-16: the cast's identity check of a class's
     # is_type reads its class-route mirror, cls_obj._raw_is_type, no bare
     # predicate, so its allowance is gone)

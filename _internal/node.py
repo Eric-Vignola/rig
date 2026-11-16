@@ -69,8 +69,15 @@ def _node_lshift(node: Any, other: Any) -> Any:
     _is_attribute_spec = types._is_attribute_spec
     _is_matrix         = types._is_matrix
     _is_membership     = types._is_membership
+    t = type(other)
+    if t is _fuse.FusedNode or t is _fuse._FusedInput:
+        other = _fuse.real(other)             # a stand-in (rig.fuse()): the node it is
     if _FUSE.alive and _fuse._has_fused(other):
+        if _fuse.shorthand(other, node):      # rig.fuse(): a matrix into the transform, fused
+            return node
         other = _fuse.materialized(other)   # rig.fuse(): a fused value as its plug
+    elif _FUSE.outputs and _fuse.shorthand(_fuse.output_value(other), node):
+        return node                         # a fused node's output, converted in its node
 
     # 0. Membership -- returns the node.
     if _is_membership(other):

@@ -450,6 +450,12 @@ class Plug(Attribute):
             return type(node).__getattr__(node, attr_name)
         except AttributeError:
             pass
+        # 2b) rig.fuse(): a fused node's output that a decompose computes has that
+        #     decomposeMatrix's siblings, computed beside it (``.outputScale`` ...)
+        if _FUSE.outputs:
+            sibling = _fuse.sibling(self, attr_name)
+            if sibling is not None:
+                return sibling
 
         # 3) Container-published sibling. When this plug is the result of a
         #    NodeOp whose public interface lives on the owning container
@@ -732,9 +738,18 @@ class Plug(Attribute):
         a = d.get("_attrh")
         if (h is not None and not h.isAlive()) or (a is not None and not a.isAlive()):
             _ensure_owner_alive(self)
+        t = type(other)
+        if t is _fuse.FusedNode or t is _fuse._FusedInput:
+            other = _fuse.real(other)              # a stand-in (rig.fuse()): the node it is
         if _FUSE.alive and _fuse._has_fused(other):
-            other = _fuse.materialized(other, into=(self,))   # rig.fuse(): connects as its plug
+            # rig.fuse(): rig's type shorthand computed in the fused node, or the value
+            # connected as its plug
+            if _fuse.shorthand(other, self):
+                return self
+            other = _fuse.materialized(other, into=(self,))
         elif _FUSE.outputs and type(other) in _PLUG_TYPES:
+            if _fuse.shorthand(_fuse.output_value(other), self):
+                return self                       # a fused node's output, converted in its node
             other = _fuse.rerouted(other, self)   # a fused output that would ring back: a loop copy
         if type(other) in _PLUG_TYPES:
             d = other.__dict__

@@ -188,6 +188,16 @@ def _make_factory(node_type: str) -> _Callable:
         if kwargs:
             kwargs = _enum_kwargs(node_type, kwargs)
 
+        # rig.fuse(): a math node made by hand is a stand-in, computed in the block's
+        # node, until it is used as a node (`rig._internal.fuse.FusedNode`)
+        from rig._internal import fuse as _fuse
+
+        stand_in = _fuse.stand_in(node_type, create_kwargs, add_to_container)
+        if stand_in is not None:
+            for attr_name, value in kwargs.items():
+                getattr(stand_in, attr_name) << value
+            return stand_in
+
         # Create the node (auto-joins active container scope unless
         # opted out via ``container=False``).
         node = container.createNode(

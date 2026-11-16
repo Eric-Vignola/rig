@@ -547,6 +547,7 @@ def operands(
     fuse_key = f"{func.__module__}.{func.__qualname__}"
     _fuse.register(fuse_key, func)   # a rig function whose body fuses inside (`fuse.TRACE`)
     traced = fuse_key in _fuse.RAW and skip_when is None
+    fusable = traced or fuse_key in _fuse.FORMS
 
     # the statement entry (`journal.statement`), where rig.fuse() hooks in: user code
     # fusing gets the fused form of a fusable function, and any other call gets its
@@ -557,9 +558,15 @@ def operands(
             return wrapper(*args, **kwargs)
         if _FUSE.on:
             args, kwargs = _fuse.listed(args, kwargs)
-            if traced:
-                # rig's checks first: its body, run on fused values, would read a str
-                # in a list as a value where rig's network refuses it
+            if fusable:
+                if skip_when is not None and skip_when(*_prepared_arguments(args, kwargs)):
+                    # rig picks in Python (`condition` of a number): its branches may
+                    # be any value, nothing to fuse
+                    return run_statement(wrapper, args, kwargs)
+                # rig's checks first: a freed plug raises before anything reads its type
+                # (reading a freed plug's type crashes Maya), and a traced body, run on
+                # fused values, would read a str in a list as a value where rig's
+                # network refuses it
                 args, kwargs = _checked(args, kwargs)
             fused = _fuse.call(fuse_key, args, kwargs)
             if fused is not NotImplemented:

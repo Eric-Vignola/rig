@@ -426,14 +426,308 @@ class TestLists(_Case):
                 self.assertEqual(fused, ["rigExpression"])
                 np.testing.assert_allclose(got, expected, atol=1e-6)
 
-    def test_rows_that_do_not_fuse_build_rigs_nodes(self):
-        # matrices: no row fuses, rig's network as without the block
+    def test_rows_of_matrices_fuse(self):
         (net, expected), (fused, got) = self.built(
             lambda: self.targets.offsetParentMatrix << self.l0.worldMatrix[0] * self.l1.worldInverseMatrix[0],
             read="offsetParentMatrix")
-        self.assertEqual(fused, net)
-        self.assertNotIn("rigExpression", fused)
-        np.testing.assert_allclose(got, expected)
+        self.assertIn("multMatrix", net)
+        # (a decomposeMatrix rig's shorthand makes, unused, for a matrix into a transform's
+        # offsetParentMatrix: rig's, in both builds)
+        self.assertEqual([t for t in fused if t != "decomposeMatrix"], ["rigExpression"])
+        np.testing.assert_allclose(got, expected, atol=1e-9)
+
+    def test_a_decomposed_lists_siblings_fuse(self):
+        # decompose is vectorized: its rows come back as plugs, and they keep their
+        # decomposeMatrix's siblings
+        (net, expected), (fused, got) = self.built(
+            lambda: self.targets.s << rig.matrix.decompose(self.l0.worldMatrix).outputScale, read="s")
+        self.assertEqual(fused, ["rigExpression"])
+        np.testing.assert_allclose(got, expected, atol=1e-9)
+
+
+class _MatrixCase(_Case):
+    """inputs with rotations, scales (one negative), a shear and quaternion plugs; a build
+    made twice, rig's network then fused, each in a new scene (`built`)"""
+
+    def setUp(self):
+        super().setUp()
+        set_options(fuse=False)          # the reference is rig's network, even under the option
+
+    def inputs(self):
+        super().inputs()
+        cmds.setAttr("a.r", 30.0, -50.0, 110.0)
+        cmds.setAttr("a.s", 1.2, 0.8, -1.5)           # a negative scale
+        cmds.setAttr("a.shear", 0.2, -0.1, 0.3)
+        cmds.setAttr("a.rotateOrder", 2)
+        cmds.setAttr("b.r", -70.0, 15.0, 40.0)
+        cmds.setAttr("b.s", 0.7, 1.4, 1.1)
+        cmds.loadPlugin("matrixNodes", quiet=True)
+        for name, source in (("qa", "a"), ("qb", "b")):     # quaternion plugs
+            cmds.createNode("decomposeMatrix", name=name)
+            cmds.connectAttr(f"{source}.worldMatrix[0]", f"{name}.inputMatrix")
+
+    def read(self, plugs):
+        """the values of a plug's name (or a tuple of them), flat"""
+        if type(plugs) is tuple:
+            return np.concatenate([self.read(p) for p in plugs])
+        got = cmds.getAttr(plugs)
+        if isinstance(got, list):
+            got = [x for item in got for x in (item if isinstance(item, tuple) else (item,))]
+        return np.atleast_1d(np.asarray(got, dtype=float))
+
+    def built(self, build):
+        """(rig's network's values, the fused ones, the node types the fused build made);
+        the fused value made a plug in its block"""
+        names = (lambda r: tuple(str(x) for x in r) if type(r) is tuple else str(r))
+        cmds.file(new=True, force=True)         # (a new scene clears memoize)
+        self.inputs()
+        network = self.read(names(build()))
+        cmds.file(new=True, force=True)
+        self.inputs()
+        before = set(cmds.ls())
+        with rig.fuse():
+            plugs = names(build())
+        made = sorted({cmds.nodeType(n) for n in set(cmds.ls()) - before})
+        return network, self.read(plugs), made
+
+
+
+class TestMatrices(_MatrixCase):
+    """matrices, quaternions and eulers: every rig function and operator on them, fused,
+    against rig's network (Maya's nodes, whose rules rig.mll's ops follow)"""
+
+    def test_each_function_fuses_and_gives_rigs_values(self):
+        M, Q, Eu = rig.matrix, rig.quaternion, rig.euler
+        cases = {
+            "matrix * matrix": lambda: self.a.worldMatrix[0] * self.b.worldInverseMatrix[0],
+            "matrix - matrix": lambda: self.a.worldMatrix[0] - self.b.worldMatrix[0],
+            "matrix + matrix": lambda: self.a.worldMatrix[0] + self.b.worldMatrix[0],
+            "matrix ** weight": lambda: self.a.worldMatrix[0] ** self.a.w,
+            "vector * matrix": lambda: self.b.t * self.a.worldMatrix[0],
+            "matrix * vector": lambda: self.a.worldMatrix[0] * self.b.t,
+            "multiply, a chain": lambda: M.multiply(self.a.worldMatrix[0], self.b.worldInverseMatrix[0], self.b.worldMatrix[0]),
+            "multiply, local": lambda: M.multiply(self.b.t, self.a.worldMatrix[0], local=True),
+            "inverse": lambda: M.inverse(self.a.worldMatrix[0]),
+            "transpose": lambda: M.transpose(self.a.worldMatrix[0]),
+            "determinant": lambda: M.determinant(self.a.worldMatrix[0]),
+            "translation": lambda: M.translation(self.a.worldMatrix[0]),
+            "rotation": lambda: M.rotation(self.a.worldMatrix[0]),
+            "scale_of": lambda: M.scale_of(self.a.worldMatrix[0]),
+            "axis y": lambda: M.axis(self.a.worldMatrix[0], axis="y"),
+            "row 3": lambda: M.row(self.a.worldMatrix[0], 3),
+            "row of a plug": lambda: M.row(self.a.worldMatrix[0], self.a.k),
+            "column 1": lambda: M.column(self.a.worldMatrix[0], 1),
+            "transform_point": lambda: M.transform_point(self.b.t, self.a.worldMatrix[0]),
+            "transform_vector": lambda: M.transform_vector(self.b.t, self.a.worldMatrix[0]),
+            "dist": lambda: M.dist(self.a.worldMatrix[0], self.b.worldMatrix[0]),
+            "decompose": lambda: M.decompose(self.a.worldMatrix[0]),
+            "decompose, a rotate order": lambda: M.decompose(self.a.worldMatrix[0], rotate_order=4).outputRotate,
+            "decompose, an order plug": lambda: M.decompose(self.a.worldMatrix[0], rotate_order=self.a.rotateOrder).outputRotate,
+            "decompose's scale": lambda: M.decompose(self.a.worldMatrix[0]).outputScale,
+            "decompose's shear": lambda: M.decompose(self.a.worldMatrix[0]).outputShear,
+            "decompose's quaternion": lambda: M.decompose(self.a.worldMatrix[0]).outputQuat,
+            "decompose's quaternion w": lambda: M.decompose(self.a.worldMatrix[0]).outputQuatW,
+            "decompose's rotate x": lambda: M.decompose(self.a.worldMatrix[0]).outputRotateX,
+            "to_quaternion": lambda: M.to_quaternion(self.a.worldMatrix[0]),
+            "to_euler": lambda: M.to_euler(self.a.worldMatrix[0], rotate_order="yxz"),
+            "compose": lambda: M.compose(scale=self.a.t, rotate=self.a.r, translate=self.b.t, shear=[0.1, 0.2, -0.3], rotate_order=1),
+            "compose, a quaternion": lambda: M.compose(rotate=Node("qa").outputQuat, translate=self.b.t),
+            "fourbyfour": lambda: M.fourbyfour(x=self.b.t, y=self.a.t, position=self.b.s),
+            "aim": lambda: M.aim(self.b.t, self.a.t),
+            "aim, axes": lambda: M.aim(self.b.t, self.a.t, aim_axis=(0, 0, 1), up_axis=(1, 0, 0)),
+            "add": lambda: M.add(self.a.worldMatrix[0], self.b.worldMatrix[0], self.b.worldInverseMatrix[0]),
+            "add, weights": lambda: M.add(self.a.worldMatrix[0], self.b.worldMatrix[0], weights=[self.a.w, 0.75]),
+            "lerp": lambda: M.lerp(self.a.worldMatrix[0], self.b.worldMatrix[0], self.a.w),
+            "blend": lambda: M.blend(self.a.worldMatrix[0], self.b.worldMatrix[0], self.a.w),
+            "slerp": lambda: M.slerp(self.a.worldMatrix[0], self.b.worldMatrix[0], self.a.w),
+            "pow": lambda: M.pow(self.a.worldMatrix[0], self.a.w),
+            "normalize": lambda: M.normalize(self.a.worldMatrix[0]),
+            "quaternion * quaternion": lambda: Node("qa").outputQuat * Node("qb").outputQuat,
+            "quaternion + quaternion": lambda: Node("qa").outputQuat + Node("qb").outputQuat,
+            "quaternion - quaternion": lambda: Node("qa").outputQuat - Node("qb").outputQuat,
+            "quaternion ** weight": lambda: Node("qa").outputQuat ** self.a.w,
+            "quaternion add": lambda: Q.add(Node("qa").outputQuat, Node("qb").outputQuat),
+            "quaternion multiply": lambda: Q.multiply(Node("qa").outputQuat, Node("qb").outputQuat),
+            "quaternion subtract": lambda: Q.subtract(Node("qa").outputQuat, Node("qb").outputQuat),
+            "quaternion negate": lambda: Q.negate(Node("qa").outputQuat),
+            "quaternion normalize": lambda: Q.normalize(Node("qa").outputQuat + Node("qb").outputQuat),
+            "quaternion inverse": lambda: Q.inverse(Node("qa").outputQuat),
+            "quaternion conjugate": lambda: Q.conjugate(Node("qa").outputQuat),
+            "quaternion angle": lambda: Q.angle(Node("qa").outputQuat, Node("qb").outputQuat),
+            "quaternion angle_degrees": lambda: Q.angle_degrees(Node("qa").outputQuat, Node("qb").outputQuat),
+            "quaternion to_euler": lambda: Q.to_euler(Node("qa").outputQuat, rotate_order=5),
+            "quaternion to_matrix": lambda: Q.to_matrix(Node("qa").outputQuat),
+            "quaternion to_vector": lambda: Q.to_vector(Node("qa").outputQuat),
+            "quaternion slerp": lambda: Q.slerp(Node("qa").outputQuat, Node("qb").outputQuat, self.a.w),
+            "quaternion pow": lambda: Q.pow(Node("qa").outputQuat, self.a.w),
+            "from_axis_angle": lambda: Q.from_axis_angle(self.b.t, self.a.k),
+            "from_axis_angle, an angle plug": lambda: Q.from_axis_angle(self.b.t, self.b.rx),
+            "from_axis_angle, a number": lambda: Q.from_axis_angle(self.b.t, 1.2),
+            "to_axis_angle": lambda: Q.to_axis_angle(Node("qa").outputQuat),
+            "euler to_matrix": lambda: Eu.to_matrix(self.a.r, rotate_order=2),
+            "euler to_quaternion": lambda: Eu.to_quaternion(self.a.r, rotate_order=3),
+            "euler reorder": lambda: Eu.reorder(self.a.r, 2, 4),
+            "euler slerp": lambda: Eu.slerp(self.a.r, self.b.r, self.a.w),
+            "rig.inverse, a matrix": lambda: rig.inverse(self.a.worldMatrix[0]),
+            "rig.inverse, a quaternion": lambda: rig.inverse(Node("qa").outputQuat),
+            "rig.lerp, matrices": lambda: rig.lerp(self.a.worldMatrix[0], self.b.worldMatrix[0], self.a.w),
+            "rig.slerp, quaternions": lambda: rig.slerp(Node("qa").outputQuat, Node("qb").outputQuat, self.a.w),
+            "rig.slerp, matrices": lambda: rig.slerp(self.a.worldMatrix[0], self.b.worldMatrix[0], self.a.w),
+            "rig.slerp, eulers": lambda: rig.slerp(self.a.r, self.b.r, self.a.w),
+            "rig.normalize, a quaternion": lambda: rig.normalize(Node("qa").outputQuat + Node("qb").outputQuat),
+            "rig.normalize, a matrix": lambda: rig.normalize(self.a.worldMatrix[0]),
+            "rig.to_euler, a quaternion": lambda: rig.to_euler(Node("qa").outputQuat, rotate_order=1),
+            "rig.to_euler, a matrix": lambda: rig.to_euler(self.a.worldMatrix[0]),
+            "rig.to_quaternion, an euler": lambda: rig.to_quaternion(self.a.r, rotate_order=2),
+            "rig.to_quaternion, a matrix": lambda: rig.to_quaternion(self.a.worldMatrix[0]),
+            "rig.to_matrix, an euler": lambda: rig.to_matrix(self.a.r),
+            "rig.to_matrix, a quaternion": lambda: rig.to_matrix(Node("qa").outputQuat),
+            "rig.dist, matrices": lambda: rig.dist(self.a.worldMatrix[0], self.b.worldMatrix[0]),
+            "rig.blend": lambda: rig.blend(self.a.worldMatrix[0], self.b.worldMatrix[0], self.a.w),
+            "rig.angle, quaternions": lambda: rig.angle(Node("qa").outputQuat, Node("qb").outputQuat),
+            "a rider's twist": lambda: rig.matrix.compose(rotate=Q.pow(Node("qa").outputQuat, self.a.w)) * self.b.worldInverseMatrix[0],
+            "the euler of a product": lambda: M.decompose(self.a.worldMatrix[0] * self.b.worldInverseMatrix[0]).outputRotate,
+        }
+        loose = {"lerp": 1e-5, "rig.lerp, matrices": 1e-5, "add, weights": 1e-5}   # rig's reverse node: floats
+        for name, build in cases.items():
+            with self.subTest(name):
+                network, fused, made = self.built(build)
+                self.assertEqual(made, ["rigExpression"])
+                np.testing.assert_allclose(fused, network, atol=loose.get(name, 1e-6), rtol=0)
+
+    def test_an_aim_with_an_opposite_axis(self):
+        """the up axis exactly opposite the up turns half a turn about the aim, as
+        aimMatrix does (limb_twist's end frame at a half turn, and its slerp); the aim
+        axis exactly opposite the aim, too"""
+        M = rig.matrix
+        for aim, up in (([2, 0, 0], [0, -3, 0]), ([-2, 0, 0], [0.5, 4, -1])):
+            def build():
+                cmds.setAttr("out.t", *aim)
+                cmds.setAttr("out.s", *up)
+                return M.aim(self.out.t, self.out.s)
+
+            def twist():
+                build()
+                start = M.aim(self.out.t, [0, 0, 1])
+                return M.compose(rotate=rig.slerp(rig.to_quaternion(start), rig.to_quaternion(build()), 0.25))
+
+            for name, case in (("aim", build), ("twist", twist)):
+                with self.subTest(name, aim=aim, up=up):
+                    network, fused, made = self.built(case)
+                    self.assertEqual(made, ["rigExpression"])
+                    np.testing.assert_allclose(fused, network, atol=1e-9, rtol=0)
+
+    def test_a_rotation_drives_a_rotate_without_a_unit_conversion(self):
+        for fused in (False, True):
+            cmds.file(new=True, force=True)
+            self.inputs()
+            with rig.fuse() if fused else _nothing():
+                d = rig.matrix.decompose(self.a.worldMatrix[0] * self.b.worldInverseMatrix[0])
+                self.out.r << d.outputRotate
+                self.out.ry << self.a.tx * 10          # a scalar of degrees into an angle
+                self.out.t << d
+            values = [cmds.getAttr("out.r")[0], cmds.getAttr("out.t")[0]]
+            if not fused:
+                expected = values
+        self.assertEqual(cmds.ls(type="unitConversion"), [])
+        self.assertEqual(len(self.fused_nodes()), 1)
+        np.testing.assert_allclose(values, expected, atol=1e-6)
+
+    def test_a_decompositions_outputs_share_its_node(self):
+        with rig.fuse():
+            d = rig.matrix.decompose(self.a.worldMatrix[0])
+            self.out.t << d
+            self.out.r << d.outputRotate
+            self.out.s << d.outputScale
+            self.b.offsetParentMatrix << rig.matrix.compose(rotate=d.outputQuat, translate=d)
+        self.assertEqual(len(self.fused_nodes()), 1)
+        np.testing.assert_allclose(cmds.getAttr("out.s")[0], [1.2, 0.8, -1.5], atol=1e-9)
+
+
+class TestStandIns(_MatrixCase):
+    """a math node made by hand in a block (``rn.composeMatrix()``): computed in the
+    block's node while its inputs are set before its outputs are read; the node itself
+    once used as one, the values that read it then reading the node"""
+
+    def test_a_compose_matrix_made_by_hand_fuses(self):
+        from rig.bridges import nodes as rn
+
+        def build():
+            cm = rn.composeMatrix()
+            cm.inputTranslate << self.a.t * 2
+            cm.inputRotate << self.a.r
+            cm.inputScale << self.b.s
+            cm.inputRotateOrder << 3
+            self.out << cm.outputMatrix * self.b.worldInverseMatrix[0]
+            return self.out.worldMatrix[0]
+
+        network, fused, made = self.built(build)
+        self.assertEqual(made, ["rigExpression"])
+        np.testing.assert_allclose(fused, network, atol=1e-9)
+
+    def test_a_decompose_matrix_made_by_hand_fuses(self):
+        from rig.bridges import nodes as rn
+
+        def build():
+            dm = rn.decomposeMatrix(inputRotateOrder=4)
+            dm.inputMatrix << self.a.worldMatrix[0] * self.b.worldInverseMatrix[0]
+            self.out.t << dm.outputTranslate
+            self.out.r << dm.outputRotate
+            self.out.sx << dm.outputScaleY
+            return self.out.worldMatrix[0]
+
+        network, fused, made = self.built(build)
+        self.assertEqual(made, ["rigExpression"])
+        np.testing.assert_allclose(fused, network, atol=1e-9)
+
+    def test_an_input_set_after_an_output_was_read_makes_the_node(self):
+        from rig.bridges import nodes as rn
+
+        with rig.fuse():
+            cm = rn.composeMatrix()
+            cm.inputRotate << [0, 0, 30]
+            self.out.offsetParentMatrix << cm.outputMatrix * self.b.worldMatrix[0]
+            cm.inputTranslate << self.a.t            # after the read: the node itself
+        self.assertEqual(len(cmds.ls(type="composeMatrix")), 1)
+        self.assertEqual(len(self.fused_nodes()), 1)
+        for t in ([1.5, -2.0, 3.25], [4.0, 1.0, -1.0]):     # it follows the input, as rig's node
+            self.a.t << t
+            expected = (np.array(cmds.getAttr(f"{cmds.ls(type='composeMatrix')[0]}.outputMatrix")).reshape(4, 4)
+                        @ np.array(cmds.getAttr("b.worldMatrix[0]")).reshape(4, 4))
+            np.testing.assert_allclose(np.array(cmds.getAttr("out.offsetParentMatrix")).reshape(4, 4), expected,
+                                       atol=1e-9)
+        self.assertFalse(cmds.cycleCheck(all=True, list=True) or [])
+
+    def test_a_stand_in_used_as_a_node_is_the_node(self):
+        from rig.bridges import nodes as rn
+
+        with rig.fuse():
+            cm = rn.composeMatrix(name="handmade")
+            cm.inputTranslate << self.a.t
+            self.assertEqual(str(cm), "handmade")              # its name: the node
+            self.out.offsetParentMatrix << cm.outputMatrix
+        self.assertEqual(cmds.ls(type="composeMatrix"), ["handmade"])
+        self.assertEqual(cmds.listConnections("out.offsetParentMatrix", source=True), ["handmade"])
+
+    def test_after_the_block_a_stand_in_is_the_node(self):
+        from rig.bridges import nodes as rn
+
+        with rig.fuse():
+            cm = rn.composeMatrix()
+            cm.inputTranslate << self.a.t * 2
+        self.assertEqual(cmds.ls(type="composeMatrix"), [])   # nothing read it in the block
+        self.out.offsetParentMatrix << cm.outputMatrix         # read after it: the node
+        self.assertEqual(len(cmds.ls(type="composeMatrix")), 1)
+        np.testing.assert_allclose(cmds.xform("out", query=True, worldSpace=True, translation=True),
+                                   [3.0, -4.0, 6.5], atol=1e-9)
+
+
+class _nothing:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
 
 
 class TestRig(_Case):
@@ -462,12 +756,15 @@ class TestRig(_Case):
                 self.out.t << out
         np.testing.assert_allclose(cmds.getAttr("out.t")[0], [1.5, 3.0, 4.5], rtol=1e-6)
 
-    def test_matrices_fall_back(self):
+    def test_matrices_fuse(self):
         with rig.fuse():
             m = self.a.worldMatrix[0] * self.b.worldInverseMatrix[0]
-            self.assertNotIsInstance(m, rig.Fused)
-            self.out << m
-        np.testing.assert_allclose(cmds.getAttr("out.t")[0], [1.0, -6.0, 4.25], atol=1e-9)
+            self.assertIsInstance(m, rig.Fused)
+            self.assertEqual(m.math_type, "matrix")
+            self.out.offsetParentMatrix << m
+        self.assertEqual(len(self.fused_nodes()), 1)
+        np.testing.assert_allclose(cmds.xform("out", query=True, worldSpace=True, translation=True),
+                                   [1.0, -6.0, 4.25], atol=1e-9)
 
     def test_lists(self):
         with rig.fuse():
@@ -688,8 +985,6 @@ class TestRigFunctions(_Case):
 
     def test_what_does_not_fuse_builds_rigs_network(self):
         cases = {
-            "matrices": lambda: interpolate.sequence(self.a.w, [0, 1], [self.a.worldMatrix[0], self.b.worldMatrix[0]],
-                                                     method=rig.blend),
             "a choice without a selector": lambda: F.choice([self.a.tx, self.b.tx]),
         }
         for name, build in cases.items():
