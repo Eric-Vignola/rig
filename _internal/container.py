@@ -39,6 +39,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from maya import cmds
 from maya.api import OpenMaya
+from rig._internal.fuse import FUSE as _FUSE, _Untraceable
 from rig._internal.journal import (
     _S as _JS,
     barrier,
@@ -595,6 +596,10 @@ class _ContainerStack:
             )
         args          = self._pending
         self._pending = None
+        if _FUSE.tracing:
+            # rig.fuse() runs a rig function's body on fused values: no container, no
+            # scope (`rig._internal.fuse._trace`)
+            return None
 
         depth         = len(self._stack)
         is_top_level  = depth == 0
@@ -642,7 +647,7 @@ class _ContainerStack:
 
     @statement
     def __exit__(self, _exc_type, _exc_val, _trace) -> None:
-        if not self._stack:
+        if not self._stack or _FUSE.tracing:
             return
         frame = self._stack.pop()
 
@@ -724,6 +729,9 @@ class _ContainerStack:
         warning), an ambiguous one AmbiguousNodeError. ``shared=`` is refused
         (TypeError): a create always makes a new node.
         """
+        if _FUSE.tracing:
+            # a traced rig function (rig.fuse()) builds no node: rig builds its network
+            raise _Untraceable(f"createNode({node_type!r})")
         # Apply name prefix if we're inside a flattened sub-scope, on the leaf
         # of a namespaced name (``ns:x`` is ``ns:inner_x``).
         if name is not None and self._stack:
@@ -1055,6 +1063,8 @@ class _ContainerStack:
                 "name is required (publish_input must be given a "
                 "camelCase Maya attr name)"
             )
+        if _FUSE.tracing:
+            return source            # a traced body (rig.fuse()) publishes nothing
         # Publish target = LEAF scope's container_node (if real). This
         # unifies all four cases into one rule:
         #   * create_containers=False / publish_attributes=False -> passthrough
@@ -1163,6 +1173,8 @@ class _ContainerStack:
                 "name is required (publish_output must be given a "
                 "camelCase Maya attr name)"
             )
+        if _FUSE.tracing:
+            return source            # a traced body (rig.fuse()) publishes nothing
         # Publish target = LEAF scope's container_node (if real). See
         # ``publish_input`` for the full case-table; same rule applies here.
         if (

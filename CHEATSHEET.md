@@ -67,7 +67,7 @@ of rig names the cgmath commit it was verified on here and in
 | 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, several files in one namespace, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
 | 41 | [`rig.exec`: a string of code as if in a fresh Python](#41-rigexec-a-string-of-code-as-if-in-a-fresh-python) | `rig.exec(source, inputs, argv=, shared=)`: the code as `python -c` runs it, dedented first, the session's `sys.path`, `rig.run`'s imports and `Run`, one undo step named after the first line, outside `__all__` |
 | 42 | [A cgmath Scene in Maya](#42-a-cgmath-scene-in-maya) | `rig.load_scene(path)` and `rig.create_scene(scene)`: the nodes, each mesh, its blendShape and its skin, then the take; any number of copies, `uuids=True` for the data's uuids; the steps by hand (`Mesh` / `BlendShape` / `SkinCluster.create(item)`, `node.key_hierarchy(clip)`), what is left out |
-| 43 | [`rig.fuse()`: math in one node](#43-rigfuse-math-in-one-node) | `with rig.fuse():` and `set_options(fuse=True)`: scalar and vector math as a `Fused` value, compiled into `rigExpr` nodes when it is connected or used; what joins a node, what fuses, numpy's rules, the rigExpr plug-in, one undo step |
+| 43 | [`rig.fuse()`: math in one node](#43-rigfuse-math-in-one-node) | `with rig.fuse():` and `set_options(fuse=True)`: scalar and vector math as a `Fused` value, compiled into `rigExpr` nodes when it is connected or used; what joins a node, what fuses (rig's own functions inside too), numpy's rules, the rigExpr plug-in, one undo step |
 
 ---
 
@@ -4335,7 +4335,7 @@ when rig needs one: when it is connected (`plug << value`, a List or a Node
 `<<`), given to a function that does not fuse, put in a List, or read
 (`str()`, `.get()`). rig then compiles it into a `rigExpr` node, the rigExpr
 plug-in's: one node computes a whole chain of math, and the Attribute
-Editor's Notes show what it computes.
+Editor's Notes show what it computes, in Markdown.
 
 ```python
 import rig
@@ -4360,7 +4360,7 @@ with rig.fuse("demo"):
 print(cmds.ls(type="rigExpr"))                    # ['demo_fused1']
 print(cmds.getAttr("out.ty"), cmds.getAttr("far.ty"))   # -2.0 -2.830031906222678
 print(cmds.getAttr("demo_fused1.notes").splitlines()[-1])
-# vectorOut[0] = (normalize((a.translate - b.translate)) * clamp(scalarOut[0], 0, 5))
+# - `vectorOut[0] = (normalize((a.translate - b.translate)) * clamp(scalarOut[0], 0, 5))`
 ```
 
 Where a value goes:
@@ -4374,17 +4374,37 @@ Where a value goes:
 * a value made once (before a loop, say) and needed by a second node gets a
   node of its own, which every later use reads: the passes of a loop stay
   independent. `examples/rail_spine.py` inside `with rig.fuse():` builds 2
-  nodes per rider (975 nodes at 100 riders, rig's own network about 7,983).
+  `rigExpr` nodes per rider, its `interpolate.sequence` calls included:
+  1,075 nodes at 100 riders (rig's own network: 8,283).
 
 What fuses: the operators (`+ - * / // % **`, unary `-`, `< <= > >= == !=`,
 `& | ^ ~`), `.x` / `.y` / `.z` of a vector, a `[a, b, c]` vector, and
 `functions` (`abs floor ceil trunc int round sign sqrt exp log pow rev clamp
-min max sum avg equal`, the comparisons and `logical_*`), `condition`,
-`lerp`, all of `trigonometry` but an angle plug given straight to a trig
-function, and `vector` (`dot cross length normalize dist lerp`). Anything
-else (matrices, quaternions, eulers, a `List`, any other function) builds
-rig's nodes as without the block, from the fused values' plugs; a block
-never fails because of what it holds.
+min max sum avg equal choice searchsorted all any argmin argmax`, the
+comparisons and `logical_*`), `condition`, `lerp`, all of `trigonometry` but
+an angle plug given straight to a trig function, `vector` (`dot cross length
+normalize dist lerp slerp elerp angle angle_degrees triple_product`), `slerp`
+/ `elerp` / `angle` / `angle_degrees` of vectors, every `tween` curve and
+`interpolate` (`sequence interp smoothstep smootherstep inverse_lerp`).
+rig's own multi-node functions fuse inside: `sequence` runs its own body on
+the fused values, its `searchsorted`, its `choice`s and its `method` (yours
+too) all in the node. Anything else (matrices, quaternions, eulers, a `List`,
+any other function) builds rig's nodes as without the block, from the fused
+values' plugs; so does a function given something its body cannot fuse (a
+`sequence` of matrices builds its network). A block never fails because of
+what it holds.
+
+```python
+from rig import interpolate, tween
+
+eased = Node.create("transform", name="eased")
+with rig.fuse("ease"):
+    w = tween.in_out_sine(F.clamp(a.tx / 4, 0, 1))    # the curve's own math, fused
+    eased.t << interpolate.sequence(w, [0, 0.5, 1], [a.t, b.t, a.t * 2])
+
+print(cmds.ls("ease_*"), cmds.ls(type="container"))   # ['ease_fused1'] []
+print([round(v, 4) for v in cmds.getAttr("eased.t")[0]])   # [0.8827, 1.7039, 0.6264]
+```
 
 ```python
 with rig.fuse():
@@ -4412,7 +4432,16 @@ A fused value is built when it is used, not when it is written, so:
 * a fused call is not memoized: the same call twice gives two equal
   values, which build to one output;
 * rig's node counts and node types are not those of its network (one
-  `rigExpr` node instead), and a value has no node name until it is built.
+  `rigExpr` node instead), and a value has no node name until it is built;
+* a fused rig function makes no container and publishes no plug (no
+  `sequence1` with its `x` / `xp` / `yp` / `output`);
+* `choice` reads its selector as Maya's node does (rounded half away from
+  zero); out of range it gives the first or the last token, where Maya's node
+  keeps the value it had;
+* a scalar `smoothstep` whose left edge is above its right one is rig's
+  formula, a falling ramp, as for numbers and vectors; rig's network uses
+  Maya's `smoothStep` node there (Maya 2024 and later), which steps from 0 to
+  1 at the left edge.
 
 * The block is one undo step. `rig.fuse("arm")` names its nodes
   `arm_fused1`, ...

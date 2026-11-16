@@ -44,6 +44,9 @@ class _Case(MayaTestCase):
         options = dict(get_options())
         self.addCleanup(lambda: set_options(**options))
         _fuse.FUSE.plugin = None          # found again (a test may have refused it)
+        self.inputs()
+
+    def inputs(self):
         self.a = Node.create("transform", name="a")
         self.b = Node.create("transform", name="b")
         self.out = Node.create("transform", name="out")
@@ -189,11 +192,31 @@ class TestNodes(_Case):
         self.assertEqual(self.fused_nodes(), [])
 
     def test_notes(self):
+        far = Node.create("transform", name="far")
         with rig.fuse():
-            self.out.tx << self.a.tx * 2 + 1
-        notes = cmds.getAttr(self.fused_nodes()[0] + ".notes")
-        self.assertIn("scalarIn[0] <- a.translateX", notes)
-        self.assertIn("scalarOut[0] = ((a.translateX * 2) + 1)", notes)
+            u = self.a.tx * 2
+            self.out.tx << u * u + 1
+            far.t << self.a.t * u
+        self.assertEqual(self.fused_nodes(), ["fused1"])
+        self.assertEqual(cmds.getAttr("fused1.notes"), "\n".join([   # Markdown
+            "# rig.fuse",
+            "",
+            "One `rigExpr` node computes these expressions.",
+            "",
+            "## Inputs",
+            "",
+            "- `scalarIn[0] <- a.translateX`",
+            "- `vectorIn[0] <- a.translate`",
+            "",
+            "## Shared terms",
+            "",
+            "- `t1 = (a.translateX * 2)`",
+            "",
+            "## Outputs",
+            "",
+            "- `scalarOut[0] = ((t1 * t1) + 1)`",
+            "- `vectorOut[0] = (a.translate * t1)`",
+        ]))
 
 
 class TestRig(_Case):
@@ -202,16 +225,24 @@ class TestRig(_Case):
     def test_non_fusable_functions_take_its_plug(self):
         with rig.fuse():
             x = self.a.tx * 0.1
-            out = interpolate.sequence(x, [0, 1], [[0, 0, 0], [10, 20, 30]])
-            self.out.t << out
-        self.assertEqual(len(self.fused_nodes()), 1)
-        np.testing.assert_allclose(cmds.getAttr("out.t")[0], [1.5, 3.0, 4.5], rtol=1e-6)
+            steps = F.diff([x, x * 2, 5])               # diff builds rig's nodes
+            self.assertNotIsInstance(steps[0], rig.Fused)
+            self.out.tx << steps[0]
+            self.out.ty << steps[1]
+        self.assertEqual(len(self.fused_nodes()), 1)    # x and x * 2: one node
+        np.testing.assert_allclose([cmds.getAttr("out.tx"), cmds.getAttr("out.ty")], [0.15, 4.7], rtol=1e-6)
 
     def test_a_user_callback_returning_a_fused_value(self):
-        with rig.fuse():
-            out = interpolate.sequence(self.a.tx * 0.1, [0, 1], [[0, 0, 0], [10, 20, 30]],
-                                       method=lambda a, b, weight=0.5: a + (b - a) * weight)
-            self.out.t << out
+        from unittest import mock
+
+        # sequence's network (not its traced body): rig takes the callback's fused value as a plug
+        with mock.patch.dict(_fuse.RAW):
+            del _fuse.RAW["rig.interpolate.sequence"]
+            with rig.fuse():
+                out = interpolate.sequence(self.a.tx * 0.1, [0, 1], [[0, 0, 0], [10, 20, 30]],
+                                           method=lambda a, b, weight=0.5: a + (b - a) * weight)
+                self.assertNotIsInstance(out, rig.Fused)
+                self.out.t << out
         np.testing.assert_allclose(cmds.getAttr("out.t")[0], [1.5, 3.0, 4.5], rtol=1e-6)
 
     def test_matrices_fall_back(self):
@@ -343,6 +374,153 @@ class TestRig(_Case):
             name = str(v)
         self.assertTrue(name.endswith("scalarOut[0]"), name)
         self.assertEqual(cmds.getAttr(name), 3.0)
+
+
+class TestRigFunctions(_Case):
+    """rig's own functions fuse inside (decision 5): their bodies run on fused values"""
+
+    def setUp(self):
+        super().setUp()
+        set_options(fuse=False)        # rig's network outside a block, even under the option
+
+    def inputs(self):
+        super().inputs()
+        self.a.s << [0.5, 2.0, 1.25]
+        self.b.s << [3.0, 0.75, 1.5]
+        cmds.addAttr("a", longName="u", attributeType="double", keyable=True)
+        cmds.setAttr("a.u", 1.4)
+
+    def calls(self):
+        from rig import tween
+        A, B = self.a, self.b
+        return {
+            "in_out_elastic": lambda: tween.in_out_elastic(A.w),
+            "out_bounce": lambda: tween.out_bounce(A.w * 3),
+            "in_out_sine": lambda: tween.in_out_sine(A.u - 1),
+            "smoothstep": lambda: interpolate.smoothstep(B.tx, A.k, A.u),
+            "smoothstep_vector": lambda: interpolate.smoothstep(B.t, A.t, A.w),
+            "smootherstep": lambda: interpolate.smootherstep(0, A.k, A.u, normalize=True),
+            "inverse_lerp": lambda: interpolate.inverse_lerp(B.tx, A.k, A.u),
+            "interp": lambda: interpolate.interp(A.u, [0, 1, 2], [A.tx, B.tx, A.k], right=B.ty),
+            "sequence": lambda: interpolate.sequence(A.u, [0, 1, 2], [A.t, B.t, A.s]),
+            "sequence_two_points": lambda: interpolate.sequence(A.w, [0, 1], [A.t, B.t]),
+            "sequence_hold": lambda: interpolate.sequence(A.u * 3, [0, 1, 2], [A.t, B.t, A.s], ends="hold"),
+            "sequence_live_ends": lambda: interpolate.sequence(A.u * 3, [0, 1, 2], [A.t, B.t, A.s], ends=A.k > 1),
+            "sequence_elerp": lambda: interpolate.sequence(A.u, [0, 1, 2], [A.s, B.s, A.s * 2], method=rig.elerp),
+            "sequence_slerp": lambda: interpolate.sequence(A.u, [0, 1, 2], [A.t, B.t, -A.t], method=rig.slerp),
+            "slerp": lambda: rig.slerp(A.t, B.t, A.w),
+            "elerp": lambda: V.elerp(A.s, B.s, A.w),
+            "angle": lambda: rig.angle(A.t, B.t),
+            "angle_degrees": lambda: V.angle_degrees(A.t, B.t),
+            "triple_product": lambda: V.triple_product(A.t, B.t, A.s),
+            "choice": lambda: F.choice([A.tx, B.tx, A.k], selector=A.u),
+            "searchsorted": lambda: F.searchsorted([0, 1, 2], A.u),
+            "all_any": lambda: F.all([A.tx, B.tx]) + F.any([A.tx - 1.5, 0]),
+            "argmin_argmax": lambda: F.argmin([A.tx, B.tx, A.k]) * 10 + F.argmax([A.tx, B.tx, A.k]),
+        }
+
+    def test_each_fuses_into_one_node_and_computes_what_rigs_network_computes(self):
+        for name, build in self.calls().items():
+            with self.subTest(name):
+                expected = self.value(build())              # rig's network
+                before = set(cmds.ls())
+                with rig.fuse():
+                    value = build()
+                    self.assertIsInstance(value, rig.Fused)
+                    self.assertEqual(set(cmds.ls()), before)  # nothing built yet
+                    plug = _fuse.materialize(value)
+                made = [cmds.nodeType(n) for n in set(cmds.ls()) - before]
+                self.assertEqual(made, ["rigExpr"])
+                # rig's condition nodes hold floats: equal within float rounding
+                np.testing.assert_allclose(self.value(plug), expected, rtol=2e-6, atol=1e-6)
+
+    def test_no_container_and_nothing_published(self):
+        set_options(create_containers=True)
+        with rig.fuse():
+            self.out.t << interpolate.sequence(self.a.u, [0, 1, 2], [self.a.t, self.b.t, self.a.s])
+        self.assertEqual(cmds.ls(type="container"), [])
+        self.assertEqual(len(self.fused_nodes()), 1)
+
+    def test_choice_reads_its_selector_as_maya_does(self):
+        with rig.fuse():
+            self.out.tx << F.choice([10, 20, 30], selector=self.a.u)
+        for selector, expected in ((0.49, 10), (0.5, 20), (1.49, 20), (1.5, 30), (2.4, 30),
+                                   (-3, 10), (7, 30)):        # out of range: the first or last
+            cmds.setAttr("a.u", selector)
+            with self.subTest(selector):
+                self.assertEqual(cmds.getAttr("out.tx"), expected)
+
+    def test_a_live_ends_plug_switches(self):
+        with rig.fuse():
+            self.out.tx << interpolate.sequence(self.a.u, [0, 1], [0, 10], ends=self.a.k > 1)
+        self.assertEqual(cmds.getAttr("out.tx"), 10.0)      # a.k = 2: held at the end
+        cmds.setAttr("a.k", 0)
+        self.assertAlmostEqual(cmds.getAttr("out.tx"), 14.0)   # extrapolated
+
+    def test_what_does_not_fuse_builds_rigs_network(self):
+        from rig import tween
+        cases = {
+            "a List broadcasts": lambda: tween.in_quad(List([self.a.tx, self.b.tx])),
+            "matrices": lambda: interpolate.sequence(self.a.w, [0, 1], [self.a.worldMatrix[0], self.b.worldMatrix[0]],
+                                                     method=rig.blend),
+            "a choice without a selector": lambda: F.choice([self.a.tx, self.b.tx]),
+        }
+        for name, build in cases.items():
+            with self.subTest(name):
+                cmds.file(new=True, force=True)     # (a new scene clears memoize: both build)
+                self.inputs()
+                before = set(cmds.ls())
+                network = build()
+                net = sorted(cmds.nodeType(n) for n in set(cmds.ls()) - before)
+                cmds.file(new=True, force=True)
+                self.inputs()
+                before = set(cmds.ls())
+                with rig.fuse():
+                    fused = build()
+                self.assertNotIsInstance(fused, rig.Fused)
+                self.assertEqual(type(fused), type(network))
+                # the dropped trace built nothing: the same nodes as rig's network
+                self.assertEqual(sorted(cmds.nodeType(n) for n in set(cmds.ls()) - before), net)
+
+    def test_errors_are_rigs_and_build_nothing(self):
+        with rig.fuse():
+            with self.assertRaisesRegex(ValueError, "argument 'ends'"):
+                interpolate.sequence(self.a.u, [0, 1], [0, 1], ends="sideways")
+            with self.assertRaisesRegex(TypeError, "is not callable"):
+                interpolate.sequence(self.a.u, [0, 1], [0, 1], method="lerp")
+            with self.assertRaisesRegex(ValueError, "side must be"):
+                F.searchsorted([0, 1], self.a.u, side="middle")
+            # rig's operand checks run before the body (where a str would read as a value)
+            with self.assertRaisesRegex(TypeError, "is a plain str"):
+                F.all([self.a.tx, "b.tx"])
+        self.assertEqual(cmds.ls(type="rigExpr"), [])
+        self.assertEqual(cmds.ls(type="container"), [])
+
+    def test_a_vector_sequence_gives_its_points_exactly(self):
+        points = [[1.1, 1.3, 1.7], [0.3, -2.9, 5.1], [-4.7, 0.1, 2.2]]
+        for i, p in enumerate(points):
+            cmds.addAttr("a", longName=f"p{i}", attributeType="double3")
+            for ch in "XYZ":
+                cmds.addAttr("a", longName=f"p{i}{ch}", attributeType="double", parent=f"p{i}")
+            cmds.setAttr(f"a.p{i}", *p)
+        with rig.fuse():
+            self.out.t << interpolate.sequence(self.a.u, [0, 1, 2], [self.a.p0, self.a.p1, self.a.p2])
+        for x in (0, 1, 2):                     # the last one too: weight 1 of the last segment
+            cmds.setAttr("a.u", x)
+            with self.subTest(x=x):
+                self.assertEqual(list(cmds.getAttr("out.t")[0]), points[x])
+
+    def test_a_user_method_fuses_too(self):
+        from rig import tween
+        with rig.fuse():
+            out = interpolate.sequence(self.a.w, [0, 1], [self.a.t, self.b.t],
+                                       method=lambda y0, y1, weight: rig.lerp(y0, y1, tween.in_out_sine(weight)))
+            self.assertIsInstance(out, rig.Fused)
+            self.out.t << out
+        a, b = np.array([1.5, -2.0, 3.25]), np.array([0.5, 4.0, -1.0])
+        eased = -0.5 * (np.cos(np.pi * 0.25) - 1)
+        np.testing.assert_allclose(cmds.getAttr("out.t")[0], a + (b - a) * eased, rtol=1e-6)
+        self.assertEqual(len(self.fused_nodes()), 1)
 
 
 class TestScene(_Case):

@@ -786,6 +786,8 @@ def vectorize(
         except Exception:
             return results
 
+    # rig.fuse() traces a vectorized body only where it does not broadcast (`fuse._trace`)
+    wrapper._rig_vectorized = True
     # a statement for rig's own functions only (as memoize)
     return statement(wrapper) if rig_code(func) else wrapper
 

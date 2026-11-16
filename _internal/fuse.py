@@ -26,10 +26,20 @@ Materializing compiles the value into a ``rigExpr`` node (the rigExpr plug-in):
 The semantics are numpy's, in doubles: ``%`` is floor modulo, ``round`` is half to
 even, a division by zero is inf or nan, a test is true when it is not 0. They may
 differ from rig's network where Maya's nodes have rules of their own.
+
+rig's own functions fuse inside too (decision 5). A function in `TRACE` (the easing
+curves, ``interpolate.sequence`` / ``interp`` / ``smootherstep``, vector ``elerp`` /
+``angle``, ``searchsorted``, ``all``, ``argmin`` ...) runs its own body on the call's
+plugs and fused values (`_trace`): its operators and calls fuse, its containers are not
+made and it publishes nothing. A body step that would build something (a node, a fused
+value made a plug) drops the trace, and rig builds the function's network as it always
+did. A function that makes its nodes by hand has a fused form in `FORMS` instead
+(``choice``, vector ``slerp``, ``triple_product``, ``smoothstep``, ``inverse_lerp``).
 """
 from __future__ import annotations
 
 import collections.abc
+import itertools
 import math
 import numbers
 import os
@@ -74,11 +84,14 @@ class _State:
     outputs of the nodes of the open blocks (or of the session, with the option)."""
 
     __slots__ = ("on", "alive", "depth", "names", "option", "plugin", "warned", "owners", "serial", "leaves",
-                 "dirty", "last", "inlined", "warned_target")
+                 "dirty", "last", "inlined", "warned_target", "tracing")
 
     def __init__(self) -> None:
         self.on      = False
         self.alive   = 0
+        # rig functions whose bodies run on fused values just now (`_trace`): while it is
+        # not 0, rig makes no container, publishes nothing, and building a node drops it
+        self.tracing = 0
         self.depth   = 0
         self.names   = []
         self.option  = False
@@ -110,8 +123,11 @@ def _refresh() -> None:
         FUSE.leaves.clear()
         FUSE.inlined.clear()
         FUSE.last = None
+        _KEYS.clear()
     elif len(FUSE.leaves) > 100000:
         FUSE.leaves.clear()
+    if len(_KEYS) > 1000000:
+        _KEYS.clear()
 
 
 def _for_this_maya() -> bool:
@@ -171,8 +187,22 @@ def _load_plugin() -> bool:
 
 
 # ------------------------------------------------------------- the fused value
+# {(op, key, the arguments' keys): an int}. A value's key is the int its structure got
+# when it was first made: a key hashes at once however deep its expression (a nested
+# tuple would be hashed whole at every lookup). An int is never given twice, so a
+# cleared table only loses sharing between the values made before and after.
+_KEYS: dict = {}
+_IDS = itertools.count(1)
+
+
 class _Refused(TypeError):
     """an operation that does not fuse (rig builds its nodes instead)"""
+
+
+class _Untraceable(BaseException):
+    """A traced rig function (`_trace`) reached a step that builds something: a node, or
+    a fused value made a plug. The trace is dropped and rig builds the function's
+    network. A BaseException, so no ``except Exception`` on the way swallows it."""
 
 
 class Fused:
@@ -189,14 +219,21 @@ class Fused:
     __array_ufunc__ = None     # numpy defers to this class's reflected operators
     __iter__ = None            # not iterable (a vector's channels are .x / .y / .z)
 
-    def __init__(self, kind: str, op: str, args: tuple = (), extra: object = None, key: object = None) -> None:
+    def __init__(self, kind: str, op: str, args: tuple = (), extra: object = None, key: object = None,
+                 ident: "int | None" = None) -> None:
         FUSE.alive += 1        # (first: `__del__` runs even when this raises)
         self.kind  = kind      # "s" or "v"
         self.op    = op
         self.args  = args
         self.extra = extra
         self.truth = None
-        self.key   = (op, extra if key is None else key, tuple(a.key for a in args))
+        if ident is None:
+            # the structure's int (`_KEYS`): equal expressions, one key
+            shape = (op, extra if key is None else key, tuple(a.key for a in args))
+            ident = _KEYS.get(shape)
+            if ident is None:
+                ident = _KEYS[shape] = next(_IDS)
+        self.key   = ident
         # it reads a plug (a value made of numbers only is never shared, see `_shared`)
         self.live  = op.startswith("in_") or any(a.live for a in args)
 
@@ -342,9 +379,10 @@ _BOUND: list = []
 
 def _bind() -> tuple:
     if not _BOUND:
+        from rig._internal.list import List
         from rig._internal.types import math_type
         from rig.nodetypes._base import _PLUG_TYPES, _same_plug
-        _BOUND.extend((_PLUG_TYPES, math_type, _same_plug))
+        _BOUND.extend((_PLUG_TYPES, math_type, _same_plug, List))
     return _BOUND
 
 
@@ -361,8 +399,8 @@ def _leaf(plug) -> "Fused | None":
             return None
         old = known.extra.__dict__.get("_attrh")
         if old is None or old.isValid():
-            return known if known.extra is plug else Fused(known.kind, known.op, extra=plug, key=known.key[1])
-    plug_types, math_type, _ = _bind()
+            return known if known.extra is plug else Fused(known.kind, known.op, extra=plug, ident=known.key)
+    math_type = _bind()[1]
     try:
         kind = math_type(plug)
     except Exception:  # noqa: BLE001 (a plug rig cannot type does not fuse)
@@ -401,7 +439,7 @@ def _operand(value) -> "Fused | None":
         if any(p is None or p.kind != "s" for p in parts):
             return None
         if all(p.op == "const_s" for p in parts):
-            return Fused("v", "const_v", extra=tuple(p.extra for p in parts), key=tuple(p.key[1] for p in parts))
+            return Fused("v", "const_v", extra=tuple(p.extra for p in parts), key=tuple(p.extra.hex() for p in parts))
         return Fused("v", "make", tuple(parts))
     return None
 
@@ -473,6 +511,10 @@ def _lerp(a: Fused, b: Fused, w: Fused) -> Fused:
     if w.kind != "s":
         raise _Refused("lerp's weight is a scalar")
     a, b = _same_kind(a, b)
+    if a.kind == "v":
+        # rig's vector lerp: a * (1 - w) + b * w (its blendWeighted nodes), exactly a and b
+        # at w = 0 and 1; a scalar one is Maya's lerp node, a + (b - a) * w (the LERP op)
+        return _bin("add", _bin("mul", a, _un("rev", w)), _bin("mul", b, w))
     return Fused(a.kind, "lerp", (a, b, w))
 
 
@@ -658,6 +700,75 @@ def _f_atan2(name: str):
     return form
 
 
+# rig's functions that make their nodes themselves (no body to trace, see `_trace`)
+def _f_choice(tokens, selector=None):
+    """``choice(tokens, selector=plug)``: the token the selector picks, read as Maya's
+    ``choice`` node reads it (rounded half away from zero). Out of range it is the first
+    or the last token, where Maya's node keeps the value it had."""
+    if selector is None:
+        raise _Refused("choice without a selector: rig's node, whose selector can be wired later")
+    if type(tokens) not in (list, tuple, _bind()[3]):
+        raise _Refused("choice: a list of tokens")
+    tokens = list(tokens)
+    if FUSE.tracing:
+        # inside a rig function (`_trace`): no node to wire later, so a number picks
+        # the token itself (as Maya rounds it), and one token is a choice too
+        if not tokens:
+            raise _Refused("choice: no token")
+        if isinstance(selector, numbers.Real):
+            k = math.floor(abs(float(selector)) + 0.5)
+            return tokens[0 if selector < 0 else min(k, len(tokens) - 1)]
+    elif len(tokens) < 2:
+        raise _Refused("choice: two tokens or more")
+    *items, s = _operands(*tokens, selector)
+    if s.kind != "s" or _constant_only(s):
+        raise _Refused("choice: a live scalar selector (a number picks in rig's node)")
+    if len({p.kind for p in items}) != 1:
+        raise _Refused("choice: tokens of one kind")
+    out = items[0]
+    for k in range(1, len(items)):
+        # (selector >= k - 0.5): Maya's rounding, so the k-th token from there up
+        out = _select(_bin("ge", s, _constant(k - 0.5)), items[k], out)
+    return out
+
+
+def _f_slerp(input1, input2, weight=0.5):
+    """vector ``slerp``: rig's formula on the raw vectors (`rig.vector.slerp`), theta the
+    angle between them in [0, 180] degrees (as ``angleBetween`` gives it); a linear blend
+    where sin(theta) <= 1e-6"""
+    a, b, w = _operands(input1, input2, weight)
+    if a.kind != "v" or b.kind != "v" or w.kind != "s":
+        raise _Refused("slerp: two vectors and a scalar weight")
+    theta = _bin("atan2d", _vectors("length", "s", _vectors("cross", "v", a, b)), _vectors("dot", "s", a, b))
+    sine = _un("sind", theta)
+    rest = _un("rev", w)
+    spherical = _bin("div", _bin("add", _bin("mul", a, _un("sind", _bin("mul", rest, theta))),
+                                 _bin("mul", b, _un("sind", _bin("mul", w, theta)))), sine)
+    linear = _bin("add", _bin("mul", a, rest), _bin("mul", b, w))
+    return _select(_bin("le", sine, _constant(1e-6)), linear, spherical)
+
+
+def _f_triple_product(x, y, z):
+    a, b, c = _operands(x, y, z)
+    return _vectors("dot", "s", a, _vectors("cross", "v", b, c))
+
+
+def _f_smoothstep(input1, input2, weight=0.5, normalize=False):
+    """``smoothstep``: rig's formula (Maya's ``smoothStep`` node computes the same)"""
+    if normalize not in (True, False):
+        raise _Refused("normalize is a plug")
+    a, b, w = _operands(input1, input2, weight)
+    span = _bin("sub", b, a)
+    x = _clamp(_bin("div", _bin("sub", w, a), span), _constant(0.0), _constant(1.0))
+    out = _bin("mul", _bin("mul", x, x), _bin("sub", _constant(3.0), _bin("mul", _constant(2.0), x)))
+    return _bin("add", _bin("mul", out, span), a) if normalize else out
+
+
+def _f_inverse_lerp(input1, input2, weight):
+    a, b, w = _operands(input1, input2, weight)
+    return _bin("div", _bin("sub", w, a), _bin("sub", b, a))
+
+
 FORMS = {
     "rig.functions.abs": _f_un("abs"), "rig.functions.floor": _f_un("floor"),
     "rig.functions.ceil": _f_un("ceil"), "rig.functions.trunc": _f_un("trunc"),
@@ -680,6 +791,9 @@ FORMS = {
     "rig.vector.length": _f_length, "rig.vector.dot": _f_dot, "rig.vector.cross": _f_cross,
     "rig.trigonometry.degrees": _f_scale(DEG), "rig.trigonometry.radians": _f_scale(RAD),
     "rig.trigonometry.atan2": _f_atan2("atan2"), "rig.trigonometry.atan2d": _f_atan2("atan2d"),
+    "rig.functions.choice": _f_choice, "rig.vector.slerp": _f_slerp,
+    "rig.vector.triple_product": _f_triple_product, "rig.interpolate.smoothstep": _f_smoothstep,
+    "rig.interpolate.inverse_lerp": _f_inverse_lerp,
 }
 for _name in ("sin", "cos", "tan", "asin", "acos", "atan", "sind", "cosd", "tand", "asind", "acosd", "atand"):
     FORMS[f"rig.trigonometry.{_name}"] = _f_trig(_name)
@@ -700,11 +814,83 @@ def call(key: str, args: tuple, kwargs: dict):
     NotImplemented when it does not fuse or its operands do not"""
     form = FORMS.get(key)
     if form is None:
-        return NotImplemented
+        traced = RAW.get(key)
+        return NotImplemented if traced is None else _trace(*traced, args, kwargs)
     try:
         return form(*args, **kwargs)
     except TypeError:            # _Refused, or arguments the form does not take
         return NotImplemented
+
+
+# ------------------------------------------------------------------- tracing
+# rig's own functions that fuse inside: their bodies are rig's operators and functions
+# (each fusing, or traced too), containers and published plugs, and nothing else (no
+# node made by hand, no scene edit). A function added here must stay so.
+TRACE = frozenset({
+    "rig.interpolate.sequence", "rig.interpolate.interp", "rig.interpolate.smootherstep",
+    "rig.vector.elerp", "rig.vector.angle", "rig.vector.angle_degrees",
+    "rig.functions.searchsorted", "rig.functions.all", "rig.functions.any",
+    "rig.functions.argmin", "rig.functions.argmax",
+    "rig._dispatch.slerp", "rig._dispatch.elerp", "rig._dispatch.angle", "rig._dispatch.angle_degrees",
+})
+TRACE_MODULES = ("rig.tween.",)      # every easing curve
+
+# {key: (the function's own body, under its @memoize / @vectorize; vectorized)}
+RAW: dict = {}
+
+
+def register(key: str, func) -> None:
+    """`rig._internal.operands.operands` registers every public function: ``key`` traces
+    when `TRACE` or `TRACE_MODULES` names it"""
+    if key not in TRACE and not key.startswith(TRACE_MODULES):
+        return
+    vectorized = False
+    while True:
+        vectorized = vectorized or getattr(func, "_rig_vectorized", False)
+        inner = getattr(func, "__wrapped__", None)
+        if inner is None:
+            break
+        func = inner
+    RAW[key] = (func, vectorized)
+
+
+def _live(value) -> bool:
+    """True if ``value`` is, or holds (in a list, a tuple or a List), a plug or a fused value"""
+    t = type(value)
+    if t is Fused or t in _bind()[0]:
+        return True
+    if t is list or t is tuple or isinstance(value, _bind()[3]):
+        return any(_live(v) for v in value)
+    return False
+
+
+def _trace(func, vectorized: bool, args: tuple, kwargs: dict):
+    """The result of ``func``, a rig function's own body, run on the call's plugs and fused
+    values: rig's function fuses inside. Its containers are not made and it publishes
+    nothing (a published input is what it was given); memoize is skipped (a fused value
+    is never cached). A step that would build a node, a container or a plug drops the
+    trace (`_Untraceable`), as any error does: NotImplemented, and rig builds the
+    function's network, which raises the error in rig's own order.
+
+    A vectorized function given a List broadcasts, rig's way (NotImplemented); so does a
+    call of numbers only, which rig folds."""
+    if vectorized and any(isinstance(v, _bind()[3]) for v in (*args, *kwargs.values())):
+        return NotImplemented
+    if not (any(_live(v) for v in args) or any(_live(v) for v in kwargs.values())):
+        return NotImplemented
+    FUSE.tracing += 1
+    try:
+        return func(*args, **kwargs)
+    except (_Untraceable, Exception) as error:  # noqa: BLE001 (rig's network raises it, in its order)
+        if _DROPPED is not None:
+            _DROPPED.append((func.__qualname__, f"{type(error).__name__}: {error}"[:300]))
+        return NotImplemented
+    finally:
+        FUSE.tracing -= 1
+
+
+# debugging: a list here collects each dropped trace, (function, why)
+_DROPPED: "list | None" = None
 
 
 # ------------------------------------------------------------ materialization
@@ -759,8 +945,9 @@ def materialized_arguments(args: tuple, kwargs: dict) -> tuple:
 
 
 def materialized_result(value):
-    """a user callback's result as rig's code can take it (`journal.user_call`)"""
-    return materialized(value) if FUSE.alive else value
+    """a user callback's result as rig's code can take it (`journal.user_call`); a traced
+    body takes it as it is"""
+    return materialized(value) if FUSE.alive and not FUSE.tracing else value
 
 
 def materialize(value: Fused):
@@ -772,7 +959,12 @@ def materialize(value: Fused):
 def materialize_all(values: list) -> list:
     """The plug of each fused value in ``values``: the output a node of the block
     already has for it, or a new output of one node for all the others (`_place`
-    decides which node). A leaf is its plug, a number itself."""
+    decides which node). A leaf is its plug, a number itself. Inside a trace a value
+    is never made a plug: the trace is dropped (`_trace`)."""
+    if FUSE.tracing:
+        raise _Untraceable("a fused value is made a plug")
+    if len(_KEYS) > 1000000:
+        _KEYS.clear()            # (the option: an endless block; ints are never reused)
     out: list = [None] * len(values)
     pending, seen = [], set()
     for i, v in enumerate(values):
@@ -1175,7 +1367,7 @@ def _text(e: Fused, names: dict, top: bool = False) -> str:
 
 
 def describe(record: _Record, c: _Compiled) -> str:
-    """the node's expressions as text (its Notes): inputs, shared terms, outputs"""
+    """the node's expressions as Markdown (its Notes): inputs, shared terms, outputs"""
     outputs = [(f"scalarOut[{i}]", e) for i, e in enumerate(c.s_out)]
     outputs += [(f"vectorOut[{i}]", e) for i, e in enumerate(c.v_out)]
     names = dict(c.loads)
@@ -1213,15 +1405,18 @@ def describe(record: _Record, c: _Compiled) -> str:
         if e.key not in names and uses.get(e.key, 0) > 1 and e.args and e.op not in ("splat", "comp"):
             names[e.key] = f"t{len(temps) + 1}"
             temps.append(e)
-    lines = ["rig.fuse: one rigExpr node for these expressions", "", "inputs:"]
-    for slot, attr in (("s", "scalarIn"), ("v", "vectorIn"), ("a", "angleIn")):
-        for i, plug in enumerate(c.inputs[slot]):
-            lines.append(f"  {attr}[{i}] <- {plug}")
+    # Markdown: a heading per section, an item per line, each line in a code span
+    # (an expression's * _ | < would be Markdown otherwise; no plug name holds a `)
+    inputs = [f"- `{attr}[{i}] <- {plug}`"
+              for slot, attr in (("s", "scalarIn"), ("v", "vectorIn"), ("a", "angleIn"))
+              for i, plug in enumerate(c.inputs[slot])]
+    lines = ["# rig.fuse", "", "One `rigExpr` node computes these expressions.", "",
+             "## Inputs", ""] + (inputs or ["- none"])
     if temps:
-        lines += ["", "shared terms:"] + [f"  {names[t.key]} = {_text(t, names, top=True)}" for t in temps]
-    lines += ["", "outputs:"]
-    for label, o in outputs:
-        lines.append(f"  {label} = {_text(o, names, top=True)}")
+        lines += ["", "## Shared terms", ""]
+        lines += [f"- `{names[t.key]} = {_text(t, names, top=True)}`" for t in temps]
+    lines += ["", "## Outputs", ""]
+    lines += [f"- `{label} = {_text(o, names, top=True)}`" for label, o in outputs]
     return "\n".join(lines)
 
 

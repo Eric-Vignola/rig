@@ -478,23 +478,14 @@ def operands(
                 kwargs[key] = _prepared_operand(value, f"{label}() argument {key!r}")
         return args, kwargs
 
-    @functools.wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        if skip_when is not None:
-            args, kwargs = _prepared_arguments(args, kwargs)
-            if skip_when(args, kwargs):
-                if rotate_keywords:
-                    args, kwargs = _rotate_order_arguments(
-                        label, args, kwargs, rotate_positions, rotate_keywords
-                    )
-                if _FUSE.alive:
-                    args, kwargs = _fuse.materialized_arguments(args, kwargs)
-                return func(*args, **kwargs)
-        # A set / frozenset / dict operand raises and an iterator is read into
-        # a list (see `_prepared_operand`), then checked as that list. A plug
-        # operand whose node was freed raises its "already deleted!", as it
-        # does in a Plug operator (see `_live_text_operand`); so does a plug
-        # given to a config parameter (a rotate order).
+    def _checked(args: tuple, kwargs: dict) -> Tuple[tuple, dict]:
+        """``args`` / ``kwargs`` once every operand passed rig's checks, with the
+        rotate-order names replaced by their ints. A set / frozenset / dict
+        operand raises and an iterator is read into a list (see
+        `_prepared_operand`), then checked as that list. A plug operand whose node
+        was freed raises its "already deleted!", as it does in a Plug operator
+        (see `_live_text_operand`); so does a plug given to a config parameter (a
+        rotate order)."""
         for i, value in enumerate(args):
             if not isinstance(value, _CAN_HOLD_STR):
                 if (
@@ -531,6 +522,21 @@ def operands(
             args, kwargs = _rotate_order_arguments(
                 label, args, kwargs, rotate_positions, rotate_keywords
             )
+        return args, kwargs
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        if skip_when is not None:
+            args, kwargs = _prepared_arguments(args, kwargs)
+            if skip_when(args, kwargs):
+                if rotate_keywords:
+                    args, kwargs = _rotate_order_arguments(
+                        label, args, kwargs, rotate_positions, rotate_keywords
+                    )
+                if _FUSE.alive:
+                    args, kwargs = _fuse.materialized_arguments(args, kwargs)
+                return func(*args, **kwargs)
+        args, kwargs = _checked(args, kwargs)
         if _FUSE.alive:
             # rig.fuse(): fused arguments become plugs (one node), once every check passed
             args, kwargs = _fuse.materialized_arguments(args, kwargs)
@@ -539,6 +545,8 @@ def operands(
     wrapper._operand_config = config
     statement(wrapper)   # (refuses a generator or a coroutine function)
     fuse_key = f"{func.__module__}.{func.__qualname__}"
+    _fuse.register(fuse_key, func)   # a rig function whose body fuses inside (`fuse.TRACE`)
+    traced = fuse_key in _fuse.RAW and skip_when is None
 
     # the statement entry (`journal.statement`), where rig.fuse() hooks in: user code
     # fusing gets the fused form of a fusable function, and any other call gets its
@@ -549,6 +557,10 @@ def operands(
             return wrapper(*args, **kwargs)
         if _FUSE.on:
             args, kwargs = _fuse.listed(args, kwargs)
+            if traced:
+                # rig's checks first: its body, run on fused values, would read a str
+                # in a list as a value where rig's network refuses it
+                args, kwargs = _checked(args, kwargs)
             fused = _fuse.call(fuse_key, args, kwargs)
             if fused is not NotImplemented:
                 return fused
