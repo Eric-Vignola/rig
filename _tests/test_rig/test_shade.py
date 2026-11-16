@@ -36,7 +36,7 @@ from rig.nodetypes import (
     StandardSurface,
     SurfaceShader,
 )
-from rig._tests._base import MayaTestCase
+from rig._tests._base import MayaTestCase, default_shader, default_shader_class
 
 
 ISG = "initialShadingGroup"
@@ -386,8 +386,8 @@ class TestMaterialCreate(MayaTestCase):
         self.cube << Default()
         self.cube << ShadingEngine("bareSG")
         self.assertEqual(_members("bareSG"), ["cubeShape"])
-        self.assertEqual(Default().get_material(), Node("standardSurface1"))
-        self.assertEqual(Default(), Material("standardSurface1").get_engine())
+        self.assertEqual(Default().get_material(), Node(default_shader()))
+        self.assertEqual(Default(), Material(default_shader()).get_engine())
         # an engine node is exactly that engine, a shaderless one too (round 4b
         # FIX); the particle engine is refused
         empty  = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name="emptySG")
@@ -444,7 +444,7 @@ class TestMaterialCreate(MayaTestCase):
         with self.assertRaisesRegex(TypeError, "takes type="):
             Material.define("untyped")
         self.assertEqual(set(cmds.ls()), before)
-        self.assertEqual(str(Default().get_material()), "standardSurface1")
+        self.assertEqual(str(Default().get_material()), default_shader())
 
 
 # --------------------------------------------------------------------- #
@@ -1007,7 +1007,8 @@ class TestMaterialQuery(MayaTestCase):
         self.assertEqual(_names(Lambert.of(self.cube)), [])
         self.assertIn(self.cube.f[4:], Default())
         self.assertNotIn(self.cube.f[0], Default())
-        self.assertEqual(_names(StandardSurface.of(self.cube.f[5])), ['StandardSurface("standardSurface1")'])
+        shader = default_shader_class()                 # StandardSurface; OpenPBRSurface from Maya 2027
+        self.assertEqual(_names(shader.of(self.cube.f[5])), [f'{shader.__name__}("{default_shader()}")'])
         # re-injectable
         self.cube.f[5] << found[1]
         np.testing.assert_array_equal(self.cube >> Blinn("red"), [0, 1, 2, 5])
@@ -1030,7 +1031,7 @@ class TestMaterialQuery(MayaTestCase):
             [str(x) for x in Material.of(self.cube)],
             [ISG, "red", "blue"],
         )
-        self.assertEqual(str(Default().get_material()), "standardSurface1")
+        self.assertEqual(str(Default().get_material()), default_shader())
         self.assertEqual([str(x) for x in Material.of(self.cube.f[:2])], ["red"])
         # Material.of lists what holds EVERY face of x (all-members semantics)
         self.assertEqual([str(x) for x in Material.of(self.cube.f[[0, 3]])], [])
@@ -1038,7 +1039,7 @@ class TestMaterialQuery(MayaTestCase):
         found = Node(self.shape).get_material_bindings()
         self.assertEqual(
             sorted((str(m), ids.tolist()) for m, ids in found),
-            [("blue", [3]), ("red", [0, 1, 2]), ("standardSurface1", [4, 5])],
+            sorted([("blue", [3]), ("red", [0, 1, 2]), (default_shader(), [4, 5])]),
         )
         # object level: the one material
         self.cube << Blinn("red")

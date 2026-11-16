@@ -1,7 +1,7 @@
 from maya import cmds
 from rig import Node
 from rig.nodetypes import Mesh, ObjectSet, ShadingEngine
-from rig._tests._base import MayaTestCase
+from rig._tests._base import MayaTestCase, default_shader
 
 # ShadingEngine.assign is private (_assign) since the user decision of 2026-10-17
 # (one way only: x << sg / x << material); these tests drive the private helper.
@@ -119,13 +119,15 @@ class TestShadingEngine(MayaTestCase):
         self.assertEqual(shaders.count(mat), 1)
 
     def test_for_material_defaults(self):
-        # lambert1 feeds no engine; standardSurface1 feeds both default engines
-        # and initialParticleSE is dropped
+        # lambert1 feeds no engine; the default shader (standardSurface1, openPBR_shader1 from
+        # Maya 2027) feeds both default engines and initialParticleSE is dropped
         self.assertIsNone(ShadingEngine.for_material("lambert1", create=False))
         self.assertEqual(
-            ShadingEngine.for_material("standardSurface1", create=False),
+            ShadingEngine.for_material(default_shader(), create=False),
             Node(ShadingEngine.DEFAULT),
         )
+        if default_shader() != "standardSurface1":      # Maya 2027: still there, feeding no engine
+            self.assertIsNone(ShadingEngine.for_material("standardSurface1", create=False))
         with self.assertRaises(ValueError):
             ShadingEngine.for_material("noSuchMaterial")
 

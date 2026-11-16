@@ -753,8 +753,9 @@ class Material(DGNode):
         their materialInfos, in one undo step (the members are left in no
         engine: green; ``ShadingEngine.repair()`` re-homes them). ``nodes``, when
         given, are deleted as :meth:`DGNode.delete` does. Refuses a Maya
-        default (``lambert1``, ``standardSurface1``: TypeError), a
-        referenced shader (RuntimeError) or a locked one (InjectionError).
+        default (``lambert1``, ``standardSurface1``, Maya 2027's
+        ``openPBR_shader1``: TypeError), a referenced shader (RuntimeError) or
+        a locked one (InjectionError).
         ``cmds.delete(name)`` deletes the shader alone."""
         if nodes is not None:
             super().delete(nodes, **kwargs)

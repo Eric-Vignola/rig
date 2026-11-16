@@ -5,6 +5,9 @@ class in `rig.nodetypes`, the `Attribute` wrapper, the name helpers,
 `Axis` and the bundled undo plug-in. The blocks run top to
 bottom as one script and share a namespace — the **Setup** block comes first,
 and each section that wants a clean scene starts with `cmds.file(new=True, force=True)`.
+A `print`'s comment is what it prints; where Maya 2027 prints otherwise, the comment adds
+`-- Maya 2027: ...`. Its default shader is `openPBR_shader1`, an `OpenPBRSurface`
+(`standardSurface1` is still there, feeding no engine).
 
 Concepts, the resolution rules and the verified behaviour live in [`README.md`](README.md).
 
@@ -91,8 +94,8 @@ print(repr(cube), xf is cube, Node(cube) is cube)  # Transform("cube") True True
 print(type(Node("cubeShape")).__name__)            # Mesh
 
 print(cube.get_shapes())                          # [Mesh("cubeShape")]
-print(cube.get_shape().get_materials())           # [StandardSurface("standardSurface1")]
-print(Node("cubeShape").get_material_bindings())  # standardSurface1 -- one material, the node itself
+print(cube.get_shape().get_materials())           # [StandardSurface("standardSurface1")] -- Maya 2027: [OpenPBRSurface("openPBR_shader1")]
+print(Node("cubeShape").get_material_bindings())  # standardSurface1 -- one material, the node itself; Maya 2027: openPBR_shader1
 ```
 
 Attributes have two spellings. `node.<attr>` is a DSL `Plug`: an
@@ -1265,14 +1268,14 @@ mesh, otherwise `(material, face ids)` pairs; `verbose=True` always gives
 the pairs.
 
 ```python
-print(mesh.get_materials(), mesh.get_shading_engines())  # [StandardSurface("standardSurface1")] [ShadingEngine("initialShadingGroup")]
-print(mesh.get_material_bindings())                      # standardSurface1
-print(mesh.get_material_bindings(verbose=True))          # [(StandardSurface("standardSurface1"), array([0, 1, 2, 3, 4, 5]))]
+print(mesh.get_materials(), mesh.get_shading_engines())  # [StandardSurface("standardSurface1")] [ShadingEngine("initialShadingGroup")] -- Maya 2027: [OpenPBRSurface("openPBR_shader1")] [ShadingEngine("initialShadingGroup")]
+print(mesh.get_material_bindings())                      # standardSurface1 -- Maya 2027: openPBR_shader1
+print(mesh.get_material_bindings(verbose=True))          # [(StandardSurface("standardSurface1"), array([0, 1, 2, 3, 4, 5]))] -- Maya 2027: [(OpenPBRSurface("openPBR_shader1"), array([0, 1, 2, 3, 4, 5]))]
 
 red = cmds.shadingNode("blinn", asShader=True, name="red")
 cube.f[0:2] << Node(red)                                                              # faces 0 and 1 (a Python slice)
-print(sorted(mesh.get_materials()), sorted(mesh.get_shading_engines()))                # [Blinn("red"), StandardSurface("standardSurface1")] [ShadingEngine("initialShadingGroup"), ShadingEngine("redSG")]
-print(mesh.get_material_bindings())                                                    # [(Blinn("red"), array([0, 1])), (StandardSurface("standardSurface1"), array([2, 3, 4, 5]))]
+print(sorted(mesh.get_materials()), sorted(mesh.get_shading_engines()))                # [Blinn("red"), StandardSurface("standardSurface1")] [ShadingEngine("initialShadingGroup"), ShadingEngine("redSG")] -- Maya 2027: [OpenPBRSurface("openPBR_shader1"), Blinn("red")] [ShadingEngine("initialShadingGroup"), ShadingEngine("redSG")]
+print(mesh.get_material_bindings())                                                    # [(Blinn("red"), array([0, 1])), (StandardSurface("standardSurface1"), array([2, 3, 4, 5]))] -- Maya 2027: [(OpenPBRSurface("openPBR_shader1"), array([2, 3, 4, 5])), (Blinn("red"), array([0, 1]))]
 print(mesh.get_materials(as_pairs=True)[0][0].get_material() in mesh.get_materials())  # True -- (engine, material) pairs
 ```
 
@@ -1783,7 +1786,7 @@ red = cmds.shadingNode("blinn", asShader=True, name="red")
 print(ShadingEngine.for_material("red", create=False))            # None
 sg = ShadingEngine.for_material("red")
 print(repr(sg), sg.get_material(), sg.get_material_info(), sg.get_face_members())                             # ShadingEngine("redSG") red ['materialInfo1'] []
-print(ShadingEngine.for_material("red") == sg, ShadingEngine.for_material("standardSurface1", create=False))  # True initialShadingGroup
+print(ShadingEngine.for_material("red") == sg, ShadingEngine.for_material("standardSurface1", create=False))  # True initialShadingGroup -- Maya 2027: True None
 
 cube.f[0:2] << sg
 print(sg.get_face_members())                                                                                  # [(Mesh("cubeShape"), array([0, 1]))]

@@ -51,7 +51,7 @@ from rig.nodetypes import (
     Transform,
 )
 from rig.nodetypes._base import get_custom_type
-from rig._tests._base import MayaTestCase
+from rig._tests._base import MayaTestCase, default_shader
 
 
 _EXACT = {
@@ -182,8 +182,8 @@ class TestShaderNodeClasses(_Case):
                     self.assertEqual(bool(cls.is_type(name)), name in listed)
         self.assertEqual(
             sorted(str(n) for n in Material.find_all()),
-            sorted(["lambert1", "standardSurface1", *(f"x_{t}" for t in (
-                "lambert", "blinn", "phong", "anisotropic", "rampShader", "surfaceShader"))]),
+            sorted({"lambert1", "standardSurface1", default_shader(), *(f"x_{t}" for t in (
+                "lambert", "blinn", "phong", "anisotropic", "rampShader", "surfaceShader"))}),
         )
         # C19: Maya's lambert subtypes, each typed by its own class
         loose = {str(n): type(n) for n in Lambert.find_all(exact_type=False)}

@@ -15,6 +15,7 @@ with the same arguments dedupe to a single Maya node.
 
 from __future__ import annotations
 
+import functools
 import math
 import numbers
 from typing import Any, List, Optional
@@ -245,18 +246,29 @@ def _average_with_literals(args: tuple, name: str) -> Any:
 
 
 def _ratio(value: float) -> float:
-    """The number to write so a distance-typed attribute holds ``value`` itself.
+    """The number to write so ``lerp.weight`` holds ``value`` itself.
 
-    The 2024+ math nodes' attributes are ``doubleLinear``, and rig, like
-    ``cmds.setAttr``, reads a number written there in the scene's working
-    unit: right for a distance (an operand, a bound), but a ratio (a
-    ``lerp`` weight) would come out scaled by the unit's size in centimetres
-    (0.5 in a metre scene would weigh 50).
+    Maya 2024 to 2026's math nodes have ``doubleLinear`` attributes, and rig,
+    like ``cmds.setAttr``, reads a number written there in the scene's working
+    unit: right for a distance (an operand, a bound), but a ratio (a ``lerp``
+    weight) would come out scaled by the unit's size in centimetres (0.5 in a
+    metre scene would weigh 50). Maya 2027's are plain ``double`` (a distance
+    connected in arrives through a ``unitConversion``, in the working unit):
+    there the ratio is written as it is.
     """
     unit = OpenMaya.MDistance.uiUnit()
-    if unit == OpenMaya.MDistance.kCentimeters:
+    if unit == OpenMaya.MDistance.kCentimeters or not _distance_typed("lerp", "weight"):
         return value
     return OpenMaya.MDistance(value, OpenMaya.MDistance.kCentimeters).asUnits(unit)
+
+
+@functools.lru_cache(maxsize=None)
+def _distance_typed(node_type: str, attr: str) -> bool:
+    """Whether ``node_type``'s attribute ``attr`` is a distance (``doubleLinear``)."""
+    obj = OpenMaya.MNodeClass(node_type).attribute(attr)
+    return obj.hasFn(OpenMaya.MFn.kUnitAttribute) and (
+        OpenMaya.MFnUnitAttribute(obj).unitType() == OpenMaya.MFnUnitAttribute.kDistance
+    )
 
 
 @_plus_minus_average_op.impl(since=0, scope=SCOPE_COMPOUND)

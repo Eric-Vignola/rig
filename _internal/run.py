@@ -709,7 +709,7 @@ class _Finder:
         top = name.partition(".")[0]
         new = top not in run.owned
         if new:
-            if getattr(_IMPORTER, "shared", False):
+            if getattr(_IMPORTER, "shared", False) or _shared_importer():
                 return None                                  # a shared= package's code imports it: the session's
             why = None if top in run.shared else _rule(run, top)
             if why:
@@ -857,6 +857,22 @@ def _from_shared(scope):
     run  = _shown()
     name = scope.get("__name__") if run is not None and isinstance(scope, dict) else None
     return isinstance(name, str) and name.partition(".")[0] in run._extra
+
+
+def _shared_importer():
+    """Whether the import `_Finder` finds comes from code of a ``shared=`` package, read off the
+    stack: the innermost frame outside the import machinery (importlib, this module). Maya 2027's
+    ``builtins.__import__`` swaps itself for a ``__lazy_import__`` while it imports, so an import
+    made by a module being imported skips rig's hook (`_import`), and ``_IMPORTER.shared`` still
+    says what the import around it was."""
+    frame = sys._getframe(1)
+    while frame is not None:
+        name = frame.f_globals.get("__name__")
+        if name != __name__ and not (isinstance(name, str) and (
+                name == "importlib" or name.startswith(("importlib.", "_frozen_importlib")))):
+            return _from_shared(frame.f_globals)
+        frame = frame.f_back
+    return False
 
 
 def _imported(shared, do, *args):
