@@ -733,7 +733,9 @@ class Plug(Attribute):
         if (h is not None and not h.isAlive()) or (a is not None and not a.isAlive()):
             _ensure_owner_alive(self)
         if _FUSE.alive and _fuse._has_fused(other):
-            other = _fuse.materialized(other)   # rig.fuse(): a fused value connects as its plug
+            other = _fuse.materialized(other, into=(self,))   # rig.fuse(): connects as its plug
+        elif _FUSE.outputs and type(other) in _PLUG_TYPES:
+            other = _fuse.rerouted(other, self)   # a fused output that would ring back: a loop copy
         if type(other) in _PLUG_TYPES:
             d = other.__dict__
             h = d.get("_handle")

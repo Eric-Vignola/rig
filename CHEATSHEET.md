@@ -67,7 +67,7 @@ of rig names the cgmath commit it was verified on here and in
 | 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, several files in one namespace, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
 | 41 | [`rig.exec`: a string of code as if in a fresh Python](#41-rigexec-a-string-of-code-as-if-in-a-fresh-python) | `rig.exec(source, inputs, argv=, shared=)`: the code as `python -c` runs it, dedented first, the session's `sys.path`, `rig.run`'s imports and `Run`, one undo step named after the first line, outside `__all__` |
 | 42 | [A cgmath Scene in Maya](#42-a-cgmath-scene-in-maya) | `rig.load_scene(path)` and `rig.create_scene(scene)`: the nodes, each mesh, its blendShape and its skin, then the take; any number of copies, `uuids=True` for the data's uuids; the steps by hand (`Mesh` / `BlendShape` / `SkinCluster.create(item)`, `node.key_hierarchy(clip)`), what is left out |
-| 43 | [`rig.fuse()`: math in one node](#43-rigfuse-math-in-one-node) | `with rig.fuse():` and `set_options(fuse=True)`: scalar and vector math as a `Fused` value, compiled into `rigExpr` nodes when it is connected or used; what joins a node, what fuses (rig's own functions inside too), numpy's rules, the rigExpr plug-in, one undo step |
+| 43 | [`rig.fuse()`: math in one node](#43-rigfuse-math-in-one-node) | `with rig.fuse():` and `set_options(fuse=True)`: scalar and vector math as a `Fused` value, compiled into `rigExpression` nodes when it is connected or used; what joins a node, what fuses (rig's own functions inside too), numpy's rules, rig's plug-in `rig.mll`, one undo step |
 
 ---
 
@@ -4333,9 +4333,9 @@ node: an operator or a math function given plugs (scalars or vectors), numbers
 or fused values returns a `rig.Fused` value, an expression. It becomes a plug
 when rig needs one: when it is connected (`plug << value`, a List or a Node
 `<<`), given to a function that does not fuse, put in a List, or read
-(`str()`, `.get()`). rig then compiles it into a `rigExpr` node, the rigExpr
-plug-in's: one node computes a whole chain of math, and the Attribute
-Editor's Notes show what it computes, in Markdown.
+(`str()`, `.get()`). rig then compiles it into a `rigExpression` node, from
+rig's plug-in `rig.mll`: one node computes a whole chain of math, and the
+Attribute Editor's Notes show what it computes, in Markdown.
 
 ```python
 import rig
@@ -4357,7 +4357,7 @@ with rig.fuse("demo"):
     out.ty << condition(u > 3, a.ty, u)           # uses u: joins demo_fused1
     far.t << V.normalize(a.t - b.t) * F.clamp(u, 0, 5)   # joins it too
 
-print(cmds.ls(type="rigExpr"))                    # ['demo_fused1']
+print(cmds.ls(type="rigExpression"))              # ['demo_fused1']
 print(cmds.getAttr("out.ty"), cmds.getAttr("far.ty"))   # -2.0 -2.830031906222678
 print(cmds.getAttr("demo_fused1.notes").splitlines()[-1])
 # - `vectorOut[0] = (normalize((a.translate - b.translate)) * clamp(scalarOut[0], 0, 5))`
@@ -4370,19 +4370,28 @@ block goes into the block's first node that can take it:
   it, by connections that can change: a cycle, or a loop the evaluation
   manager evaluates serially. A value reading what the node drives (a
   `motionPath`'s position, when the node drives its `uValue`) goes to the
-  block's next node, or starts one. A setting nothing drives (a rider's
-  `uDefault`, a dynamic attribute nobody connects or keys) closes no ring,
-  even on a node the block drives;
+  block's next node, or starts one. What can change: what is connected, what
+  that affects, and a transform's keyable channels (an animator keys a
+  control later). A setting nothing drives (a rider's `uDefault`, a dynamic
+  attribute nobody connects or keys) closes no ring, even on a node the block
+  drives;
+* where a value goes counts too. A value connected into what the node
+  reads goes to the next node. A value connected into a node that leads back
+  to what it reads (each of `rail_spine`'s controls gets a `u` from the
+  distances between the controls) loops whichever node computes it: it is
+  computed in a small node of its own, so the loop the evaluation manager
+  evaluates serially holds only that node, not the block's;
 * a node holds up to 10,000 instructions: a bigger block gets one more node;
 * a value another node already outputs is read from that output.
 
 So the block decides how many nodes: `examples/rail_spine.py` inside one
-`with rig.fuse():` builds 3 `rigExpr` nodes for its 20 riders, 206 nodes in
-all (rig's own network: 1,723). One node computing many riders runs on one
-thread: a block around each rider instead gives a node or two per rider,
-which play back in parallel. With `set_options(fuse=True)` and no block, a
-value joins the node made just before it when it uses what that node
-computes, else it gets a new node.
+`with rig.fuse():` builds 6 `rigExpression` nodes for its 20 riders (3 of
+them its controls' small `u` nodes), 209 nodes in all (rig's own network:
+1,723). One node computing many riders runs on one thread: a block around
+each rider instead gives a node or two per rider, which play back in
+parallel. With `set_options(fuse=True)` and no block, a value joins the node
+made just before it when it uses what that node computes, else it gets a new
+node.
 
 What fuses: the operators (`+ - * / // % **`, unary `-`, `< <= > >= == !=`,
 `& | ^ ~`), `.x` / `.y` / `.z` of a vector, a `[a, b, c]` vector, and
@@ -4455,7 +4464,8 @@ A fused value is built when it is used, not when it is written, so:
 * a fused call is not memoized: the same call twice gives two equal
   values, which build to one output;
 * rig's node counts and node types are not those of its network (one
-  `rigExpr` node instead), and a value has no node name until it is built;
+  `rigExpression` node instead), and a value has no node name until it is
+  built;
 * a fused rig function makes no container and publishes no plug (no
   `sequence1` with its `x` / `xp` / `yp` / `output`);
 * `choice` reads its selector as Maya's node does (rounded half away from
@@ -4470,8 +4480,8 @@ A fused value is built when it is used, not when it is written, so:
   `arm_fused1`, ...
 * `rig.set_options(fuse=True)` fuses everywhere, as one endless block (and
   `fuse = true` in `_defaults.toml`).
-* The rigExpr plug-in is loaded on first use: already loaded, from
-  `RIG_EXPR_PLUGIN` (its `.mll`), or by name from `MAYA_PLUG_IN_PATH`.
+* rig's plug-in, `rig.mll`, is loaded on first use: already loaded, from
+  `RIG_PLUGIN` (its path), or by name from `MAYA_PLUG_IN_PATH`.
   Without it, the block builds rig's nodes, with one warning per session.
 * A saved scene needs only the plug-in: the program is an int array and the
   constants a double array on the node.

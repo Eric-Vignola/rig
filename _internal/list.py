@@ -707,7 +707,7 @@ class List(list):
         if self._epoch != _EPOCH[0]:
             _check(self)
         if _FUSE.alive and _fuse._has_fused(other):
-            other = _fuse.materialized(other)   # rig.fuse(): fused values connect as plugs
+            other = _fuse.materialized(other, into=self)   # rig.fuse(): fused values connect as plugs
         # Retired connection-query sentinel (the class itself on the right).
         if other is List:
             raise TypeError(

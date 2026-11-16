@@ -1,7 +1,7 @@
-"""``rig.fuse()``: scalar and vector math compiled into rigExpr nodes (prototype).
+"""``rig.fuse()``: scalar and vector math compiled into rigExpression nodes (prototype).
 
-Needs the rigExpr plug-in (``RIG_EXPR_PLUGIN``, a path to its .mll, or on Maya's
-plug-in path); without it, every test here is skipped but the fallback one.
+Needs rig's plug-in, rig.mll (``RIG_PLUGIN``, its path, or on Maya's plug-in
+path); without it, every test here is skipped but the fallback one.
 Values are checked against numpy, which the fused node follows.
 """
 import os
@@ -18,9 +18,9 @@ from rig._tests._base import MayaTestCase
 
 
 def _plugin_loads():
-    if cmds.pluginInfo("rigExpr", query=True, loaded=True):
+    if cmds.pluginInfo("rig", query=True, loaded=True):
         return True
-    for candidate in (os.environ.get("RIG_EXPR_PLUGIN"), "rigExpr"):
+    for candidate in (os.environ.get("RIG_PLUGIN"), "rig"):
         if candidate:
             try:
                 cmds.loadPlugin(candidate, quiet=True)
@@ -37,7 +37,7 @@ class _Case(MayaTestCase):
     def setUpClass(cls):
         super().setUpClass()
         if not _plugin_loads():
-            raise __import__("unittest").SkipTest("the rigExpr plug-in is not available (RIG_EXPR_PLUGIN)")
+            raise __import__("unittest").SkipTest("the rig plug-in (rig.mll) is not available (RIG_PLUGIN)")
 
     def setUp(self):
         super().setUp()
@@ -61,7 +61,7 @@ class _Case(MayaTestCase):
         return np.array(got[0], dtype=float) if isinstance(got, list) else float(got)
 
     def fused_nodes(self):
-        return cmds.ls(type="rigExpr")
+        return cmds.ls(type="rigExpression")
 
 
 class TestValues(_Case):
@@ -133,7 +133,7 @@ class TestNodes(_Case):
             self.assertEqual(self.fused_nodes(), [])          # nothing is built yet
             self.out.tx << u
         self.assertEqual(len(self.fused_nodes()), 1)
-        self.assertEqual(cmds.nodeType(cmds.listConnections("out.tx", source=True)[0]), "rigExpr")
+        self.assertEqual(cmds.nodeType(cmds.listConnections("out.tx", source=True)[0]), "rigExpression")
 
     def test_values_built_on_a_result_join_its_node(self):
         with rig.fuse("demo"):
@@ -200,6 +200,61 @@ class TestNodes(_Case):
         self.assertEqual(cmds.getAttr("out.ty"), 6.0)
         self.assertFalse(cmds.cycleCheck(all=True, list=True) or [])
 
+    def source(self, plug):
+        return cmds.listConnections(plug, source=True, destination=False)[0]
+
+    def test_a_value_whose_destination_feeds_the_node_starts_a_node(self):
+        # the block's node reads pma: a value connected into pma cannot join it (a DG cycle)
+        mp = Node.create("plusMinusAverage", name="pma")
+        with rig.fuse():
+            self.out.tx << mp.output1D * 2 + self.a.tx
+            mp.input1D[0] << self.a.ty * 3
+        self.assertEqual(len(self.fused_nodes()), 2)
+        self.assertEqual(cmds.getAttr("out.tx"), -2.0 * 3 * 2 + 1.5)
+        self.assertFalse(cmds.cycleCheck(all=True, list=True) or [])
+
+    def test_a_value_that_loops_through_its_destination_gets_a_loop_node(self):
+        # a.u from a's own channel, which an animator keys: a ring whichever node computes
+        # it (rail_spine's controls: each one's u from the distances between them). It gets
+        # a node of its own, so the evaluation manager's cluster holds a small node, not
+        # the block's; the values after it still join the block's node
+        cmds.addAttr("a", longName="u", attributeType="double", keyable=True)
+        with rig.fuse():
+            self.out.tx << self.a.tx * 2 + self.b.tx
+            self.a.u << self.a.tx * 3
+            self.out.ty << self.b.ty * 2
+        self.assertEqual(len(self.fused_nodes()), 2)
+        self.assertNotEqual(self.source("a.u"), self.source("out.tx"))
+        self.assertEqual(self.source("out.ty"), self.source("out.tx"))
+        self.assertEqual(cmds.getAttr("a.u"), 4.5)
+        self.assertFalse(cmds.cycleCheck(all=True, list=True) or [])
+
+    def test_a_channel_nobody_can_key_is_a_setting(self):
+        # a's translate locked: it cannot change, so a.u from it makes no ring and joins
+        cmds.addAttr("a", longName="u", attributeType="double", keyable=True)
+        for axis in "xyz":
+            cmds.setAttr(f"a.t{axis}", lock=True)
+        with rig.fuse():
+            self.out.tx << self.b.tx * 2
+            self.a.u << self.a.tx * 3
+        self.assertEqual(len(self.fused_nodes()), 1)
+        self.assertEqual(cmds.getAttr("a.u"), 4.5)
+
+    def test_an_output_connected_back_to_its_inputs_is_computed_again_in_a_loop_node(self):
+        # a List operator's rows are plugs of the block's node. One connected later into a
+        # node that node reads would make it part of a ring: the destination reads the row
+        # computed again in a loop node, and the block's node keeps computing it for the rest
+        cmds.addAttr("a", longName="u", attributeType="double", keyable=True)
+        with rig.fuse():
+            rows = List([self.a, self.b]).tx * 2
+            self.out.tx << rows[0] + rows[1]
+            self.a.u << rows[0]
+        self.assertEqual(len(self.fused_nodes()), 2)
+        self.assertNotEqual(self.source("a.u"), self.source("out.tx"))
+        self.assertEqual(cmds.getAttr("a.u"), 3.0)
+        self.assertEqual(cmds.getAttr("out.tx"), 4.0)
+        self.assertFalse(cmds.cycleCheck(all=True, list=True) or [])
+
     def test_a_block_per_pass_is_a_node_per_pass(self):
         shared = None
         with rig.fuse():
@@ -252,10 +307,12 @@ class TestNodes(_Case):
                 grp = Node.create("transform", name="grp")
                 cmds.parent("b", "grp")
                 grp.tx << self.a.tx * 3                       # the block drives b's parent
-                self.out.tz << Node("b").tx + self.a.tz       # b.tx is a setting: joins
+                # b.tx is keyable (an animator's channel: it can change) and b moves with
+                # grp, which the block drives: a ring
+                self.out.tz << Node("b").tx + self.a.tz
                 cmds.disconnectAttr("out.tx", "pma.input1D[0]")   # the ring is cut: pma is a setting
                 self.out.sx << mp.output1D + 1
-        self.assertGreaterEqual(len(tests), 3)
+        self.assertGreaterEqual(len(tests), 2)
         self.assertEqual({kept for kept, _ in tests}, {True, False})   # a ring found, and a join
         self.assertEqual([kept for kept, _ in tests], [fresh for _, fresh in tests])
         self.assertFalse(cmds.cycleCheck(all=True, list=True) or [])
@@ -284,7 +341,7 @@ class TestNodes(_Case):
         self.assertEqual(cmds.getAttr("fused1.notes"), "\n".join([   # Markdown
             "# rig.fuse",
             "",
-            "One `rigExpr` node computes these expressions.",
+            "One `rigExpression` node computes these expressions.",
             "",
             "## Inputs",
             "",
@@ -344,7 +401,7 @@ class TestLists(_Case):
     def test_an_operator_on_lists_is_one_node(self):
         (net, expected), (fused, got) = self.built(lambda: self.targets.ty << self.l0.tx + self.l1.tx)
         self.assertEqual(net, ["sum"])
-        self.assertEqual(fused, ["rigExpr"])
+        self.assertEqual(fused, ["rigExpression"])
         self.assertEqual(len(self.fused_nodes()), 1)
         np.testing.assert_allclose(got, expected)
 
@@ -353,7 +410,7 @@ class TestLists(_Case):
         # their expressions in that node, it does not read them
         (_, expected), (fused, got) = self.built(
             lambda: self.targets.ty << rig.condition((self.l0.tx + self.l1.tx) * 2 > 5, self.l0.ty, -self.l1.ty))
-        self.assertEqual(fused, ["rigExpr"])
+        self.assertEqual(fused, ["rigExpression"])
         self.assertEqual(len(self.fused_nodes()), 1)
         np.testing.assert_allclose(got, expected)
 
@@ -366,7 +423,7 @@ class TestLists(_Case):
         ):
             with self.subTest(name):
                 (_, expected), (fused, got) = self.built(build)
-                self.assertEqual(fused, ["rigExpr"])
+                self.assertEqual(fused, ["rigExpression"])
                 np.testing.assert_allclose(got, expected, atol=1e-6)
 
     def test_rows_that_do_not_fuse_build_rigs_nodes(self):
@@ -375,7 +432,7 @@ class TestLists(_Case):
             lambda: self.targets.offsetParentMatrix << self.l0.worldMatrix[0] * self.l1.worldInverseMatrix[0],
             read="offsetParentMatrix")
         self.assertEqual(fused, net)
-        self.assertNotIn("rigExpr", fused)
+        self.assertNotIn("rigExpression", fused)
         np.testing.assert_allclose(got, expected)
 
 
@@ -590,7 +647,7 @@ class TestRigFunctions(_Case):
                     self.assertEqual(set(cmds.ls()), before)  # nothing built yet
                     plug = _fuse.materialize(value)
                 made = [cmds.nodeType(n) for n in set(cmds.ls()) - before]
-                self.assertEqual(made, ["rigExpr"])
+                self.assertEqual(made, ["rigExpression"])
                 # rig's condition nodes hold floats: equal within float rounding
                 np.testing.assert_allclose(self.value(plug), expected, rtol=2e-6, atol=1e-6)
 
@@ -626,7 +683,7 @@ class TestRigFunctions(_Case):
         before = set(cmds.ls())
         with rig.fuse():
             fused = build()
-        self.assertEqual(sorted({cmds.nodeType(n) for n in set(cmds.ls()) - before}), ["rigExpr"])
+        self.assertEqual(sorted({cmds.nodeType(n) for n in set(cmds.ls()) - before}), ["rigExpression"])
         np.testing.assert_allclose([self.value(p) for p in fused], network, rtol=1e-6)
 
     def test_what_does_not_fuse_builds_rigs_network(self):
@@ -663,7 +720,7 @@ class TestRigFunctions(_Case):
             # rig's operand checks run before the body (where a str would read as a value)
             with self.assertRaisesRegex(TypeError, "is a plain str"):
                 F.all([self.a.tx, "b.tx"])
-        self.assertEqual(cmds.ls(type="rigExpr"), [])
+        self.assertEqual(cmds.ls(type="rigExpression"), [])
         self.assertEqual(cmds.ls(type="container"), [])
 
     def test_a_vector_sequence_gives_its_points_exactly(self):
@@ -742,13 +799,15 @@ class TestNoPlugin(MayaTestCase):
         self.addCleanup(lambda: setattr(state, "plugin", saved[0]) or setattr(state, "warned", saved[1]))
         state.plugin, state.warned = None, False
         a = Node.create("transform", name="a")
-        with mock.patch.object(_fuse, "PLUGIN", "rigExprNotThere"),                 mock.patch.dict(os.environ, {"RIG_EXPR_PLUGIN": ""}),                 mock.patch.object(_fuse.cmds, "warning") as warning:
+        with mock.patch.object(_fuse, "PLUGIN", "rigNotThere"), \
+                mock.patch.dict(os.environ, {"RIG_PLUGIN": ""}), \
+                mock.patch.object(_fuse.cmds, "warning") as warning:
             with rig.fuse():
                 v = a.tx * 2
             with rig.fuse():
                 w = a.ty * 2
         self.assertNotIsInstance(v, rig.Fused)
         self.assertNotIsInstance(w, rig.Fused)
-        self.assertEqual(cmds.ls(type="rigExpr"), [])
+        self.assertEqual(cmds.ls(type="rigExpression"), [])
         self.assertEqual(warning.call_count, 1)
-        self.assertIn("rigExpr", warning.call_args[0][0])
+        self.assertIn("rig.mll", warning.call_args[0][0])

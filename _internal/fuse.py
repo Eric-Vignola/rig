@@ -1,4 +1,4 @@
-"""``rig.fuse()``: rig's scalar and vector math compiled into ``rigExpr`` nodes.
+"""``rig.fuse()``: rig's scalar and vector math compiled into ``rigExpression`` nodes.
 
 Prototype (phase 1 of ``rig_fuse_design.md``). Inside ``with rig.fuse():``, or
 everywhere with ``rig.set_options(fuse=True)``, an operator or a fusable function
@@ -10,16 +10,23 @@ plug (it *materializes*) where rig needs one:
 * it is given to a function that does not fuse, or put in a List;
 * it is read: ``str()``, ``.get()``, any attribute of a plug.
 
-Materializing compiles the value into a ``rigExpr`` node (the rigExpr plug-in). A
-block is one node (`_place`):
+Materializing compiles the value into a ``rigExpression`` node (rig's plug-in,
+``rig.mll``). A block is one node (`_place`):
 
 * every value materialized in a block goes into the block's first node that can take
   it: in the same container, its program kept under `MAX_INSTRUCTIONS`, and closing no
   ring of links that can change through nodes outside it (`_loops`: a cycle, or a loop
   the evaluation manager would evaluate serially). A value reading what the node
   drives, through a ``motionPath`` say, cannot join it; a setting nothing drives (a
-  rider's ``uDefault``) closes no ring, even on a node the block drives. A value no
+  rider's ``uDefault``) closes no ring, even on a node the block drives. A transform's
+  keyable channels can change (`_CHANNELS`: an animator keys a control). A value no
   node of the block can take starts the block's next node;
+* where a connected value goes counts too (`_destinations`): a node takes no value
+  connected into what it reads (`_feeds_back`), and a value connected into a node that
+  leads back to what it reads, a ring whichever node computes it (`_rings_itself`),
+  goes to a loop node, which takes only such values: the evaluation manager's cluster
+  holds that small node, not the block's. A node's output connected later where it
+  would ring back is computed again in a loop node (`rerouted`);
 * so the block decides: ``rig.fuse()`` around one rider makes a node or two per rider
   (parallel playback), around the whole rail a handful for every rider (fewest nodes);
 * with the option and no block, a value goes into the node made (or extended) just
@@ -64,9 +71,9 @@ from maya.api import OpenMaya as om
 from rig._internal import journal
 
 # ----------------------------------------------------------------- the program
-# The format is the plug-in's (rigExpr.cpp): a header [MAGIC, VERSION, registers,
-# instructions, scalar outputs, vector outputs], 5 ints per instruction
-# (op, dst, a, b, c), then the output registers, scalars first.
+# The format is the plug-in's (rig.cpp, rig.mll's rigExpression node): a header
+# [MAGIC, VERSION, registers, instructions, scalar outputs, vector outputs], 5 ints
+# per instruction (op, dst, a, b, c), then the output registers, scalars first.
 MAGIC, VERSION = 0x52455850, 1
 OP = dict(LOAD_S=1, LOAD_V=2, LOAD_A=3, CONST_S=4, CONST_V=5, SPLAT=6, COMP=7, MAKE=8, BIN_S=10, BIN_V=11,
           UN_S=12, UN_V=13, SELECT_S=14, SELECT_V=15, CLAMP_S=16, CLAMP_V=17, LERP_S=18, LERP_V=19,
@@ -83,10 +90,10 @@ DEG, RAD = 57.29577951308232, 0.017453292519943295
 # what one costs; measured on rail_spine, fewer bigger nodes are faster, serial and
 # parallel (100 riders: 4 nodes at 5,000, 13 at 1,000)
 MAX_INSTRUCTIONS = 10000
-PLUGIN      = "rigExpr"
-NODE_TYPE   = "rigExpr"
-# the plug-in's lowest version with numpy's semantics
-MIN_VERSION = (0, 3)
+PLUGIN      = "rig"              # rig.mll: every node type rig builds
+NODE_TYPE   = "rigExpression"
+# rig.mll's lowest version this program format runs on (numpy's semantics)
+MIN_VERSION = (1, 0)
 
 
 _ITERATOR = collections.abc.Iterator
@@ -155,7 +162,7 @@ def _refresh() -> None:
 
 def _for_this_maya() -> bool:
     """False when ``set_options(maya_version=...)`` targets another Maya than this one:
-    a scene built for it must open there, where the rigExpr plug-in may not exist
+    a scene built for it must open there, where the rig plug-in (rig.mll) may not exist
     (one warning per session)"""
     from rig._internal.maya_version import get_maya_version, get_target_version
     if get_target_version() == get_maya_version():
@@ -181,12 +188,12 @@ def _plugin_version() -> tuple:
 
 
 def _load_plugin() -> bool:
-    """True once the rigExpr plug-in is loaded: already, from ``RIG_EXPR_PLUGIN`` (a
+    """True once the rig plug-in (rig.mll) is loaded: already, from ``RIG_PLUGIN`` (a
     path), or by name from Maya's plug-in path. False, with one warning per session,
     when none loads or the loaded one is older than numpy's semantics."""
     loaded = cmds.pluginInfo(PLUGIN, query=True, loaded=True)
     if not loaded:
-        for candidate in (os.environ.get("RIG_EXPR_PLUGIN"), PLUGIN):
+        for candidate in (os.environ.get("RIG_PLUGIN"), PLUGIN):
             if not candidate:
                 continue
             try:
@@ -198,9 +205,9 @@ def _load_plugin() -> bool:
                 break
     why = None
     if not loaded:
-        why = "the rigExpr plug-in is not loaded (set RIG_EXPR_PLUGIN to its .mll, or put it on MAYA_PLUG_IN_PATH)"
+        why = "the rig plug-in (rig.mll) is not loaded (set RIG_PLUGIN to its .mll, or put it on MAYA_PLUG_IN_PATH)"
     elif _plugin_version() < MIN_VERSION:
-        why = f"the loaded rigExpr plug-in is {_plugin_version()}, older than {MIN_VERSION}"
+        why = f"the loaded rig plug-in is {_plugin_version()}, older than {MIN_VERSION}"
     if why is None:
         return True
     if not FUSE.warned:
@@ -230,7 +237,7 @@ class _Untraceable(BaseException):
 
 class Fused:
     """A fused value: a scalar or vector expression of plugs and numbers, compiled
-    into a ``rigExpr`` node when it materializes (see the module docstring).
+    into a ``rigExpression`` node when it materializes (see the module docstring).
 
     It takes rig's operators (``+ - * / // % **``, comparisons, ``& | ^ ~``), the
     fusable functions, ``.x`` / ``.y`` / ``.z`` of a vector, and goes wherever a plug
@@ -321,7 +328,7 @@ class Fused:
         raise TypeError("a fused value is an expression: it cannot be set or connected into")
 
     def __rshift__(self, other):
-        return materialize(self) >> other
+        return materialize(self, into=(other,)) >> other
 
     def __pos__(self):
         return self
@@ -1046,14 +1053,15 @@ def _replace(value, plugs: dict):
     return value
 
 
-def materialized(value):
+def materialized(value, into=None):
     """``value`` with every fused value in it (in lists and tuples too) a plug; the
-    values go into one node. ``value`` itself when it holds none."""
+    values go into one node. ``value`` itself when it holds none. ``into``: the plugs
+    they are about to drive (``plug << value``), when known (`_place`)."""
     if not _has_fused(value):
         return value
     values: list = []
     _collect(value, values)
-    plugs = dict(zip((id(v) for v in values), materialize_all(values)))
+    plugs = dict(zip((id(v) for v in values), materialize_all(values, into=into)))
     return _replace(value, plugs)
 
 
@@ -1075,17 +1083,18 @@ def materialized_result(value):
     return materialized(value) if FUSE.alive and not FUSE.tracing else value
 
 
-def materialize(value: Fused):
+def materialize(value: Fused, into=None):
     """the plug of the fused value ``value`` (see `materialize_all`)"""
-    return materialize_all([value])[0]
+    return materialize_all([value], into=into)[0]
 
 
 @journal.statement
-def materialize_all(values: list) -> list:
+def materialize_all(values: list, into=None) -> list:
     """The plug of each fused value in ``values``: the output a node of the block
     already has for it, or a new output of one node for all the others (`_place`
-    decides which node). A leaf is its plug, a number itself. Inside a trace a value
-    is never made a plug: the trace is dropped (`_trace`)."""
+    decides which node, knowing the plugs ``into`` they are about to drive, if given). A
+    leaf is its plug, a number itself. Inside a trace a value is never made a plug: the
+    trace is dropped (`_trace`)."""
     if FUSE.tracing:
         raise _Untraceable("a fused value is made a plug")
     if len(_KEYS) > 1000000:
@@ -1100,7 +1109,7 @@ def materialize_all(values: list) -> list:
             seen.add(v.key)
             pending.append(v)
     if pending:
-        _place(pending)
+        _place(pending, into)
     for i, v in enumerate(values):
         if out[i] is None:
             record, attr, index = _owner(v)
@@ -1111,12 +1120,12 @@ def materialize_all(values: list) -> list:
 
 # ------------------------------------------------------------------ the nodes
 class _Record:
-    """One rigExpr node of a block: its outputs (stable slots), its inputs (stable
+    """One rigExpression node of a block: its outputs (stable slots), its inputs (stable
     indices), the container scope it was made in, and its program so far, which each
     merge extends (`_compile`, `_commit`)."""
 
     __slots__ = ("node", "handle", "serial", "scope", "s_out", "v_out", "inputs", "in_index", "plugs", "size",
-                 "reg", "body", "consts", "const_index", "loads", "s_regs", "v_regs")
+                 "reg", "body", "consts", "const_index", "loads", "s_regs", "v_regs", "looped")
 
     def __init__(self, scope) -> None:
         FUSE.serial += 1
@@ -1137,6 +1146,7 @@ class _Record:
         self.loads       = {}     # {expression key: the other node's output it is read from}
         self.s_regs      = []     # the registers of s_out, then of v_out
         self.v_regs      = []
+        self.looped      = False  # a loop node: only values whose destination leads back to what they read
 
     def alive(self) -> bool:
         return self.handle is not None and self.handle.isValid() and self.handle.isAlive()
@@ -1177,11 +1187,12 @@ class _Compiled:
                  "inlined", "size")
 
 
-def _compile(record: _Record, s_new: list, v_new: list) -> _Compiled:
+def _compile(record: _Record, s_new: list, v_new: list, inline: bool = False) -> _Compiled:
     """What ``record``'s program needs to compute ``s_new`` and ``v_new`` too: only what
     it does not compute yet (a merge costs its new instructions, not the node's). The
     inputs it has keep their indices, new ones are appended; a sub-expression another
-    node of the block outputs is read from that output."""
+    node of the block outputs is read from that output, unless ``inline`` (a loop copy,
+    `rerouted`: every part computed from the plugs)."""
     reg0, reg = record.reg, {}
     body: list = []
     consts: list = []
@@ -1232,7 +1243,7 @@ def _compile(record: _Record, s_new: list, v_new: list) -> _Compiled:
             continue
         if not expanded:
             if e.args:
-                owner = _owner(e)
+                owner = None if inline else _owner(e)
                 if owner is not None and owner[0] is not record:
                     other, attr, index = owner
                     slot = "s" if e.kind == "s" else "v"
@@ -1351,6 +1362,12 @@ def _affected(fn: om.MFnDependencyNode, attr: om.MObject, name: str) -> list:
     return found
 
 
+# a transform's channels an animator can key are driven, connected or not yet: a control
+# moves, so a loop through its matrix is one the evaluation manager clusters once it is
+# keyed (rail_spine's controls: each one's u from the distances between them)
+_CHANNELS = ("translate", "rotate", "scale")
+
+
 def _driven(node: om.MObject, h: int) -> frozenset:
     """the root attributes of ``node`` (hash code ``h``) that can change"""
     cache = _GRAPH["live"]
@@ -1358,14 +1375,25 @@ def _driven(node: om.MObject, h: int) -> frozenset:
     if found is not None:
         return found
     fn = om.MFnDependencyNode(node)
-    live: set = set()
+    seeds = [_root_name(plug) for plug in fn.getConnections() if plug.isDestination]
+    if node.hasFn(om.MFn.kTransform):
+        for name in _CHANNELS:
+            plug = fn.findPlug(name, False)
+            if any(plug.child(i).isKeyable and not plug.child(i).isLocked for i in range(plug.numChildren())):
+                seeds.append(name)
+    found = cache[h] = _closed(node, fn, seeds)
+    return found
+
+
+def _closed(node: om.MObject, fn: om.MFnDependencyNode, seeds, base: frozenset = frozenset()) -> frozenset:
+    """``base`` and ``seeds``, with what they affect, and a DAG node's world attributes
+    when its matrix or an ancestor's can change"""
+    live = set(base)
     todo = []
-    for plug in fn.getConnections():
-        if plug.isDestination:
-            name = _root_name(plug)
-            if name not in live:
-                live.add(name)
-                todo.append(name)
+    for name in seeds:
+        if name not in live:
+            live.add(name)
+            todo.append(name)
     while todo:
         name = todo.pop()
         attr = fn.attribute(name)
@@ -1374,7 +1402,7 @@ def _driven(node: om.MObject, h: int) -> frozenset:
                 if a not in live:
                     live.add(a)
                     todo.append(a)
-    if node.hasFn(om.MFn.kDagNode):
+    if node.hasFn(om.MFn.kDagNode) and "worldMatrix" not in live:
         driven = bool(live & _WORLD_TRIGGERS)
         dag = om.MFnDagNode(node)
         if not driven and dag.parentCount():
@@ -1386,17 +1414,28 @@ def _driven(node: om.MObject, h: int) -> frozenset:
                 fa = om.MFnAttribute(fn.attribute(k))
                 if fa.parent.isNull() and (fa.name.startswith("world") or fa.name.startswith("parent")):
                     live.add(fa.name)
-    found = cache[h] = frozenset(live)
-    return found
+    return frozenset(live)
+
+
+def _prospective(node: om.MObject, h: int, attrs: frozenset) -> frozenset:
+    """``node``'s driven attributes once a connection drives ``attrs`` too"""
+    base = _driven(node, h)
+    if attrs <= base:
+        return base
+    return _closed(node, om.MFnDependencyNode(node), [a for a in attrs if a not in base], base)
 
 
 def _down(node: om.MObject, h: int) -> list:
     """the handles of the nodes ``node`` feeds through links that can change"""
     cache = _GRAPH["down"]
     found = cache.get(h)
-    if found is not None:
-        return found
-    live = _driven(node, h)
+    if found is None:
+        found = cache[h] = _down_with(node, _driven(node, h))
+    return found
+
+
+def _down_with(node: om.MObject, live: frozenset) -> list:
+    """the handles of the nodes ``node`` feeds from its attributes ``live``"""
     found = []
     for plug in om.MFnDependencyNode(node).getConnections():
         if plug.isSource:
@@ -1406,7 +1445,6 @@ def _down(node: om.MObject, h: int) -> list:
     if node.hasFn(om.MFn.kDagNode) and "worldMatrix" in live:
         dag = om.MFnDagNode(node)
         found.extend(om.MObjectHandle(dag.child(i)) for i in range(dag.childCount()))
-    cache[h] = found
     return found
 
 
@@ -1445,18 +1483,20 @@ def _loops(record: _Record, plugs: list) -> bool:
         _forget_graph()                   # not kept up to date (no block): from scratch
     sh = record.handle.hashCode()
     up_seen, up_todo = set(), []
-    for plug in plugs:
-        sel = om.MSelectionList()
-        sel.add(str(plug))
-        p = _root_plug(sel.getPlug(0))
-        node = p.node()
-        h = om.MObjectHandle(node).hashCode()
+    for node, h, name in _resolved(plugs):
         if h == sh:
             return True
-        if h not in up_seen and om.MFnAttribute(p.attribute()).name in _driven(node, h):
+        if h not in up_seen and name in _driven(node, h):
             up_seen.add(h)
             up_todo.append(om.MObjectHandle(node))
-    down_seen, down_todo = {sh}, [record.handle]
+    return _meet([record.handle], {sh}, up_todo, up_seen)
+
+
+def _meet(down_todo: list, down_seen: set, up_todo: list, up_seen: set) -> bool:
+    """True if a node reached down from ``down_todo`` (handles) meets one reached up from
+    ``up_todo``, through links that can change; the seen sets hold the hash codes reached
+    so far, the starts' included. The smaller frontier first, until they meet or one runs
+    out."""
     while up_todo and down_todo:
         if len(up_todo) <= len(down_todo):
             handle = up_todo.pop()
@@ -1481,8 +1521,145 @@ def _loops(record: _Record, plugs: list) -> bool:
     return False
 
 
+def _resolved(plugs) -> list:
+    """(node, hash code, root attribute) of each plug in ``plugs`` that names one"""
+    out = []
+    for plug in plugs:
+        try:
+            sel = om.MSelectionList()
+            sel.add(str(plug))
+            p = _root_plug(sel.getPlug(0))
+        except (RuntimeError, TypeError):
+            continue
+        node = p.node()
+        out.append((node, om.MObjectHandle(node).hashCode(), om.MFnAttribute(p.attribute()).name))
+    return out
+
+
 def _no_cycle(record: _Record, compiled: _Compiled) -> bool:
     return not compiled.new_inputs or not _loops(record, [plug for _slot, _i, plug in compiled.new_inputs])
+
+
+# ---------------------------------------------------------------- the destinations
+# A value connected (``plug << value``) is placed knowing where it goes. Its destination
+# leading back to a node, by links that can change, would make that node part of a
+# ring: the node takes no such value. A value whose destination leads back to what it
+# reads loops in any node (rail_spine's controls: each one's u from the distances between
+# them): it goes to a loop node, which takes only such values, so the evaluation manager's
+# cluster holds them and not the block's node.
+def _destinations(into) -> list:
+    """(node, hash code, its root attributes driven) of the plugs in ``into``"""
+    found: dict = {}
+    for node, h, name in _resolved(p for p in (into or ()) if type(p) in _bind()[0]):
+        found.setdefault(h, (node, set()))[1].add(name)
+    return [(node, h, frozenset(names)) for h, (node, names) in found.items()]
+
+
+def _reads(pending: list) -> list:
+    """the plugs ``pending`` reads: its leaves, and the outputs of other nodes it loads"""
+    out, seen, stack = [], set(), list(pending)
+    while stack:
+        e = stack.pop()
+        if id(e) in seen:
+            continue
+        seen.add(id(e))
+        if e.op.startswith("in_"):
+            out.append(e.extra)
+        elif e.args:
+            owner = _owner(e)
+            if owner is not None:
+                out.append(owner[0].output(owner[1], owner[2]))
+            else:
+                stack.extend(e.args)
+    return out
+
+
+def _rings_itself(pending: list, dests: list) -> bool:
+    """True if what ``pending`` reads is downstream of its destinations, through links
+    that can change: a ring whichever node holds it"""
+    live = {h: _prospective(node, h, attrs) for node, h, attrs in dests}
+    up_seen, up_todo = set(), []
+    for node, h, name in _resolved(_reads(pending)):
+        if name not in (live[h] if h in live else _driven(node, h)):
+            continue                      # a setting: no link from it
+        if h in live:
+            return True                   # it reads what its destination drives on that node
+        if h not in up_seen:
+            up_seen.add(h)
+            up_todo.append(om.MObjectHandle(node))
+    if not up_todo:
+        return False
+    down_seen, down_todo = set(live), []
+    for node, h, _attrs in dests:
+        for n in _down_with(node, live[h]):
+            k = n.hashCode()
+            if k in up_seen:
+                return True
+            if k not in down_seen:
+                down_seen.add(k)
+                down_todo.append(n)
+    return _meet(down_todo, down_seen, up_todo, up_seen)
+
+
+def _feeds_back(record: _Record, dests: list) -> bool:
+    """True if ``record``'s node driving ``dests`` would make it part of a ring: a
+    destination leads back to the node through links that can change"""
+    sh = record.handle.hashCode()
+    down_seen, down_todo = set(), []
+    for node, h, attrs in dests:
+        if h == sh:
+            return True
+        down_seen.add(h)
+        for n in _down_with(node, _prospective(node, h, attrs)):
+            k = n.hashCode()
+            if k == sh:
+                return True
+            if k not in down_seen:
+                down_seen.add(k)
+                down_todo.append(n)
+    return _meet(down_todo, down_seen, [record.handle], {sh})
+
+
+def rerouted(plug, dest):
+    """``dest << plug``: ``plug`` itself, or, when ``plug`` is the output of a node of
+    the open blocks that driving ``dest`` would make part of a ring (``dest`` leads back
+    to it), the same value computed again in a loop node, which ``dest`` reads instead
+    (its instructions cost nothing). A value made a plug before it was connected (a List
+    operator's rows) is placed as one connected at once would be."""
+    if not FUSE.blocks or FUSE.tracing:
+        return plug
+    value = FUSE.outputs.get(hash(plug))
+    owner = None if value is None else _owner(value)
+    if owner is None or owner[0].looped:
+        return plug
+    dests = _destinations((dest,))
+    if not dests or not _feeds_back(owner[0], dests):
+        return plug
+    return _loop_copy(value)
+
+
+def _loop_copy(value: Fused):
+    """the plug of ``value`` computed from its plugs in a loop node of the innermost
+    block (one taking it, or a new one); its owner keeps computing it for the rest"""
+    _check_inputs([value])
+    block, scope = FUSE.blocks[-1], _scope()
+    s, v = ([value], []) if value.kind == "s" else ([], [value])
+    attr = "scalarOut" if value.kind == "s" else "vectorOut"
+    for record in block:
+        if record.looped and record.size < MAX_INSTRUCTIONS and record.scope is scope and record.alive():
+            outs = record.s_out if value.kind == "s" else record.v_out
+            for i, e in enumerate(outs):
+                if e.key == value.key:
+                    return record.output(attr, i)
+            compiled = _compile(record, s, v, inline=True)
+            if compiled.size <= MAX_INSTRUCTIONS and _no_cycle(record, compiled):
+                _commit(record, compiled, own=False)
+                return record.output(attr, len(outs) - 1)
+    record = _Record(scope)
+    record.looped = True
+    _commit(record, _compile(record, s, v, inline=True), own=False)
+    block.append(record)
+    return record.output(attr, 0)
 
 
 def _forget_graph() -> None:
@@ -1681,7 +1858,7 @@ def _check_inputs(pending: list) -> None:
             stack.extend(e.args)
 
 
-def _place(pending: list) -> None:
+def _place(pending: list, into=None) -> None:
     """In a block, pending values go into the block's first node that takes them: in
     this container, its program not longer than `MAX_INSTRUCTIONS`, and no input they
     add downstream of it (a cycle, at the node level); otherwise into a new node of the
@@ -1699,13 +1876,19 @@ def _place(pending: list) -> None:
     if FUSE.blocks:
         block = FUSE.blocks[-1]
         scope = _scope()
+        dests = _destinations(into) if into is not None else []
+        looped = bool(dests) and _rings_itself(pending, dests)
         for record in block:
+            if record.looped is not looped:
+                continue
             if record.size < MAX_INSTRUCTIONS and record.scope is scope and record.alive():
                 compiled = _with_outputs(record, pending)
-                if compiled.size <= MAX_INSTRUCTIONS and _no_cycle(record, compiled):
+                if (compiled.size <= MAX_INSTRUCTIONS and _no_cycle(record, compiled)
+                        and (looped or not dests or not _feeds_back(record, dests))):
                     _commit(record, compiled)
                     return
         record = _Record(scope)
+        record.looped = looped
         _commit(record, _with_outputs(record, pending))
         block.append(record)
         return
@@ -1733,7 +1916,9 @@ def _node_name() -> str:
     return f"{prefix}_fused1" if prefix else "fused1"
 
 
-def _commit(record: _Record, c: _Compiled) -> None:
+def _commit(record: _Record, c: _Compiled, own: bool = True) -> None:
+    """``c`` appended to ``record``'s program, written to its node (made the first time).
+    ``own``: its new outputs are where the values are read from (not a loop copy's)."""
     from rig._internal.container import container
     edit = journal.cmds_edit
     if record.node is None:
@@ -1768,12 +1953,13 @@ def _commit(record: _Record, c: _Compiled) -> None:
         edit.setAttr(f"{name}.constants", record.consts, type="doubleArray")
     for slot, i, plug in c.new_inputs:
         edit.connectAttr(str(plug), f"{name}.{_SLOT_ATTR[slot]}[{i}]", force=True)
-    for i in range(s0, len(record.s_out)):
-        FUSE.owners[record.s_out[i].key] = (record, "scalarOut", i)
-    for i in range(v0, len(record.v_out)):
-        FUSE.owners[record.v_out[i].key] = (record, "vectorOut", i)
-    for key in c.inlined:
-        FUSE.inlined.setdefault(key, record)
+    if own:
+        for i in range(s0, len(record.s_out)):
+            FUSE.owners[record.s_out[i].key] = (record, "scalarOut", i)
+        for i in range(v0, len(record.v_out)):
+            FUSE.owners[record.v_out[i].key] = (record, "vectorOut", i)
+        for key in c.inlined:
+            FUSE.inlined.setdefault(key, record)
     FUSE.last = record
     if FUSE.depth:
         FUSE.dirty[record.serial] = record      # the Notes when the outermost block ends
@@ -1864,7 +2050,7 @@ def describe(record: _Record) -> str:
     inputs = [f"- `{attr}[{i}] <- {plug}`"
               for slot, attr in (("s", "scalarIn"), ("v", "vectorIn"), ("a", "angleIn"))
               for i, plug in enumerate(record.inputs[slot])]
-    lines = ["# rig.fuse", "", "One `rigExpr` node computes these expressions.", "",
+    lines = ["# rig.fuse", "", "One `rigExpression` node computes these expressions.", "",
              "## Inputs", ""] + (inputs or ["- none"])
     if temps:
         lines += ["", "## Shared terms", ""]
@@ -1877,8 +2063,8 @@ def describe(record: _Record) -> str:
 # ------------------------------------------------------------------ the block
 class fuse:
     """``with rig.fuse():`` -- fuse rig's scalar and vector math in the block into
-    ``rigExpr`` nodes (see `rig._internal.fuse`). ``rig.fuse("arm")`` names its nodes
-    ``arm_fused1`` ... The block is one undo step. Without the rigExpr plug-in, the
+    ``rigExpression`` nodes (see `rig._internal.fuse`). ``rig.fuse("arm")`` names its nodes
+    ``arm_fused1`` ... The block is one undo step. Without the rig plug-in (rig.mll), the
     block builds rig's nodes, with one warning per session."""
 
     __slots__ = ("name", "chunk")
