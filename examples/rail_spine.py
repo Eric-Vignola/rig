@@ -352,8 +352,9 @@ def create_rail(
         # ---- ADD RAIL RIDERS ---- #
 
         # rig's fuse option on (set_options(fuse=True)): each rider a block of its own,
-        # its math in one rigExpression node, which Maya evaluates in parallel with the
-        # other riders'. Off (the default): rig's network.
+        # its math in two rigExpression nodes, one feeding its motionPath and one reading
+        # it (a single node doing both would be a DG cycle), which Maya evaluates in
+        # parallel with the other riders'. Off (the default): rig's network.
         fused = get_options()["fuse"]
         for u_default in u:
             with fuse("rider") if fused else contextlib.nullcontext():
@@ -458,7 +459,7 @@ if __name__ == "__main__":
     set_options(create_containers=True)
 
     # Toggle this to True to see rig.fuse()'s effect: the rail's math compiled into
-    # rigExpression nodes (rig's plug-in, rig.mll), each rider in a node of its own (the
+    # rigExpression nodes (rig's plug-in, rig.mll), each rider in nodes of its own (the
     # rider blocks in create_rail). Here 1,723 nodes become 159 and the build takes less
     # than half the time; at 100 riders, parallel playback runs about 2.5 times faster.
     # False (the default) builds rig's network.
