@@ -842,6 +842,13 @@ _FS3_LOCK_HINT = {
 }
 
 
+# Re-pinned (the shorthand fix, fix/shorthand-unused-decompose): a matrix into a plug of a
+# transform that is no channel is refused before a decomposeMatrix is made (619f29f left one,
+# ``decomposeMatrix1``, with its two inputs, and the two undo steps that made them); the error,
+# the output and the values are unchanged. The case -> the undo steps fewer.
+_SH_NO_DECOMPOSE = {"matrix -> a transform plug no channel": 2}
+
+
 def _fs3_lock_hint(plug):
     return (
         f"Unlock first: Plug({plug!r}).unlock() (a locked plug takes no value or "
@@ -937,6 +944,7 @@ class TestTheOutcomesOf619f29f(MayaTestCase):
         self.assertLessEqual(set(_FS3_LOCK_HINT), set(oracle))
         self.assertLessEqual(set(_FIX_FEWER_UNDO_STEPS) | set(_FIX_SPLIT), set(oracle))
         self.assertLessEqual(set(_OD_ONE_DRIVER), set(oracle))
+        self.assertLessEqual(set(_SH_NO_DECOMPOSE), set(oracle))
         for name in sorted(oracle):
             with self.subTest(case=name):
                 if name in _FS4_GENERIC_ROWS:
@@ -962,6 +970,12 @@ class TestTheOutcomesOf619f29f(MayaTestCase):
                         expected["scene"]["values"] = values
                     expected["output"] = dict(expected["output"], logs=logs)
                     expected["undo_steps"] += more
+                if name in _SH_NO_DECOMPOSE:
+                    made, connections = expected["scene"]["nodes"], expected["scene"]["connections"]
+                    self.assertEqual(made[0], [["decomposeMatrix1", "decomposeMatrix"]])
+                    kept = [c for c in connections[0] if not c[1].startswith("decomposeMatrix1.")]
+                    expected["scene"] = dict(expected["scene"], nodes=[[], made[1]], connections=[kept, connections[1]])
+                    expected["undo_steps"] -= _SH_NO_DECOMPOSE[name]
                 if name in _D2_ERROR_LINES:
                     self.assertEqual(expected["output"]["maya"], [])
                     expected["output"] = dict(expected["output"], maya=[[4, _D2_ERROR_LINES[name]]])
