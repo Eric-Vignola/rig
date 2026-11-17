@@ -27,6 +27,7 @@ from rig.nodetypes._base import (
     _trace_choice_source,
     Attribute,
 )
+from rig._internal.fuse import Fused as _Fused
 from rig._internal.node import Node
 from rig._internal.plug import Plug
 from rig.spec._base import _AttrSpec
@@ -564,4 +565,6 @@ def math_type(obj: Any) -> str:
         return "unknown"
     if _is_sequence(obj):
         return _literal_math_type(obj)
+    if type(obj) is _Fused:
+        return obj.math_type
     return "unknown"

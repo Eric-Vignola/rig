@@ -786,6 +786,10 @@ def vectorize(
         except Exception:
             return results
 
+    # rig.fuse() broadcasts a List row by row as this does (`fuse._broadcast`), unless a
+    # favor_index limits the rows
+    wrapper._rig_vectorized = True
+    wrapper._rig_favor_index = favor_index
     # a statement for rig's own functions only (as memoize)
     return statement(wrapper) if rig_code(func) else wrapper
 

@@ -67,6 +67,7 @@ of rig names the cgmath commit it was verified on here and in
 | 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, several files in one namespace, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
 | 41 | [`rig.exec`: a string of code as if in a fresh Python](#41-rigexec-a-string-of-code-as-if-in-a-fresh-python) | `rig.exec(source, inputs, argv=, shared=)`: the code as `python -c` runs it, dedented first, the session's `sys.path`, `rig.run`'s imports and `Run`, one undo step named after the first line, outside `__all__` |
 | 42 | [A cgmath Scene in Maya](#42-a-cgmath-scene-in-maya) | `rig.load_scene(path)` and `rig.create_scene(scene)`: the nodes, each mesh, its blendShape and its skin, then the take; any number of copies, `uuids=True` for the data's uuids; the steps by hand (`Mesh` / `BlendShape` / `SkinCluster.create(item)`, `node.key_hierarchy(clip)`), what is left out |
+| 43 | [`rig.fuse()`: math in one node](#43-rigfuse-math-in-one-node) | `with rig.fuse():` and `set_options(fuse=True)`: scalar, vector, euler, quaternion and matrix math as a `Fused` value, compiled into `rigExpression` nodes when it is connected or used; what joins a node, what fuses (rig's own functions and its type shorthand too), numpy's rules and Maya's nodes', rig's plug-in `rig.mll`, one undo step; `rig.unfuse()`, back into rig's network |
 
 ---
 
@@ -1708,7 +1709,8 @@ from rig import ContainerOptions, get_options, set_options
 print(get_options())
 # {'create_containers': True, 'use_shorthand': True, 'skip_selection': True, 'cleanup_on_exit': False,
 #  'cleanup_tags': False, 'maya_version': None, 'flatten_containers': True, 'publish_attributes': True,
-#  'absorb_unit_conversions': False, 'native_multi_publish': False, 'constant_folding': True}
+#  'absorb_unit_conversions': False, 'native_multi_publish': False, 'constant_folding': True,
+#  'fuse': False}
 set_options(create_containers=False)          # every with container(): becomes scope-only
 with container("ghost") as ghost:
     Node.create("transform", name="free")
@@ -4334,6 +4336,289 @@ has no class for them) and materials (a later release; the shapes join
 `initialShadingGroup`). A mesh with targets of two blendShape deformers is
 refused (`BlendShape.create(mesh, item, deformer=...)` builds each), and so
 is a skin in a scene of takes alone (no bind pose to bind at).
+
+## 43. `rig.fuse()`: math in one node
+
+Prototype. Inside `with rig.fuse():`, rig's math builds no node: an operator
+or a math function given plugs (scalars, vectors, eulers, quaternions,
+matrices), numbers or fused values returns a `rig.Fused` value, an
+expression. It becomes a plug
+when rig needs one: when it is connected (`plug << value`, a List or a Node
+`<<`), given to a function that does not fuse, put in a List, or read
+(`str()`, `.get()`). rig then compiles it into a `rigExpression` node, from
+rig's plug-in `rig.mll`: one node computes a whole chain of math, and the
+Attribute Editor's Notes show what it computes, in Markdown.
+
+```python
+import rig
+from maya import cmds
+from rig import Node, condition, functions as F, vector as V
+
+cmds.file(new=True, force=True)
+a = Node.create("transform", name="a")
+b = Node.create("transform", name="b")
+out = Node.create("transform", name="out")
+far = Node.create("transform", name="far")
+a.t << [1.5, -2, 3.25]
+b.t << [0.5, 4, -1]
+
+with rig.fuse("demo"):
+    u = (a.tx * 2 + b.ty) * F.rev(a.sx * 0.5)   # a Fused value: no node yet
+    print(repr(u))           # Fused(scalar: (((a.translateX * 2) + b.translateY) * rev((a.scaleX * 0.5))))
+    out.tx << u                                   # one node now: demo_fused1
+    out.ty << condition(u > 3, a.ty, u)           # uses u: joins demo_fused1
+    far.t << V.normalize(a.t - b.t) * F.clamp(u, 0, 5)   # joins it too
+
+print(cmds.ls(type="rigExpression"))              # ['demo_fused1']
+print(cmds.getAttr("out.ty"), cmds.getAttr("far.ty"))   # -2.0 -2.830031906222678
+print(cmds.getAttr("demo_fused1.notes").splitlines()[-1])
+# - `vectorOut[0] = (normalize((a.translate - b.translate)) * clamp(scalarOut[0], 0, 5))`
+```
+
+Where a value goes: a block is one node. Every value materialized in the
+block goes into the block's first node that can take it:
+
+* a node cannot take a value that would close a ring through nodes outside
+  it, by connections that can change: a cycle, or a loop the evaluation
+  manager evaluates serially. A value reading what the node drives (a
+  `motionPath`'s position, when the node drives its `uValue`) goes to the
+  block's next node, or starts one. What can change: what is connected, what
+  that affects, and a transform's keyable channels (an animator keys a
+  control later). A setting nothing drives (a rider's `uDefault`, a dynamic
+  attribute nobody connects or keys) closes no ring, even on a node the block
+  drives;
+* where a value goes counts too. A value connected into what the node
+  reads goes to the next node. A value connected into a node that leads back
+  to what it reads (each of `rail_spine`'s controls gets a `u` from the
+  distances between the controls) loops whichever node computes it: it is
+  computed in a small node of its own, so the loop the evaluation manager
+  evaluates serially holds only that node, not the block's;
+* a node holds up to 10,000 instructions: a bigger block gets one more node;
+* a value another node already outputs is read from that output.
+
+So the block decides how many nodes: `examples/rail_spine.py` inside one
+`with rig.fuse():` builds 6 `rigExpression` nodes for its 20 riders (its
+controls' `u` in small ones of their own), 125 nodes in all (rig's own
+network: 1,723; what is left is mostly the riders, the debug cubes and the
+curve sampling), and `examples/limb_twist.py` one `rigExpression` and no other
+math node (76 nodes in its network, 9 fused). One node computing many
+riders runs on one thread: a block around
+each rider instead gives a node or two per rider, which play back in
+parallel. With `set_options(fuse=True)` and no block, a value joins the node
+made just before it when it uses what that node computes, else it gets a new
+node.
+
+What fuses: the operators (`+ - * / // % **`, unary `-`, `< <= > >= == !=`,
+`& | ^ ~`), `.x` / `.y` / `.z` of a vector, a `[a, b, c]` vector, and
+`functions` (`abs floor ceil trunc int round sign sqrt exp log pow rev clamp
+min max sum avg equal choice searchsorted all any argmin argmax`, the
+comparisons and `logical_*`), `condition`, `lerp`, all of `trigonometry` but
+an angle plug given straight to a trig function, `vector` (`dot cross length
+normalize dist lerp slerp elerp angle angle_degrees triple_product`), `slerp`
+/ `elerp` / `angle` / `angle_degrees` of vectors, every `tween` curve and
+`interpolate` (`sequence interp smoothstep smootherstep inverse_lerp`).
+rig's own multi-node functions fuse inside: `sequence` runs its own body on
+the fused values, its `searchsorted`, its `choice`s and its `method` (yours
+too) all in the node. A `List` fuses row by row, as rig broadcasts it: an
+operator on Lists (`lefts.t + rights.t`) or a function given one
+(`V.normalize(points)`, `F.clamp(lst.tx, 0, 1)`) is every row in the block's
+node, and a row that does not fuse leaves every row to rig's nodes.
+
+Matrices, quaternions and eulers fuse too: their operators (a matrix's `*` /
+`+` / `-` / `**` and a vector times a matrix, a quaternion's `*` / `+` / `-` /
+`**`), all of `matrix` (`decompose` with its `outputRotate`, `outputScale`,
+`outputShear`, `outputQuat` and their channels, `compose`, `inverse`,
+`transpose`, `multiply`, `add`, `lerp`, `blend`, `slerp`, `pow`,
+`normalize`, `aim`, `fourbyfour`, `translation`, `rotation`, `scale_of`,
+`axis`, `row`, `column`, `determinant`, `transform_point`,
+`transform_vector`, `dist`, `to_euler`, `to_quaternion`), all of
+`quaternion` and `euler`, and the verbs (`rig.inverse`, `rig.slerp`,
+`rig.to_euler`, ...). So does rig's type shorthand: `node << matrix`
+decomposes into the node's `s` / `r` / `t` / `shear` in its rotate order,
+`node.t << matrix`, `node.r << quaternion`, `curve.cv[:] << matrices`, ...
+A rotation goes into a `rotate` (and a scalar of degrees into an `rx`)
+through an angle output, with no `unitConversion`. A math node made by hand
+in the block (`rn.composeMatrix()`, `rn.decomposeMatrix()`) is computed in
+the block's node too: its inputs are held, and its outputs read as what
+Maya's node computes from them. Anything else (curve sampling,
+`motionPath`, any other node or function) builds rig's nodes as without the
+block, from the fused values' plugs. A block never fails because of what it
+holds.
+
+```python
+from rig import List
+
+lefts  = List(Node.create("transform", name=f"left{i}") for i in range(3))
+rights = List(Node.create("transform", name=f"right{i}") for i in range(3))
+mids   = List(Node.create("transform", name=f"mid{i}") for i in range(3))
+lefts.tx << [0, 1, 2]
+rights.tx << [4, 5, 6]
+with rig.fuse("mid"):
+    mids.t << (lefts.t + rights.t) * 0.5          # 3 rows, one node
+print(cmds.ls("mid_*"), [cmds.getAttr(f"mid{i}.tx") for i in range(3)])   # ['mid_fused1'] [2.0, 3.0, 4.0]
+```
+
+```python
+from rig import interpolate, tween
+
+eased = Node.create("transform", name="eased")
+with rig.fuse("ease"):
+    w = tween.in_out_sine(F.clamp(a.tx / 4, 0, 1))    # the curve's own math, fused
+    eased.t << interpolate.sequence(w, [0, 0.5, 1], [a.t, b.t, a.t * 2])
+
+print(cmds.ls("ease_*"), cmds.ls(type="container"))   # ['ease_fused1'] []
+print([round(v, 4) for v in cmds.getAttr("eased.t")[0]])   # [0.8827, 1.7039, 0.6264]
+```
+
+```python
+from rig import matrix, quaternion
+
+a.r << [30, 45, 0]
+rider = Node.create("transform", name="rider")
+with rig.fuse("rider"):
+    m = a.worldMatrix[0] * b.worldInverseMatrix[0]    # a fused matrix
+    print(repr(m))                                     # Fused(matrix: (a.worldMatrix * b.worldInverseMatrix))
+    half = quaternion.pow(matrix.to_quaternion(m), 0.5)   # half the rotation
+    rider << matrix.compose(rotate=half, translate=matrix.translation(m))
+
+print(cmds.ls("rider_*"), cmds.ls(type="decomposeMatrix"), cmds.ls(type="unitConversion"))   # ['rider_fused1'] [] []
+print([round(v, 4) for v in cmds.getAttr("rider.r")[0]])   # [13.7581, 22.4675, -3.2468] (rig's network's)
+```
+
+```python
+with rig.fuse():
+    try:
+        if a.tx > 0:                                  # no truth value, as a plug
+            pass
+    except TypeError as err:
+        print(type(err).__name__)                     # TypeError
+    print(a.tx in [b.tx, a.tx])                       # True (two plugs: the same plug?)
+```
+
+The fused node follows numpy, in doubles: `%` is floor modulo (`-1.25 % 3`
+is `1.75`), `round` is half to even, `sign(0)` is `0`, a division by zero is
+`inf` or `nan`, a test is true when it is not `0`. rig's network keeps
+Maya's node rules (see `rig_network_fixes_todo.md`), so the two can differ
+there, and in rig's float32 stages (under 1e-6). Matrices, quaternions and
+eulers follow Maya's nodes, in doubles: `decompose` gives `decomposeMatrix`'s
+euler (Maya's own decomposition: a half turn about y is `(0, 180, 0)`), its
+quaternion's sign and its negative scale (on z), `slerp` goes the shortest
+way, `blend` is `blendMatrix`'s, `aim` is `aimMatrix`'s. They differ from
+rig's network only where it has a float stage (`fourbyfour`'s rows, `lerp`'s
+`1 - weight`), and where Maya's answer is its algorithm's accident: the
+inverse of a singular matrix (rig.mll's is the identity) and the
+decomposition of a matrix with two rows along each other (rounding decides,
+in both).
+
+A fused value is built when it is used, not when it is written, so:
+
+* what rig checks when it builds (a locked container, a deleted input)
+  raises where the value is used: an input deleted in between raises
+  rig's `"... already deleted!"`, before anything is built;
+* a fused call is not memoized: the same call twice gives two equal
+  values, which build to one output;
+* rig's node counts and node types are not those of its network (one
+  `rigExpression` node instead), and a value has no node name until it is
+  built;
+* a fused rig function makes no container and publishes no plug (no
+  `sequence1` with its `x` / `xp` / `yp` / `output`);
+* `decompose(m)` is its `outputTranslate`, whose siblings (`.outputRotate`,
+  `.outputQuatW`, ...) are read off it, as off a `decomposeMatrix`'s, and so
+  are those of a List of them;
+* a math node made by hand is no node until it is used as one: its name, a
+  method, an input set once an output was read, or anything outside the
+  block makes it (where it was made, its inputs connected), and the values
+  that read it then read the node;
+* `choice` reads its selector as Maya's node does (rounded half away from
+  zero); out of range it gives the first or the last token, where Maya's node
+  keeps the value it had;
+* a scalar `smoothstep` whose left edge is above its right one is rig's
+  formula, a falling ramp, as for numbers and vectors; rig's network uses
+  Maya's `smoothStep` node there (Maya 2024 and later), which steps from 0 to
+  1 at the left edge;
+* `"text" % value` formats the text, as Python does with anything that
+  indexes, where rig raises for a plug (a Plug is a str, so its `%` runs
+  first). For the modulo of the plug of that name, write
+  `Plug("node.attr") % value`.
+
+* The block is one undo step. `rig.fuse("arm")` names its nodes
+  `arm_fused1`, ...
+* As the block ends, a node of it whose network rig makes in one node
+  becomes that node (the one-op rule): `dst.tx << a.tx + b.tx` alone in a
+  block leaves a `sum`, `node << matrix` one `decomposeMatrix`. A node rig's
+  network makes in more stays fused: two values of one op each, a vector
+  clamp, a scalar written into an angle (rig's node needs a
+  `unitConversion`). A value of the block used after it reads the node. The
+  rule runs as a block ends, under `set_options(fuse=True)` too; what the
+  option alone fuses is in no block, and stays fused.
+* `rig.set_options(fuse=True)` fuses everywhere, as one endless block (and
+  `fuse = true` in `_defaults.toml`).
+* Inside a block, `rig.set_options(fuse=False)` turns fusing off for the
+  rest of it (a block opened after it fuses), and `fuse=True` back on.
+* A file given to `rig.run`, or code given to `rig.exec`, fuses as what runs
+  it does: `with rig.fuse(): rig.run("arm.py")` fuses the file's math into
+  the block's node. A `rig.set_options(fuse=False)` in the file holds for
+  the rest of the run only, as every option a run sets (a run gives them
+  back).
+* Every public function of rig's math libraries fuses, or says why it does
+  not (`rig._internal.fuse.NOT_FUSED`: `inf()`, a number). `rig.random`'s
+  generators draw a value per seed and trigger (the scene's time by default)
+  with rig.mll's integer hash: the same frame always gives the same value.
+  rig's network steps an LCG through a DG cycle at each evaluation instead,
+  so its numbers are others, and `rig.unfuse` rebuilds that network. The
+  seed is one of the node's float inputs, set and not connected: editable
+  on the node after the build. `frame()` is the node's own time input (no
+  animCurve), `pi()` the number pi (rig's network's native `pi` node gives
+  180 on Maya 2024 and later: an angle read in degrees), and `cumsum`,
+  `diff` and `vector.rotate` fuse, so does a `choice` whose selector is a
+  List: one choice per row, the tokens shared.
+* A List the values of a block are appended to holds them as plugs of the
+  block's node; a list function given it (`max`, `min`, `sum`, `avg`,
+  `cumsum` ...) reads them back as the values they are, in the node.
+* `rn.angleBetween()` made by hand is a stand-in, as `rn.composeMatrix()`
+  is: its `axis`, `angle` and `euler` are Maya's own turn of `vector1` onto
+  `vector2` (`MQuaternion(a, b)`), for parallel and opposite vectors too.
+* `constant([plug, ...])` fuses; `constant(numbers)` stays rig's node, a
+  value to edit after the build.
+* rig's plug-in, `rig.mll` (1.2), is loaded on first use: already loaded, from
+  `RIG_PLUGIN` (its path), or by name from `MAYA_PLUG_IN_PATH`.
+  Without it, the block builds rig's nodes, with one warning per session.
+* A saved scene needs only the plug-in: the program is an int array and the
+  constants a double array on the node.
+* `set_options(maya_version=...)` targeting another Maya turns fusing off
+  (one warning): the scene must open where the plug-in may not exist.
+
+`rig.unfuse()` turns fused nodes back into rig's own network. What each
+connected output computes is built with rig's functions and operators, as
+without `rig.fuse()`, and drives what the output drove; the node is
+deleted. It reads the node alone (its program, its numbers and its inputs),
+so a scene saved and opened again unfuses too.
+
+```python
+src = Node.create("transform", name="src")
+src.t << [1, 2, 3]
+dst = Node.create("transform", name="dst")
+with rig.fuse("calc"):
+    dst.t << rig.vector.normalize(src.t) * 2 + rig.matrix.translation(src.worldMatrix[0])
+print(cmds.ls("calc_*"))                           # ['calc_fused1']
+made = rig.unfuse("calc_fused1")
+print(sorted(cmds.nodeType(str(n)) for n in made))  # ['multiplyDivide', 'normalize', 'plusMinusAverage', 'translationFromMatrix']
+print([round(v, 4) for v in cmds.getAttr("dst.t")[0]])   # [1.5345, 3.069, 4.6036] (as fused)
+```
+
+* `rig.unfuse("calc_fused1", ...)` unfuses the nodes given; no argument,
+  every one in the scene. It returns a List of the nodes it made, and is one
+  undo step. A node in a container has its network made in it; a locked
+  destination is connected and stays locked.
+* An operation comes back as the rig call that makes it (`a + b`,
+  `rig.matrix.aim`, `rig.quaternion.slerp` ...), a decomposition's parts
+  off one `decomposeMatrix`, a `choice` of three tokens or more as one
+  `choice` node. A rig function
+  the block traced (`smoothstep`, `sequence` ...) comes back as the
+  operations it is made of.
+* The values are rig's network's: where Maya's nodes and numpy differ
+  (above), they follow Maya's nodes. Inside a `rig.fuse()` block it raises
+  RuntimeError (the block would fuse the network again).
 
 ---
 

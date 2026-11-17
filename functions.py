@@ -118,6 +118,7 @@ def _sequence_to_node(obj: Any) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @memoize
 def frame() -> Any:
     """``frame()`` -- return a Plug that maps 1:1 with the timeline.
@@ -788,6 +789,7 @@ def cumsum(tokens: Sequence[Any]) -> Any:
 # --------------------------------------------------------------------- #
 
 
+@operands
 @memoize
 def pi() -> Any:
     """``pi()`` -- returns a Plug producing the constant pi.

@@ -25,6 +25,7 @@ from typing import Any
 import numpy as np
 
 from rig._internal.container import _publish_tokens, container, ContainerOptions
+from rig._internal.fuse import Fused
 from rig._internal.journal import user_call as _user_call
 from rig._internal.list import List
 from rig._internal.maya_version import is_at_least
@@ -85,7 +86,9 @@ def sequence(x: Any, xp: Any, yp: Any, method: Any = _v_lerp, ends: Any = "extra
             f"callable. Pass a verb such as rig.lerp or rig.slerp, or a tween "
             f"easing curve."
         )
-    if not isinstance(ends, Attribute) and ends not in _ENDS:
+    # a plug, or a fused value (rig.fuse() traces this body: `rig._internal.fuse`)
+    live_ends = isinstance(ends, (Attribute, Fused))
+    if not live_ends and ends not in _ENDS:
         raise ValueError(
             f"rig.interpolate.sequence() argument 'ends': {ends!r} is not one of "
             f"'extrapolate', 'hold' or a plug (non-zero holds)."
@@ -105,7 +108,7 @@ def sequence(x: Any, xp: Any, yp: Any, method: Any = _v_lerp, ends: Any = "extra
         # segment's weight is 0, at xp[n] the last one's is 1, whatever the method.
         # A live switch goes through a choice, which keeps doubles (a condition
         # node holds floats).
-        if isinstance(ends, Attribute):
+        if live_ends:
             x = _pick(ends != 0, clamp(x, xp[0], xp[n]), x)
         elif ends == "hold":
             x = clamp(x, xp[0], xp[n])

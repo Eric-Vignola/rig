@@ -439,6 +439,55 @@ def api_clear_data(mplug: Any) -> bool:
     return _apply(op)
 
 
+class _DataSet:
+    """Sets the data of a plug of a typed attribute (an int or double array) as an applied
+    edit of the journal: ``doIt`` (and redo) sets the new data, ``undoIt`` puts the saved
+    data back. For a long array, far faster than ``cmds.setAttr``, which reads every value
+    from a command's arguments (rig.fuse()'s programs)."""
+
+    __slots__ = ("mplug", "data", "saved", "done")
+
+    def __init__(self, mplug: Any, data: Any) -> None:
+        self.mplug = mplug
+        self.data  = data
+        try:
+            self.saved = mplug.asMObject()
+        except RuntimeError:          # no data yet
+            self.saved = OpenMaya.MObject.kNullObj
+        self.done  = False
+
+    def doIt(self) -> None:  # noqa: N802 (the journal's object protocol)
+        self.mplug.setMObject(self.data)
+        self.done = True
+
+    def undoIt(self) -> None:  # noqa: N802
+        if self.done:  # a doIt that raised set nothing
+            self.mplug.setMObject(self.saved)
+            self.done = False
+
+
+def api_set_array(mplug: Any, values: Any, ints: bool) -> bool:
+    """Sets ``mplug`` (an intArray or doubleArray attribute) to ``values`` (`_DataSet`),
+    applied and journaled through `_apply` (one undo step with its statement). True if it
+    was done; False when the API route is off (``journal.API_EDITS``), rig's undo command
+    is not ready, or the edit fails (the caller then takes its ``cmds.setAttr`` route)."""
+    if not journal.API_EDITS:
+        return False
+    if not _BOUND:
+        _bind()
+    if not _ready():
+        return False
+    try:
+        if ints:
+            data = OpenMaya.MFnIntArrayData().create(OpenMaya.MIntArray(values))
+        else:
+            data = OpenMaya.MFnDoubleArrayData().create(OpenMaya.MDoubleArray(values))
+        op = _DataSet(mplug, data)
+    except Exception:  # noqa: BLE001 (the cmds route)
+        return False
+    return _apply(op)
+
+
 # --------------------------------------------------------------------------- a new shape's parent
 
 

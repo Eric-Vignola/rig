@@ -242,6 +242,14 @@ Everything the tutorial omits on purpose, from the original rig
   tangents are read, as 0..1 of the curve's parameter range.
 - **`u` as a count or a list.** `u=20` spreads twenty riders evenly; a
   list gives each rider its own u, and a string in that list names a plug.
+- **The riders fused, with rig's fuse option.** Under `set_options(fuse=True)`
+  each rider's math is a `rig.fuse()` block of its own, compiled into
+  `rigExpression` nodes (rig's plug-in, `rig.mll`): two per rider, one
+  feeding its `motionPath` and one reading it, since a single node doing
+  both would be a DG cycle. Maya's parallel evaluation runs the riders side
+  by side. The file's workflow sets `fuse=False`, rig's network; turned on,
+  twenty riders' 1,723 nodes become 159 (49 `rigExpression`: 40 for the
+  riders, 9 for the rail).
 
 `create_rail(position_controls, u, orient_controls=None, scale_controls=None, rail_name="rail1", rider_name="rider1", degree=3, periodic=False, aim_axis=1, up_axis=0, invert_aim=False, invert_up=False, control_up=None, invert_up_control=False, debug=True)`
 returns the rail transform node. `orient_controls` and `scale_controls` must be
@@ -253,6 +261,7 @@ from rig import set_options
 from rig.examples import rail_spine
 
 set_options(create_containers=True)                        # False shows the raw graph instead of railNode1
+set_options(fuse=False)                                    # True: the riders fused into rigExpression nodes
 
 controls = List()
 for i in range(5):
