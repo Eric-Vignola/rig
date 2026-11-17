@@ -347,3 +347,32 @@ class TestConditionPublic(MayaTestCase):
         a      = Node.create("transform", name="a")
         result = condition(0, a.tx, 5)
         self.assertEqual(result, 5)
+
+    def test_a_branch_of_values_gives_the_whole_colour(self):
+        """A scalar test whose branch is a sequence of values (numbers, plugs, a tuple)
+        gives the node's whole colour, as a compound plug's branch does (not its R)."""
+        a = Node.create("transform", name="a")
+        b = Node.create("transform", name="b")
+        a.t << [1, 2, 3]
+        cases = (
+            ([0, 0, 1], [1, 0, 0], [0, 0, 1], [1, 0, 0]),
+            ((4, 5, 6), (7, 8, 9), [4, 5, 6], [7, 8, 9]),
+            ([a.tx, a.ty, 7], [0, 0, 0], [1, 2, 7], [0, 0, 0]),
+            ([0, 0, 1], a.t, [0, 0, 1], [1, 2, 3]),
+            (0, [1, 2, 3], [0, 0, 0], [1, 2, 3]),
+        )
+        for if_true, if_false, true, false in cases:
+            with self.subTest(if_true=if_true, if_false=if_false):
+                out = condition(b.tx, if_true, if_false)
+                self.assertTrue(str(out).endswith(".outColor"), str(out))
+                cmds.setAttr("b.tx", 1)
+                self.assertEqual(list(cmds.getAttr(str(out))[0]), true)
+                cmds.setAttr("b.tx", 0)
+                self.assertEqual(list(cmds.getAttr(str(out))[0]), false)
+
+    def test_scalar_branches_give_the_red_channel(self):
+        a = Node.create("transform", name="a")
+        b = Node.create("transform", name="b")
+        out = condition(b.tx, a.ty, [5])           # (a sequence of one value: a scalar)
+        self.assertTrue(str(out).endswith(".outColorR"), str(out))
+        self.assertTrue(str(condition(b.tx, a.tx, 5)).endswith(".outColorR"))
