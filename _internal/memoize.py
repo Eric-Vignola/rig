@@ -11,20 +11,22 @@ attribute a plug argument reads was deleted or renamed since (see
 reference unload, reload or remove prunes them (the scene callbacks at the end
 of this module).
 
-``@vectorize`` broadcasts a function call across :class:`List`
-arguments using **NumPy-style strict broadcasting**: every list / list-like
-argument must be the same length, OR be length 1, OR be scalar. Mismatched
-lengths raise :class:`ValueError` rather than silently capping (which is
-the behaviour of the original Eric Vignola ``rig`` library).
+``@vectorize`` broadcasts a function call over rows of its arguments using
+**NumPy-style strict broadcasting**: rows must be the same length, OR be
+length 1, OR be a single value. Mismatched lengths raise :class:`ValueError`
+rather than silently capping (which is the behaviour of the original Eric
+Vignola ``rig`` library).
 
-A call is broadcast only when at least one argument is a :class:`List`.
-With only plain Python lists / scalars, the function is called directly
-with its raw arguments.
+With a layout (``@vectorize("(3),(3),()->(3)")``, `rig._internal.layout`)
+each parameter's core says what one value is, so a plain list is one value
+(``[1, 0, 0]`` for a vector) or rows (``[a.t, b.t]``) by what it holds.
+Without one, a call is broadcast only when at least one argument is a
+:class:`List`; with only plain Python lists / scalars, the function is
+called directly with its raw arguments.
 """
 
 from __future__ import annotations
 
-import inspect
 import numbers
 import sys
 import weakref
@@ -34,7 +36,6 @@ from typing import Any, Callable, Dict, Optional, Tuple
 # A node object's MObject and fn set are read only once its handle (built
 # while the node was alive, see rig.nodetypes._base._ensure_owner_alive) says
 # the node is valid: after a new scene they point at freed memory.
-import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
@@ -54,6 +55,7 @@ from rig.nodetypes.dg_node import DGNode
 from rig._internal.container import container, ContainerOptions
 from rig._internal.generators import arguments
 from rig._internal.list import List, _values_list
+from rig._internal.layout import Layout
 from rig._internal.types import (
     _is_list,
     _is_node,
@@ -676,114 +678,51 @@ def _broadcast_len(obj: Any) -> int:
 
 
 # --------------------------------------------------------------------- #
-#  Row parameters: a plain sequence where a function takes one number
+#  vectorize
 # --------------------------------------------------------------------- #
-#
-# A plain list is a value in rig (a vector [0, 1, 0], a matrix, the channels
-# [a.tx, a.ty, a.tz]), so a plain list does not broadcast on its own. A
-# parameter that only ever takes one number per call (a blend weight) is
-# different: a list there can only mean several calls. `vectorize(rows=...)`
-# names such parameters, and a plain sequence given to one is read as a List.
-
-
-def _plain_rows(value: Any) -> bool:
-    """True if ``value`` is a plain sequence of values: a list, a tuple, a range or a
-    1-D numpy array (a List broadcasts already; a str, a Plug or a node is one value).
-    Types only: a fused value answers any attribute (``.ndim`` would be an expression)."""
-    if isinstance(value, (List, str)):
-        return False
-    if isinstance(value, (list, tuple, range)):
-        return True
-    return isinstance(value, np.ndarray) and value.ndim == 1
-
-
-def row_slots(func: Callable[..., Any], names: Tuple[str, ...]) -> Dict[str, int]:
-    """``{name: position}`` of ``func``'s row parameters ``names`` (its own signature,
-    under any functools.wraps); TypeError for a name it does not have"""
-    params = list(inspect.signature(func).parameters)
-    for name in names:
-        if name not in params:
-            raise TypeError(f"vectorize(rows=...): {getattr(func, '__name__', func)!r} has no "
-                            f"parameter {name!r}")
-    return {name: params.index(name) for name in names}
-
-
-def rows_as_lists(slots: Dict[str, int], args: tuple, kwargs: dict) -> Tuple[tuple, dict]:
-    """``args`` and ``kwargs`` with each plain sequence given to a row parameter
-    (``slots``, `row_slots`) made a List: one call per element, as a List gives.
-
-    When the call broadcasts (that List, or another), a plain sequence given to any
-    other parameter is one value for every row (``[10, 0, 0]`` a vector, a 4x4 array a
-    matrix), not rows of its own: in a function with row parameters, rows come from a
-    List or a row parameter only."""
-    for name, index in slots.items():
-        if name in kwargs:
-            if _plain_rows(kwargs[name]):
-                kwargs = {**kwargs, name: _as_rows(kwargs[name])}
-        elif index < len(args) and _plain_rows(args[index]):
-            args = (*args[:index], _as_rows(args[index]), *args[index + 1:])
-    if any(isinstance(v, List) for v in args) or any(isinstance(v, List) for v in kwargs.values()):
-        rows_at = set(slots.values())
-        args = tuple(List([v]) if i not in rows_at and _plain_value(v) else v for i, v in enumerate(args))
-        kwargs = {k: (List([v]) if k not in slots and _plain_value(v) else v) for k, v in kwargs.items()}
-    return args, kwargs
-
-
-def _plain_value(value: Any) -> bool:
-    """True if ``value`` is a plain sequence or array (a vector, a matrix, a list of
-    channels): one value, which a broadcast gives every row"""
-    if isinstance(value, (List, str)):
-        return False
-    return isinstance(value, (list, tuple, range, np.ndarray))
-
-
-def _as_rows(value: Any) -> List:
-    """The List of a plain sequence's elements (an array's as Python numbers)"""
-    return List(value.tolist() if isinstance(value, np.ndarray) else list(value))
 
 
 def vectorize(
-    func:        Optional[Callable[..., Any]] = None,
+    func:        Optional[Any] = None,
     *,
-    favor_index: Optional[int]                = None,
-    rows:        Tuple[str, ...]              = (),
+    favor_index: Optional[int] = None,
 ) -> Callable[..., Any]:
-    """Broadcast ``func`` across :class:`List` arguments -- NumPy-style strict.
+    """Broadcast ``func`` over rows of its arguments. Two forms:
 
-    Triggers when any positional or keyword argument is a ``List``.
-    Once triggered, every list / sequence argument must satisfy
-    NumPy's broadcasting rule: have the same length as the longest, OR
-    be length 1, OR be scalar. Mismatched non-1 lengths raise
-    :class:`ValueError`.
+    * ``@vectorize("(3),(3),()->(3)")``: a layout (`rig._internal.layout`) names
+      each parameter's core, the value one call takes. A value is one value
+      when it fits its core; it is rows when it is a :class:`List`, or a plain
+      list, tuple, range or array whose elements fit (``[a.t, b.t]`` for a
+      vector, ``[0.25, 0.5, 0.75]`` for a ``()`` weight, an N x 3 array). Rows
+      combine with single values and with rows of 1 or of the same length;
+      anything else raises before the first call. The layout is added to the
+      function's docstring.
+    * ``@vectorize``, no layout: only a ``List`` argument broadcasts, and once
+      one does, every list or sequence argument is rows (NumPy-style strict:
+      the same length as the longest, or length 1, or a scalar).
 
-    ``rows`` names the parameters that take one number per call (a blend
-    weight): a plain list, tuple, range or 1-D array given to one of them is
-    read as a List, so it broadcasts on its own. In such a function a plain
-    sequence given to any other parameter is one value (a vector, a matrix, the
-    channels of a list of plugs) even in a broadcast, where it is otherwise read
-    as rows (`rows_as_lists`). `rig._internal.operands.operands` applies the
-    same rule at its entry, before rig.fuse() reads the arguments.
+    One row returns its single value, more a :class:`List`.
 
     This differs from the original Eric Vignola ``rig`` library (which
     silently capped each shorter argument to its last element). The
     permissive behaviour was a frequent source of subtle bugs from typos --
     we trade it for explicit error messages on a clean-slate rebuild.
 
-    Returns a single value if there is one row, a :class:`List`
-    otherwise.
-
     Args:
-        func: Function to wrap (when used as a plain decorator).
-        favor_index: Optional positional index. If given, vectorisation
-            stops once ``func`` has been called ``len(args[favor_index])``
-            times. Used to limit broadcasts driven by a particular argument.
-        rows: The parameters that take one number per call, where a plain
-            sequence means one call per element (see above).
+        func: The function to wrap (``@vectorize``), or a layout string
+            (``@vectorize("(n?),(n?),()->(n?)")``).
+        favor_index: Without a layout, an optional positional index. If
+            given, vectorisation stops once ``func`` has been called
+            ``len(args[favor_index])`` times.
 
     Raises:
-        ValueError: When two or more sequence-typed arguments have
-            different non-1 lengths (NumPy-style broadcast violation).
-        TypeError: When ``rows`` names a parameter ``func`` does not have.
+        ValueError: When rows of different lengths (not 1) meet, or, with a
+            layout, when named sizes disagree (``lerp(a.t, uv, 0.5)``: 3
+            channels against 2).
+        TypeError: With a layout, for a value that fits its core neither as
+            one value nor as rows.
+        rig._internal.layout.LayoutError: At decoration, for a layout rig
+            cannot read or one the function's signature does not match.
 
     Examples::
 
@@ -795,92 +734,122 @@ def vectorize(
         f(List([a, b, c, d, e]), 5, x)                   # OK -- x is scalar
         f(List([a, b, c, d, e]), 5, [x, y, z])           # ValueError: lengths {3, 5}
 
-        @vectorize(rows=("weight",))
-        def g(a, b, weight=0.5): ...
+        @vectorize("(3),(3),()->(3)")
+        def slerp(input1, input2, weight=0.5): ...
 
-        g(a, b, [0.25, 0.5, 0.75])                       # a List of three: weight is a row parameter
+        slerp(a.t, b.t, [0.25, 0.5, 0.75])               # three calls: the weight's core is ()
+        slerp([a.t, b.t], c.t, 0.5)                      # two calls: a list of vectors is rows
+        slerp([1, 0, 0], c.t, 0.5)                       # one call: three numbers are one vector
     """
-    # Support both @vectorize and @vectorize(favor_index=N, rows=...) syntaxes.
+    if isinstance(func, str):
+        layout = Layout(func)
+        if favor_index is not None:
+            raise TypeError("vectorize(): favor_index does not go with a layout")
+        return lambda f: _vectorized(f, None, layout)
     if func is None:
+        return lambda f: _vectorized(f, favor_index, None)
+    return _vectorized(func, favor_index, None)
 
-        def deco(f: Callable[..., Any]) -> Callable[..., Any]:
-            return vectorize(f, favor_index=favor_index, rows=rows)
 
-        return deco
+def _collected(results: list) -> Any:
+    """What a broadcast returns: None for no result, the one result, or a List of them"""
+    if not results:
+        return None
+    if len(results) == 1:
+        return results[0]
+    # Lazy import to avoid circular dep
+    try:
+        return _values_list(results)
+    except Exception:
+        return results
 
-    slots = row_slots(func, tuple(rows)) if rows else {}
 
-    @wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        if not args and not kwargs:
-            return func()
-        if slots:
-            args, kwargs = rows_as_lists(slots, args, kwargs)
+def _vectorized(
+    func:        Callable[..., Any],
+    favor_index: Optional[int],
+    layout:      Optional[Layout],
+) -> Callable[..., Any]:
+    bound = layout.bound(func) if layout is not None else None
 
-        valid_args   = any(_is_list(x) for x in args)
-        valid_kwargs = any(_is_list(v) for v in kwargs.values())
+    if bound is not None:
+        classify = bound.classify
 
-        # No List among the args -- call func directly with raw arguments.
-        if not (valid_args or valid_kwargs):
-            return func(*args, **kwargs)
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            plan = classify(args, kwargs)
+            if plan is None:
+                return func(*args, **kwargs)
+            results: list[Any] = []
+            for row_args, row_kwargs in plan.calls(args, kwargs):
+                res = func(*row_args, **row_kwargs)
+                if res is not None:
+                    results.append(res)
+            return _collected(results)
 
-        # ---- NumPy-style strict broadcast shape check ------------------- #
-        arg_lens   = [_broadcast_len(x) for x in args]
-        kwarg_lens = [(k, _broadcast_len(v)) for k, v in kwargs.items()]
-        non_scalar_lens = [n for n in arg_lens if n != 1] + [
-            n for _, n in kwarg_lens if n != 1
-        ]
-        unique_lens = set(non_scalar_lens)
-        if len(unique_lens) > 1:
-            # Build a helpful error message naming offending positional /
-            # keyword args.
-            offenders = []
-            for i, n in enumerate(arg_lens):
-                if n != 1:
-                    offenders.append(f"arg{i}=len {n}")
-            for k, n in kwarg_lens:
-                if n != 1:
-                    offenders.append(f"{k}=len {n}")
-            raise ValueError(
-                f"vectorize({func.__name__!r}): cannot broadcast lengths "
-                f"{sorted(unique_lens)} \u2014 every list argument must be the "
-                f"same length, or scalar / length-1. Got: {', '.join(offenders)}."
+        doc = wrapper.__doc__
+        wrapper.__doc__ = f"{doc.rstrip()}\n\n    {bound.doc}\n" if doc else bound.doc
+    else:
+
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if not args and not kwargs:
+                return func()
+
+            valid_args   = any(_is_list(x) for x in args)
+            valid_kwargs = any(_is_list(v) for v in kwargs.values())
+
+            # No List among the args -- call func directly with raw arguments.
+            if not (valid_args or valid_kwargs):
+                return func(*args, **kwargs)
+
+            # ---- NumPy-style strict broadcast shape check ------------------- #
+            arg_lens   = [_broadcast_len(x) for x in args]
+            kwarg_lens = [(k, _broadcast_len(v)) for k, v in kwargs.items()]
+            non_scalar_lens = [n for n in arg_lens if n != 1] + [
+                n for _, n in kwarg_lens if n != 1
+            ]
+            unique_lens = set(non_scalar_lens)
+            if len(unique_lens) > 1:
+                # Build a helpful error message naming offending positional /
+                # keyword args.
+                offenders = []
+                for i, n in enumerate(arg_lens):
+                    if n != 1:
+                        offenders.append(f"arg{i}=len {n}")
+                for k, n in kwarg_lens:
+                    if n != 1:
+                        offenders.append(f"{k}=len {n}")
+                raise ValueError(
+                    f"vectorize({func.__name__!r}): cannot broadcast lengths "
+                    f"{sorted(unique_lens)} — every list argument must be the "
+                    f"same length, or scalar / length-1. Got: {', '.join(offenders)}."
+                )
+
+            # If no list-like arg has a length > 1, broadcast count is 1.
+            broadcast_count = max(unique_lens) if unique_lens else 1
+
+            max_count: Optional[int] = (
+                len(args[favor_index]) if favor_index is not None else broadcast_count
             )
 
-        # If no list-like arg has a length > 1, broadcast count is 1.
-        broadcast_count = max(unique_lens) if unique_lens else 1
+            # ---- Iterate (arguments() handles the per-row index walking) ---- #
+            results: list[Any] = []
+            count = 0
+            for row_args, row_kwargs in arguments(*args, **kwargs):
+                res = func(*row_args, **row_kwargs)
+                if res is not None:
+                    results.append(res)
+                count += 1
+                if max_count is not None and count >= max_count:
+                    break
+            return _collected(results)
 
-        max_count: Optional[int] = (
-            len(args[favor_index]) if favor_index is not None else broadcast_count
-        )
-
-        # ---- Iterate (arguments() handles the per-row index walking) ---- #
-        results: list[Any] = []
-        count = 0
-        for row_args, row_kwargs in arguments(*args, **kwargs):
-            res = func(*row_args, **row_kwargs)
-            if res is not None:
-                results.append(res)
-            count += 1
-            if max_count is not None and count >= max_count:
-                break
-
-        if not results:
-            return None
-        if len(results) == 1:
-            return results[0]
-
-        # Lazy import to avoid circular dep
-        try:
-            return _values_list(results)
-        except Exception:
-            return results
-
-    # rig.fuse() broadcasts a List row by row as this does (`fuse._broadcast`), unless a
-    # favor_index limits the rows
+    # rig.fuse() broadcasts a List row by row as this does (`fuse._broadcast`, by the layout
+    # when there is one), unless a favor_index limits the rows
     wrapper._rig_vectorized = True
     wrapper._rig_favor_index = favor_index
-    wrapper._rig_rows = slots       # read by `operands` (its entry applies them before rig.fuse())
+    # read by `operands` (its entry makes rows Lists before rig.fuse() reads them) and `fuse`
+    wrapper._rig_layout = bound
     # a statement for rig's own functions only (as memoize)
     return statement(wrapper) if rig_code(func) else wrapper
 

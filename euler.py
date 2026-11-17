@@ -68,7 +68,7 @@ def reorder(token: Any, rotate_order0: Any, rotate_order1: Any) -> Any:
 
 
 @operands
-@vectorize(rows=("weight",))
+@vectorize("(3),(3),()->(3)")
 @memoize
 def slerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
     """``slerp(e0, e1, weight=0.5)`` -- interpolate two euler angles along

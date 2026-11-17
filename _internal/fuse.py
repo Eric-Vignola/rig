@@ -1651,7 +1651,7 @@ def call(key: str, args: tuple, kwargs: dict):
     values = (*args, *kwargs.values())
     if any(isinstance(v, _bind()[3]) for v in values):
         if key in VECTORIZED:
-            return _broadcast(form, traced, args, kwargs)
+            return _broadcast(form, traced, args, kwargs, LAYOUTS.get(key))
         if key in ELEMENTWISE and not any(type(v) in (list, tuple) for v in values):
             return _broadcast(form, traced, args, kwargs)
     return _call_one(form, traced, args, kwargs, vectorized=bool(traced and traced[1]))
@@ -1679,23 +1679,35 @@ def _call_one(form, traced, args: tuple, kwargs: dict, vectorized: bool = False)
         return NotImplemented
 
 
-def _broadcast(form, traced, args: tuple, kwargs: dict):
-    """A vectorized function given a List, as `rig._internal.memoize.vectorize` calls it
-    (numpy's rule: every List or sequence as long as the longest, or of one; a row each),
+def _broadcast(form, traced, args: tuple, kwargs: dict, layout=None):
+    """A vectorized function given a List, as `rig._internal.memoize.vectorize` calls it,
     every row fused, and every row's value made a plug together (the block's node): one
-    value for one row, a List otherwise. NotImplemented when the lengths do not
-    broadcast, or a row does not fuse: rig calls it, and raises what it raises."""
-    from rig._internal.generators import arguments
+    value for one row, a List otherwise. The rows are its layout's when it has one
+    (`rig._internal.layout.Bound.classify`: a vector literal is one value for every row),
+    else numpy's rule (every List or sequence as long as the longest, or of one; a row
+    each). NotImplemented when the rows do not broadcast, or a row does not fuse: rig
+    calls it, and raises what it raises."""
     from rig._internal.list import _values_list
-    from rig._internal.memoize import _broadcast_len
     values = (*args, *kwargs.values())
     if any(isinstance(v, _bind()[3]) and not len(v) for v in values):
         return NotImplemented                # an empty List: rig's to answer (or refuse)
-    lengths = {n for n in (_broadcast_len(v) for v in values) if n != 1}
-    if len(lengths) > 1:
-        return NotImplemented
+    if layout is not None:
+        try:
+            plan = layout.classify(args, kwargs)
+        except (TypeError, ValueError):
+            return NotImplemented            # rig raises it
+        if plan is None:                     # a List one value fills (a [k] core)
+            return _call_one(form, traced, args, kwargs)
+        rows = plan.calls(args, kwargs)
+    else:
+        from rig._internal.generators import arguments
+        from rig._internal.memoize import _broadcast_len
+        lengths = {n for n in (_broadcast_len(v) for v in values) if n != 1}
+        if len(lengths) > 1:
+            return NotImplemented
+        rows = arguments(*args, **kwargs)
     results = []
-    for row_args, row_kwargs in arguments(*args, **kwargs):
+    for row_args, row_kwargs in rows:
         value = _call_one(form, traced, tuple(row_args), row_kwargs)
         if value is NotImplemented:
             return NotImplemented
@@ -1772,16 +1784,21 @@ NOT_FUSED = {
 RAW: dict = {}
 # the keys of the vectorized public functions (a List argument broadcasts: `_broadcast`)
 VECTORIZED: set = set()
+# {key: its layout} for those vectorized with one (`rig._internal.layout.Bound`)
+LAYOUTS: dict = {}
 
 
 def register(key: str, func) -> None:
     """`rig._internal.operands.operands` registers every public function: ``key`` traces
     when `TRACE` or `TRACE_MODULES` names it, and broadcasts a List when vectorized (and
-    not limited to one argument's length, `favor_index`)"""
+    not limited to one argument's length, `favor_index`), by its layout when it has one"""
     vectorized = False
     while True:
         if getattr(func, "_rig_vectorized", False):
             vectorized = getattr(func, "_rig_favor_index", None) is None
+            layout = getattr(func, "_rig_layout", None)
+            if layout is not None:
+                LAYOUTS[key] = layout
         inner = getattr(func, "__wrapped__", None)
         if inner is None:
             break

@@ -392,15 +392,15 @@ def _public_name(func: Callable[..., Any]) -> str:
     return f"{module}.{func.__name__}"
 
 
-def _row_slots_of(func: Callable[..., Any]) -> dict:
-    """The row parameters a ``@vectorize(rows=...)`` under ``func`` declares
-    (``{name: position}``, `rig._internal.memoize.vectorize`), or none"""
+def layout_of(func: Callable[..., Any]) -> Any:
+    """The layout a ``@vectorize("...")`` under ``func`` declares, bound to its
+    signature (`rig._internal.layout.Bound`), or None"""
     while func is not None:
-        slots = getattr(func, "_rig_rows", None)
-        if slots:
-            return slots
+        bound = getattr(func, "_rig_layout", None)
+        if bound is not None:
+            return bound
         func = getattr(func, "__wrapped__", None)
-    return {}
+    return None
 
 
 def list_alias(value: Any) -> bool:
@@ -579,11 +579,10 @@ def operands(
     _fuse.register(fuse_key, func)   # a rig function whose body fuses inside (`fuse.TRACE`)
     traced = fuse_key in _fuse.RAW and skip_when is None
     fusable = traced or fuse_key in _fuse.FORMS
-    # a @vectorize(rows=...) under it: a plain sequence given to a row parameter is a
-    # List from the entry on, so rig.fuse() broadcasts it as rig does
-    row_slots = _row_slots_of(func)
-    if row_slots:
-        from rig._internal.memoize import rows_as_lists
+    # a @vectorize("...") under it: under rig.fuse(), the rows its layout reads (a plain
+    # list of vectors, of weights) are a List from the entry on, so rig.fuse() broadcasts
+    # them as rig does
+    layout = layout_of(func)
 
     # the statement entry (`journal.statement`), where rig.fuse() hooks in: user code
     # fusing gets the fused form of a fusable function, and any other call gets its
@@ -592,11 +591,13 @@ def operands(
     def entry(*args: Any, **kwargs: Any) -> Any:
         if _JOURNAL.open:
             return wrapper(*args, **kwargs)
-        if row_slots:
-            args, kwargs = rows_as_lists(row_slots, args, kwargs)
         _refuse_list_alias(label, args, kwargs)
         if _FUSE.on:
             args, kwargs = _fuse.listed(args, kwargs)
+            if layout is not None:
+                plan = layout.classify(args, kwargs)   # (raises for a shape it refuses)
+                if plan is not None:
+                    args, kwargs = plan.listed(args, kwargs)
             if fusable:
                 if skip_when is not None and skip_when(*_prepared_arguments(args, kwargs)):
                     # rig picks in Python (`condition` of a number): its branches may
