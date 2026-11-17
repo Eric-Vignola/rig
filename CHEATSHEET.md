@@ -3731,10 +3731,10 @@ print(riders.tx >> None, cmds.getAttr("r3.tz", lock=True))   # [0. 0. 0.] True
 
 **rig's undo plug-in.** A statement's step goes on the queue through
 `rigUndoableAPICommand`, from the plug-in `undoable_api_command` that
-ships in `rig/nodetypes/plugins`. rig loads it itself at the first such
+ships in `rig/plugins`. rig loads it itself at the first such
 edit of a session: by full path from its own folder, else by name from
 `MAYA_PLUG_IN_PATH`. Nothing needs configuring; with
-`rig/nodetypes/plugins` on `MAYA_PLUG_IN_PATH` (a module file's
+`rig/plugins` on `MAYA_PLUG_IN_PATH` (a module file's
 `MAYA_PLUG_IN_PATH+:=` line), that first load costs about 8 ms instead of
 about 165 ms. If it cannot be loaded:
 
@@ -4582,9 +4582,9 @@ A fused value is built when it is used, not when it is written, so:
   value to edit after the build.
 * rig's plug-in, `rig.mll` (1.2), is loaded on first use: already loaded, else
   from `RIG_PLUGIN` (its path), else by name from `MAYA_PLUG_IN_PATH`, else its
-  build for this Maya next to rig's source, `rig/plugin/<version>/rig.mll`
-  (`plugin/build.bat` writes it there); one that is not there or does not load
-  is skipped.
+  build for this Maya next to rig's source, `rig/plugins/<version>/rig.mll`
+  (`plugins/build.bat` writes it there; `build.sh` writes `rig.bundle` on
+  macOS); one that is not there or does not load is skipped.
   Without it, the block builds rig's nodes, with one warning per session.
 * A saved scene needs only the plug-in: the program is an int array and the
   constants a double array on the node.

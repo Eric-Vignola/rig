@@ -812,7 +812,7 @@ class TestUndo(_Case):
 
     def test_without_the_undo_plugin_nothing_is_made(self):
         n = _cube("n")
-        from rig.nodetypes import plugins
+        from rig import plugins
 
         with mock.patch.object(plugins, "_fast_path_ready", return_value=False):
             self.assertRefusesWithNothingChanged(RuntimeError, lambda: n.tx << AnimCurve([0, 1]), "undo plug-in")

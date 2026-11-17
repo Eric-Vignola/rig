@@ -86,7 +86,7 @@ from rig._internal.memoize import prune_memoize_caches
 from rig._internal.plug import _disconnect_incoming, _do_destroy, Plug
 from rig._internal.undo import _undo_chunk
 from rig.nodetypes import _base
-from rig.nodetypes import plugins as _plugins
+from rig import plugins as _plugins
 from rig.nodetypes._base import _cast, _cast_node, _check_attrs, _refuse_locked_node, _name_of
 from rig.nodetypes.material_node import _close, _gate_type, _leaf, Conversion
 from rig.spec._base import _spec_from_attribute
@@ -985,7 +985,7 @@ class _Repoint:
 
     __slots__ = ("node", "stand_ins", "classes")
 
-    # what a failed load of rig's plug-in names (`rig.nodetypes.plugins._run_undoable`)
+    # what a failed load of rig's plug-in names (`rig.plugins._run_undoable`)
     UNDO_EDIT = "a shader conversion in place"
     # its undoIt / redoIt make no cmds call
     RECORDS_NO_CMDS = True

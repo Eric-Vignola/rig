@@ -35,7 +35,8 @@ from rig._internal.plug import Plug
 from rig.bridges import commands as rc
 from rig.bridges import nodes as rn
 from rig.nodetypes import dg_node as dg_node_module
-from rig.nodetypes import plugins, Transform
+from rig import plugins
+from rig.nodetypes import Transform
 from rig.nodetypes._base import Attribute
 from rig.nodetypes.dg_node import DGNode
 from rig.nodetypes.material_node import Lambert, Material
@@ -105,10 +106,10 @@ CMDS_NAMES = frozenset({"cmds", "_mc", "mc"})
 
 # not linted: the journal (the proxy itself) and the undo command (its undoInfo calls run
 # during undo / redo or around a registration, never with a pending journal)
-EXCLUDED_FILES = frozenset({"_internal/journal.py", "nodetypes/plugins/undoable_api_command.py"})
+EXCLUDED_FILES = frozenset({"_internal/journal.py", "plugins/undoable_api_command.py"})
 
 # where getattr(cmds, ...) may look a command up by name
-GETATTR_ALLOWED = ("bridges/commands.py", "nodetypes/plugins/")
+GETATTR_ALLOWED = ("bridges/commands.py", "plugins/")
 
 # (file, enclosing function) where a .doIt may apply an API edit: the journaled modifiers (the
 # fast paths' _apply; R5 DFIX removed B0's unused helper), and the mesh edits' bodies, which
@@ -341,7 +342,7 @@ class TestBarrierLint(unittest.TestCase):
         # a mel.eval in get_deformers is no query site any more; a doIt elsewhere in those files is not
         self.assertEqual(len(self.lint("class DAGNode:\n    def get_deformers(self):\n        mel.eval('x')\n",
                                        rel="nodetypes/dag_node.py")), 1)
-        self.assertEqual(len(self.lint("def f(m):\n    m.doIt()\n", rel="nodetypes/plugins/__init__.py")), 1)
+        self.assertEqual(len(self.lint("def f(m):\n    m.doIt()\n", rel="plugins/__init__.py")), 1)
         self.assertEqual(len(self.lint("def f(m):\n    m.doIt()\n", rel="nodetypes/mesh.py")), 1)
 
 

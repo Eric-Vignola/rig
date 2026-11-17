@@ -20,7 +20,7 @@ from rig.nodetypes.dg_node import _positional_name
 from rig.nodetypes.dag_node import DAGNode
 from rig.nodetypes.geometry import Geometry, _data_ids, _data_placement, _shape_create_name, deformed_refusal
 from rig.nodetypes.geometry import _discard, _put_under, _shape_name, _shape_path, _shape_target, _target_space
-from rig.nodetypes.plugins import _run_undoable
+from rig.plugins import _run_undoable
 
 
 _CURVE_LOAD_DOC ="""Loads a curve from a cgmath file (a NurbsCurveData): one name, two forms.

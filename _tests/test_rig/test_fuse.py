@@ -1,7 +1,7 @@
 """``rig.fuse()``: scalar and vector math compiled into rigExpression nodes (prototype).
 
 Needs rig's plug-in, rig.mll (``RIG_PLUGIN``, its path; on Maya's plug-in path; or its
-build in ``rig/plugin/<Maya version>``); without it, every test here is skipped but the
+build in ``rig/plugins/<Maya version>``); without it, every test here is skipped but the
 fallback and lookup ones.
 Values are checked against numpy, which the fused node follows.
 """
@@ -39,7 +39,7 @@ class _Case(MayaTestCase):
         super().setUpClass()
         if not _plugin_loads():
             raise __import__("unittest").SkipTest(
-                "the rig plug-in (rig.mll) is not available (RIG_PLUGIN, MAYA_PLUG_IN_PATH or plugin/build.bat)")
+                "the rig plug-in (rig.mll) is not available (RIG_PLUGIN, MAYA_PLUG_IN_PATH or a build in rig/plugins)")
 
     def setUp(self):
         super().setUp()
@@ -1995,20 +1995,22 @@ class TestNoPlugin(MayaTestCase):
         self.assertEqual(cmds.ls(type="rigExpression"), [])
         self.assertEqual(warning.call_count, 1)
         self.assertIn("rig.mll", warning.call_args[0][0])
-        self.assertIn("plugin/build.bat", warning.call_args[0][0])
+        script = {"win32": "plugins/build.bat", "darwin": "plugins/build.sh"}.get(sys.platform)
+        if script:      # the script that builds it on this platform
+            self.assertIn(f"({script} builds it there)", warning.call_args[0][0])
 
 
 class TestPluginLookup(MayaTestCase):
     """Where rig loads rig.mll from when it is not loaded: ``RIG_PLUGIN``, its name on
     ``MAYA_PLUG_IN_PATH``, then its build for this Maya next to rig's source
-    (``rig/plugin/<version>/``, plugin/build.bat's output); one that is not there or does
-    not load is skipped"""
+    (``rig/plugins/<version>/``, plugins/build.bat's output, build.sh's on macOS); one that
+    is not there or does not load is skipped"""
 
     ELSEWHERE = "D:/elsewhere/rig.mll"
 
     def built(self):
         ext = {"win32": ".mll", "darwin": ".bundle"}.get(sys.platform, ".so")
-        return os.path.join(os.path.dirname(os.path.abspath(rig.__file__)), "plugin",
+        return os.path.join(os.path.dirname(os.path.abspath(rig.__file__)), "plugins",
                             cmds.about(majorVersion=True), "rig" + ext)
 
     def candidates(self, built_there, rig_plugin):

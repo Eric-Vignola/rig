@@ -40,7 +40,8 @@ import rig
 from rig import List, Node
 from rig._internal import api_edits, journal
 from rig._internal.plug import Plug
-from rig.nodetypes import _base, plugins
+from rig import plugins
+from rig.nodetypes import _base
 from rig.nodetypes.transform import Transform
 from rig._tests._base import MayaTestCase
 from rig._tests._undo import UndoWalk

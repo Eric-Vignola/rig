@@ -7,8 +7,8 @@ __pycache__/
 
 # Packaging artifacts
 build/
-# rig.mll's builds, one folder per Maya version (plugin/build.bat)
-/plugin/[0-9][0-9][0-9][0-9]/
+# rig.mll's builds, one folder per Maya version (plugins/build.bat, plugins/build.sh)
+/plugins/[0-9][0-9][0-9][0-9]/
 dist/
 *.egg-info/
 

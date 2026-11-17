@@ -371,8 +371,8 @@ class TestPlumbingIsPrivate(MayaTestCase):
         self.assertIn("rig.nodetypes.dg_node", [m.__name__ for m in _public_modules()])
 
     def test_the_undo_command_is_named_once(self):
-        from rig.nodetypes import plugins
-        from rig.nodetypes.plugins import undoable_api_command
+        from rig import plugins
+        from rig.plugins import undoable_api_command
 
         self.assertEqual(plugins.UNDOABLE_API_COMMAND, undoable_api_command.COMMAND_NAME)
         with open(plugins.__file__, encoding="utf-8") as handle:

@@ -16,10 +16,10 @@ exception is in flight then, the ``except`` block ends in here).
 
 rig's undo plug-in (``undoable_api_command``) must be loaded for a journal to be
 registered. It is loaded at the first API edit of a session (by full path from rig's
-folder, else by name from ``MAYA_PLUG_IN_PATH``, see `rig.nodetypes.plugins`). If it
+folder, else by name from ``MAYA_PLUG_IN_PATH``, see `rig.plugins`). If it
 cannot be loaded, the fast paths take the ``cmds`` route, and one warning per session
 says that builds run slower; the load is tried again only after a plug-in is loaded or
-unloaded (`rig.nodetypes.plugins._fast_path_ready`).
+unloaded (`rig.plugins._fast_path_ready`).
 
 While a build's journals are on the undo queue, ``unloadPlugin('undoable_api_command')``
 is refused (run ``cmds.flushUndo()`` first). A forced unload leaves those undo entries
@@ -60,7 +60,7 @@ def _bind() -> None:
     from rig.nodetypes import _base
     from rig.nodetypes.dag_node import DAGNode
     from rig.nodetypes.dg_node import DGNode
-    from rig.nodetypes.plugins import _fast_path_ready as _ready
+    from rig.plugins import _fast_path_ready as _ready
 
     _names_own_plug = _base._names_own_plug
     _attr_mobject   = _base._attr_mobject
@@ -111,7 +111,7 @@ def api_connect(src: Any, dst: Any) -> bool:
       an array root of it; not a destination, nor a connected child or parent);
     * each name resolves to its own MPlug (`_names_own_plug`);
     * ``src`` readable and connectable, ``dst`` writable and connectable;
-    * rig's undo command ready (`rig.nodetypes.plugins._fast_path_ready`).
+    * rig's undo command ready (`rig.plugins._fast_path_ready`).
 
     A ``doIt`` that raises (incompatible types: Maya prints its ``Error:`` line) or a
     registration that fails is undone here, and the ``cmds`` route runs after this
@@ -313,7 +313,7 @@ def api_set(attr: Any, value: Any) -> bool:
       `rig._internal.plug._do_set`, disconnects a destination first and sets here);
     * its name resolves to its own MPlug (`_names_own_plug`);
     * the kind and the value pass CR-4's table (`_set_plan`);
-    * rig's undo command ready (`rig.nodetypes.plugins._fast_path_ready`).
+    * rig's undo command ready (`rig.plugins._fast_path_ready`).
 
     A set that would be its own undo step either way takes cmds, which is as fast without
     the journal's registration: one made outside any statement (``attr.set(1.0)`` called

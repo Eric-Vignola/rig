@@ -39,7 +39,8 @@ from rig._tests._base import MayaTestCase
 from rig._tests._undo import UndoWalk
 from rig._tests.test_class_hierarchy_clip import _clip as _film_clip
 from rig._tests.test_class_hierarchy_clip import _curves, _moving_curves, _worlds
-from rig.nodetypes import Joint, Mesh, Transform, plugins
+from rig import plugins
+from rig.nodetypes import Joint, Mesh, Transform
 
 
 def _uuid(node):

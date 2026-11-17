@@ -154,7 +154,7 @@ Undo:
     * A statement's connects and plain value sets are one undo step
       together (``List(ctrls).t << [0, 1, 0]`` is one); every other Maya
       command it runs is a step of its own. They go through rig's undo
-      plug-in (``rig/nodetypes/plugins``), which rig loads itself; see the
+      plug-in (``rig/plugins``), which rig loads itself; see the
       root CHEATSHEET's section 38.
     * :func:`undo_chunk` makes several statements one named step:
       ``with rig.undo_chunk("build arm"):``, or ``@rig.undo_chunk`` on a

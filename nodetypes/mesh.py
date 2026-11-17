@@ -40,7 +40,7 @@ from rig.nodetypes.geometry import (
 from rig.nodetypes.geometry import _discard, _put_under, _shape_name, _shape_path, _shape_target, _target_space
 from rig.nodetypes.object_set import ObjectSet
 from rig.nodetypes.shading_engine import ShadingEngine
-from rig.nodetypes.plugins import _run_undoable
+from rig.plugins import _run_undoable
 from scipy.spatial import cKDTree
 
 

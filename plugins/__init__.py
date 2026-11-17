@@ -1,12 +1,19 @@
 """Plugin loading for ``rig``, plus the plugins it ships with.
 
-This directory holds rig's plug-in ``undoable_api_command.py``. It registers
-``rigUndoableAPICommand``, which puts a Python object's API edits on Maya's
-undo queue (see that file). A plugin that ships here is always loaded by full
-path, never searched for by name first, so it needs no environment setup to be
-found. Loading it from a folder that is not on ``MAYA_PLUG_IN_PATH`` costs about
-160-200 ms (Maya's plug-in path check), against about 7 ms from a folder on it;
-rig pays that once per session, at its first API edit.
+This directory holds rig's two plug-ins (README.md: what each does, how it is
+built and found):
+
+* ``undoable_api_command.py`` registers ``rigUndoableAPICommand``, which puts a
+  Python object's API edits on Maya's undo queue (see that file). It is always
+  loaded by full path, never searched for by name first, so it needs no
+  environment setup to be found. Loading it from a folder that is not on
+  ``MAYA_PLUG_IN_PATH`` costs about 160-200 ms (Maya's plug-in path check),
+  against about 7 ms from a folder on it; rig pays that once per session, at
+  its first API edit.
+* rig.mll, the ``rigExpression`` node ``rig.fuse()`` compiles into, is C++: its
+  source is in ``src/``, and ``build.bat`` (``build.sh`` on macOS) writes
+  ``<Maya version>/rig.mll`` (``rig.bundle``) here. `rig._internal.fuse` loads
+  it from ``RIG_PLUGIN``, ``MAYA_PLUG_IN_PATH`` or that build, in that order.
 
 :func:`load_plugin` is a context manager that makes sure a plugin is loaded
 before the block runs: a plugin bundled here by full path, any other name by
@@ -51,7 +58,7 @@ _PLUGIN_EXTENSIONS = (".py", ".mll", ".so", ".bundle")
 
 # the command undoable_api_command.py registers: its COMMAND_NAME, spelled once there
 # (importing the module registers nothing: Maya's load of the plug-in does)
-from rig.nodetypes.plugins.undoable_api_command import COMMAND_NAME as UNDOABLE_API_COMMAND  # noqa: E402
+from rig.plugins.undoable_api_command import COMMAND_NAME as UNDOABLE_API_COMMAND  # noqa: E402
 # rig's bundled plug-ins that register a command: the command in maya.cmds is the
 # loaded check (a same-named plug-in loaded from elsewhere does not pass it)
 _BUNDLED_COMMANDS = {"undoable_api_command": UNDOABLE_API_COMMAND}

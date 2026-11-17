@@ -87,11 +87,6 @@ def _maya_attr_loads_via_self():
 
     root  = os.path.dirname(nodetypes.__file__)
     files = [os.path.join(root, f) for f in sorted(os.listdir(root)) if f.endswith(".py")]
-    plugins = os.path.join(root, "plugins")
-    if os.path.isdir(plugins):
-        files += [
-            os.path.join(plugins, f) for f in sorted(os.listdir(plugins)) if f.endswith(".py")
-        ]
     classes = {cls.__name__: cls for cls in _all_subclasses(DGNode)}
     trees   = {path: ast.parse(open(path, encoding="utf-8").read()) for path in files}
 

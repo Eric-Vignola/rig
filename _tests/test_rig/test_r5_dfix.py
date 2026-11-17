@@ -44,9 +44,10 @@ import rig
 from rig import List, Node, get_options, set_options
 from rig._internal import api_edits, journal
 from rig._internal.container import container
-from rig.nodetypes import _base, plugins
+from rig import plugins
+from rig.nodetypes import _base
 from rig.nodetypes.mesh import Mesh
-from rig.nodetypes.plugins import UNDOABLE_API_COMMAND
+from rig.plugins import UNDOABLE_API_COMMAND
 from rig._tests._base import MayaTestCase
 from rig._tests._undo import UndoWalk
 

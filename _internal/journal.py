@@ -121,7 +121,7 @@ class _Journal:
 
     __slots__ = ("ops",)
 
-    # what a failed load of rig's plug-in names (`rig.nodetypes.plugins._run_undoable`)
+    # what a failed load of rig's plug-in names (`rig.plugins._run_undoable`)
     UNDO_EDIT = "the API edits of a statement"
     # its undoIt / redoIt make no cmds call (MDGModifier undoIt / doIt only): rig's command
     # calls them without turning undo recording off and on around them
@@ -140,20 +140,20 @@ class _Journal:
         _walk(self.ops, "doIt")
 
 
-# rig.nodetypes.plugins, bound on the first `_register` (it imports this module): the
+# rig.plugins, bound on the first `_register` (it imports this module): the
 # module, read at each call, so a rebinding or a mock.patch of its function holds, without
 # the per-call ``from ... import`` (1.2 us under Maya's import hook, once per statement)
 _PLUGINS = None
 
 
 def _register(ops: list) -> None:
-    """Puts ``ops`` on the undo queue as one step, through `rig.nodetypes.plugins._run_undoable`
+    """Puts ``ops`` on the undo queue as one step, through `rig.plugins._run_undoable`
     (its barrier finds nothing pending: `_flush` takes the list first). Raises (the edits are
     left applied; the caller reverts them) when rig's command cannot be had (a forced unload)."""
     global _PLUGINS
     plugins = _PLUGINS
     if plugins is None:
-        from rig.nodetypes import plugins
+        from rig import plugins
 
         _PLUGINS = plugins
     plugins._run_undoable(_Journal(ops))

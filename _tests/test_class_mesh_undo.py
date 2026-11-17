@@ -1,7 +1,7 @@
 """Undo of rig's mesh edits (round U2, step S3).
 
 Every mesh edit is one undo step through rig's plug-in command
-(``rig.nodetypes.plugins._run_undoable``): ``Mesh.set_points``, the UV set edits
+(``rig.plugins._run_undoable``): ``Mesh.set_points``, the UV set edits
 (``add_uv_set``, ``rename_uv_set``, ``delete_uv_set``, ``set_uv_data``) and the colour
 set edits (``add_color_set``, ``ColorSet.set_data``, ``ColorSet.delete``). Each
 is API only, sets included (never ``polyUVSet`` / ``polyColorSet``, whose undo beside

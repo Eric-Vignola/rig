@@ -812,7 +812,7 @@ def _columns(keys: _Keys, count: int, dst: Any) -> None:
 def require_plugin(what: str = "keys") -> None:
     """RuntimeError, before any node is made, when rig's undo plug-in cannot be had: the
     curves' key edits have no other undoable route (as ``Mesh.set_points``)."""
-    from rig.nodetypes import plugins
+    from rig import plugins
 
     if not plugins._fast_path_ready():
         if OpenMaya.MGlobal.isUndoing() or OpenMaya.MGlobal.isRedoing():

@@ -79,11 +79,11 @@ rig/nodetypes/
 ├── choice.py          Choice                 choice
 ├── anim_curve.py      AnimCurve (any curve; its call with values makes keys), AnimCurveTL,
 │                      AnimCurveTA, AnimCurveTU, AnimCurveTT     animCurve, animCurveTL ...
-├── follicle.py        Follicle               follicle
-└── plugins/
-    ├── __init__.py    load_plugin() context manager, bundled_plugin_path()
-    └── undoable_api_command.py   the rigUndoableAPICommand plug-in (undo for API edits)
+└── follicle.py        Follicle               follicle
 ```
+
+rig's plug-ins, `load_plugin()` and `bundled_plugin_path()` are in `rig/plugins`
+([its README](../plugins/README.md)).
 
 The public surface:
 
@@ -101,7 +101,7 @@ from rig.nodetypes.dg_node import get_short_name
 from rig.nodetypes.geometry import iter_component_ranges, iter_component_tokens
 from rig.nodetypes.joint import replace_suffix
 from rig.nodetypes.mesh import ColorSet
-from rig.nodetypes.plugins import load_plugin
+from rig.plugins import load_plugin
 ```
 
 ---
@@ -1091,11 +1091,11 @@ Your own API edits take the same command: [CHEATSHEET section 21](CHEATSHEET.md#
 has the recipe and the object's rules (apply the change first, in `doIt`;
 API only; no `cmds` in `undoIt` / `redoIt`), and `rig.undo_chunk` makes
 several edits one named step. `load_plugin` loads the plug-in by full path
-from `rig/nodetypes/plugins` (by name from `MAYA_PLUG_IN_PATH` if the file
+from `rig/plugins` (by name from `MAYA_PLUG_IN_PATH` if the file
 is not there), once per session, so nothing needs configuring; rig loads
 it itself at its first edit that needs it. The DSL's connects and value
 sets use it too: a statement's are one step together ([root CHEATSHEET
-section 38](../CHEATSHEET.md#38-undo)). With `rig/nodetypes/plugins` on
+section 38](../CHEATSHEET.md#38-undo)). With `rig/plugins` on
 `MAYA_PLUG_IN_PATH`, the first load costs about 8 ms instead of about
 165 ms. If it cannot be loaded, the edits above (and an attribute's
 default or hidden flag re-declared) raise a `RuntimeError` that says rig

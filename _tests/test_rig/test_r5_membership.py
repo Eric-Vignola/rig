@@ -31,8 +31,9 @@ from maya.api import OpenMaya
 from rig import container, Node
 from rig._internal import api_edits, journal
 from rig.bridges import commands as rc
-from rig.nodetypes import plugins, Transform
-from rig.nodetypes.plugins import UNDOABLE_API_COMMAND, _fast_path_ready
+from rig import plugins
+from rig.nodetypes import Transform
+from rig.plugins import UNDOABLE_API_COMMAND, _fast_path_ready
 from rig._tests._base import MayaTestCase
 from rig._tests._undo import UndoWalk
 

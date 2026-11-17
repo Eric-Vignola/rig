@@ -69,7 +69,7 @@ from rig.nodetypes.dg_node import get_short_name
 from rig.nodetypes.geometry import iter_component_ranges, iter_component_tokens
 from rig.nodetypes.joint import replace_suffix
 from rig.nodetypes.mesh import ColorSet
-from rig.nodetypes.plugins import bundled_plugin_path, load_plugin
+from rig.plugins import bundled_plugin_path, load_plugin
 
 print(cmds.about(version=True))
 ```
@@ -77,7 +77,7 @@ print(cmds.about(version=True))
 `rig.nodetypes` re-exports the classes, `Attribute` and `Axis`.
 `Deformer`, `tag_references`, `ColorSet` and the name helpers come from
 their own modules (`deformer`, `mesh`, `dg_node`, `geometry`, `joint`),
-and `load_plugin` from `rig.nodetypes.plugins`.
+and `load_plugin` from `rig.plugins`.
 
 ---
 
@@ -2050,7 +2050,7 @@ print(Axis.X, Axis.Z.value)  # Axis.X 2
 
 ## 21. `plugins` — `load_plugin` and undo
 
-`load_plugin` is a context manager: a plug-in bundled in `rig/nodetypes/plugins`
+`load_plugin` is a context manager: a plug-in bundled in `rig/plugins`
 loads by full path (once per session: while its command is in `maya.cmds`,
 nothing is queried), any other name by name from `MAYA_PLUG_IN_PATH`. With
 `unload_on_exit=True` it unloads, when the block ends, only what it loaded;

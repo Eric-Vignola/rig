@@ -124,10 +124,11 @@ ONE_OP_RULE = True
 ONE_OP_NODES = 1
 _ONE_OP_INSTRUCTIONS = 8
 PLUGIN      = "rig"              # rig.mll: every node type rig builds
-# rig's own builds of its plug-in, one folder per Maya version: <rig>/plugin/<version>/
-# (plugin/build.bat writes them; rig.mll on Windows, rig.so on Linux, rig.bundle on macOS)
-_PLUGIN_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plugin")
+# rig's own builds of its plug-in, one folder per Maya version: <rig>/plugins/<version>/
+# (rig.mll on Windows, rig.bundle on macOS, rig.so on Linux), and what writes them here
+_PLUGIN_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plugins")
 _PLUGIN_EXT = {"win32": ".mll", "darwin": ".bundle"}.get(sys.platform, ".so")
+_BUILD_SCRIPT = {"win32": "plugins/build.bat", "darwin": "plugins/build.sh"}.get(sys.platform)
 NODE_TYPE   = "rigExpression"
 # rig.mll's lowest version this program format runs on (version 2: matrices and quaternions;
 # 1.2: Q_ARC, angleBetween's turn, TIME, rig.functions.frame(), and RAND, rig.random)
@@ -251,9 +252,9 @@ def _plugin_version() -> tuple:
 
 
 def _built_plugin_path() -> str:
-    """Where rig's own build of its plug-in for this Maya goes: ``<rig>/plugin/<Maya
-    version>/rig.mll`` (``rig.so`` on Linux, ``rig.bundle`` on macOS), plugin/build.bat's
-    output"""
+    """Where rig's own build of its plug-in for this Maya goes: ``<rig>/plugins/<Maya
+    version>/rig.mll`` (``rig.bundle`` on macOS, ``rig.so`` on Linux), the output of
+    plugins/build.bat (plugins/build.sh on macOS)"""
     return os.path.join(_PLUGIN_DIR, str(cmds.about(majorVersion=True)), PLUGIN + _PLUGIN_EXT)
 
 
@@ -284,7 +285,7 @@ def _load_plugin() -> bool:
     why = None
     if not loaded:
         why = (f"the rig plug-in (rig.mll) is not loaded: none at RIG_PLUGIN, on MAYA_PLUG_IN_PATH or at "
-               f"{_built_plugin_path()} (plugin/build.bat builds it there)")
+               f"{_built_plugin_path()}" + (f" ({_BUILD_SCRIPT} builds it there)" if _BUILD_SCRIPT else ""))
     elif _plugin_version() < MIN_VERSION:
         why = (f"the loaded rig plug-in ({cmds.pluginInfo(PLUGIN, query=True, path=True)}) is "
                f"{_plugin_version()}, older than {MIN_VERSION}")

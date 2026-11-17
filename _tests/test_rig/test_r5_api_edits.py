@@ -37,12 +37,13 @@ import rig
 from rig import List, Node, get_options, set_options
 from rig._internal import api_edits, journal
 from rig._internal.plug import Plug
-from rig.nodetypes import _base, plugins
+from rig import plugins
+from rig.nodetypes import _base
 from rig.nodetypes._base import Attribute
 from rig.nodetypes.dg_node import DGNode
 from rig.nodetypes.material_node import Lambert
 from rig.nodetypes.mesh import Mesh
-from rig.nodetypes.plugins import UNDOABLE_API_COMMAND, bundled_plugin_path
+from rig.plugins import UNDOABLE_API_COMMAND, bundled_plugin_path
 from rig.nodetypes.transform import Transform
 from rig.spec._base import _AttrSpec
 from rig._tests._base import MayaTestCase

@@ -956,7 +956,7 @@ def _apply_settings(
     """Apply one attribute's settings, checked by `_check_settings`; ``attribute``
     is its MObject (API 2.0). The default first, so a new range already holds
     it (Maya moves a default a range edit excludes, for good)."""
-    from rig.nodetypes.plugins import _run_undoable
+    from rig.plugins import _run_undoable
 
     if default is not None:
         _run_undoable(_DefaultEdit(attribute, default))

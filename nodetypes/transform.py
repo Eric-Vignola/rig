@@ -319,7 +319,7 @@ def _clip_rows(hierarchy: HierarchyData, solved: dict, only: set | None = None) 
     ``AnimCurve(...)`` alone is linear. Read before any node is made, so a NaN (no key takes
     one) or a missing undo plug-in refuses with nothing made."""
     from cgmath.hierarchy import MAYA_ATTRIBUTE_MAP, ClipData
-    from rig.nodetypes import plugins
+    from rig import plugins
     from rig.nodetypes.anim_curve import AnimCurve
 
     if not isinstance(hierarchy, ClipData) or not hierarchy.frame_count:

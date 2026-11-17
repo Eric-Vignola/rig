@@ -15,7 +15,16 @@
 //   (R = Rx * Ry * Rz); angles are radians here (the node converts).
 #pragma once
 
+// SSE2 on x86 and x64 (MSVC defines no __SSE2__ for x64, where SSE2 is always there);
+// elsewhere, Apple silicon say, mmul's plain-double twin. RIGM_NO_SSE2 forces the twin
+// (to check here what an arm64 build runs).
+#if !defined(RIGM_NO_SSE2) && \
+    (defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2))
+#define RIGM_SSE2 1
 #include <emmintrin.h>
+#else
+#define RIGM_SSE2 0
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -35,9 +44,18 @@ inline void identity(double* m)
 
 // c = a * b (multMatrix; MMatrix::operator*: the same sums in the same order, bit for
 // bit). SSE2: a row of c is a[i][0] * b0 + a[i][1] * b1 + a[i][2] * b2 + a[i][3] * b3.
+// Without SSE2, the same products added in the same order, each rounded: the same bits,
+// as long as the compiler fuses no multiply-add (build.sh: -ffp-contract=off).
 // c is neither a nor b (the program's registers are written once).
 inline void mmul(const double* a, const double* b, double* c)
 {
+#if !RIGM_SSE2
+    for (int i = 0; i < 4; ++i) {
+        const double* r = a + 4 * i;
+        for (int j = 0; j < 4; ++j)
+            c[4 * i + j] = ((r[0] * b[j] + r[1] * b[4 + j]) + r[2] * b[8 + j]) + r[3] * b[12 + j];
+    }
+#else
     const __m128d b0l = _mm_loadu_pd(b), b0h = _mm_loadu_pd(b + 2), b1l = _mm_loadu_pd(b + 4),
                   b1h = _mm_loadu_pd(b + 6), b2l = _mm_loadu_pd(b + 8), b2h = _mm_loadu_pd(b + 10),
                   b3l = _mm_loadu_pd(b + 12), b3h = _mm_loadu_pd(b + 14);
@@ -53,6 +71,7 @@ inline void mmul(const double* a, const double* b, double* c)
         _mm_storeu_pd(c + 4 * i, lo);
         _mm_storeu_pd(c + 4 * i + 2, hi);
     }
+#endif
 }
 
 inline void madd(const double* a, const double* b, double* c)   // addMatrix

@@ -13,7 +13,7 @@
 * text=auto eol=lf
 
 # A batch file is read by cmd.exe, which finds a label (goto) reliably only in CRLF text:
-# plugin/build.bat.
+# plugins/build.bat.
 *.bat text eol=crlf
 
 # The images -- the README banner and the example textures -- are real

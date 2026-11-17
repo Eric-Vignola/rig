@@ -24,7 +24,7 @@ from rig.nodetypes.dg_node import get_short_name
 from rig.nodetypes.errors import NodeNotFoundError, NodeTypeError
 from rig.nodetypes.joint import Joint
 from rig.nodetypes.mesh import Mesh, _resampler, _skincluster_of, _skinclusters_of
-from rig.nodetypes.plugins import _run_undoable
+from rig.plugins import _run_undoable
 from rig.nodetypes.transform import Transform
 
 LOGGER = logging.getLogger(__name__)

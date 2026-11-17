@@ -1,6 +1,7 @@
 @echo off
 rem Builds rig.mll, rig's plug-in (the rigExpression node rig.fuse() compiles into), into
-rem <this folder>\<Maya version>\rig.mll: where rig looks for it first (rig._internal.fuse).
+rem <this folder>\<Maya version>\rig.mll: rig loads it from there when neither RIG_PLUGIN
+rem nor MAYA_PLUG_IN_PATH gives one (rig._internal.fuse). build.sh is the macOS twin.
 rem Usage: build.bat [maya version ...]   e.g. build.bat 2025 2027
 rem   No version (a double-click): every Maya installed with its headers, then a pause.
 rem

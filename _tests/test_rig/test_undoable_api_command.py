@@ -1,5 +1,5 @@
-"""rig's undoable API command (``rig/nodetypes/plugins/undoable_api_command.py``) and
-the plug-in helpers of ``rig.nodetypes.plugins`` (``load_plugin``, ``_run_undoable``).
+"""rig's undoable API command (``rig/plugins/undoable_api_command.py``) and
+the plug-in helpers of ``rig.plugins`` (``load_plugin``, ``_run_undoable``).
 
 The command is ``rigUndoableAPICommand`` (a name of rig's own); the object is handed
 over per call and nothing keeps it after its undo entry; ``cmds`` calls in undoIt /
@@ -21,8 +21,8 @@ from unittest import mock
 from maya import cmds, mel
 from maya.api import OpenMaya
 
-from rig.nodetypes import plugins
-from rig.nodetypes.plugins import (
+from rig import plugins
+from rig.plugins import (
     UNDOABLE_API_COMMAND,
     _run_undoable,
     bundled_plugin_path,
@@ -33,7 +33,7 @@ from rig._tests._undo import UndoWalk
 
 PLUGIN      = "undoable_api_command"
 PLUGIN_PATH = bundled_plugin_path(PLUGIN)
-MODULE      = "rig.nodetypes.plugins.undoable_api_command"
+MODULE      = "rig.plugins.undoable_api_command"
 
 # a scratch plug-in that registers runUndoableAPICommand the way MPyNode's mpynode_api2
 # does (its registration block, reduced): the name rig used to register too
@@ -330,7 +330,7 @@ class TestUndoableAPICommandHandOff(_CommandCase):
 
 class TestUndoableAPICommandLifecycle(_CommandCase):
     """Unload / reload, a wrapper kept across a reload, a module import of the plug-in
-    file, a re-import of rig.nodetypes.plugins."""
+    file, a re-import of rig.plugins."""
 
     def test_unload_is_refused_while_an_entry_is_queued(self):
         _run_undoable(SetDouble("t.tx", 1.0))
@@ -374,7 +374,7 @@ class TestUndoableAPICommandLifecycle(_CommandCase):
         self.assertEqual(cmds.getAttr("t.sx"), 1.0)
 
     def test_the_plugin_file_imported_as_a_module_never_wraps_twice(self):
-        package = sys.modules["rig.nodetypes.plugins"]
+        package = sys.modules["rig.plugins"]
         had = sys.modules.pop(MODULE, None)
         wrapper = command()
         try:
@@ -397,12 +397,12 @@ class TestUndoableAPICommandLifecycle(_CommandCase):
                 delattr(package, "undoable_api_command")
 
     def test_a_reimport_of_the_plugins_package_uses_the_loaded_command(self):
-        old = sys.modules["rig.nodetypes.plugins"]
-        parent = sys.modules["rig.nodetypes"]
+        old = sys.modules["rig.plugins"]
+        parent = sys.modules["rig"]
         wrapper = command()
         try:
-            del sys.modules["rig.nodetypes.plugins"]
-            new = importlib.import_module("rig.nodetypes.plugins")
+            del sys.modules["rig.plugins"]
+            new = importlib.import_module("rig.plugins")
             self.assertIsNot(new, old)
             new._run_undoable(SetDouble("t.tx", 1.0))
             old._run_undoable(SetDouble("t.ty", 2.0))
@@ -411,7 +411,7 @@ class TestUndoableAPICommandLifecycle(_CommandCase):
             self.undo_steps(2)
             self.assertEqual(self.values(("tx", "ty")), (0.0, 0.0))
         finally:
-            sys.modules["rig.nodetypes.plugins"] = old
+            sys.modules["rig.plugins"] = old
             parent.plugins = old
 
 

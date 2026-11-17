@@ -36,7 +36,8 @@ from rig import AnimCurve, InjectionError, List, Node, container
 from rig._internal import anim_keys
 from rig._tests._base import MayaTestCase
 from rig._tests._undo import UndoWalk
-from rig.nodetypes import Joint, Transform, plugins
+from rig import plugins
+from rig.nodetypes import Joint, Transform
 
 # the columns `_clip` moves, by node, as a clip's frames name them
 _MOVING = {
