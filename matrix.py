@@ -79,7 +79,7 @@ __all__ = [
 
 
 @operands(config=("rotate_order",))
-@vectorize
+@vectorize("(4,4),()->node")
 @memoize
 def decompose(token: Any, rotate_order: Optional[Any] = None) -> Any:
     """``decompose(matrix)`` -- returns the ``decomposeMatrix`` Node so the
@@ -89,7 +89,7 @@ def decompose(token: Any, rotate_order: Optional[Any] = None) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(4,4)->(4,4)")
 @memoize
 def inverse(token: Any) -> Any:
     """``inverse(matrix)`` -- ``inverseMatrix`` node."""
@@ -97,7 +97,7 @@ def inverse(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(4,4)->(4,4)")
 @memoize
 def transpose(token: Any) -> Any:
     """``transpose(matrix)`` -- ``transposeMatrix`` node."""
@@ -107,7 +107,7 @@ def transpose(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(4,4)->(4)")
 @memoize
 def to_quaternion(token: Any) -> Any:
     """``to_quaternion(matrix)`` -- extract quat via decomposeMatrix."""
@@ -115,7 +115,7 @@ def to_quaternion(token: Any) -> Any:
 
 
 @operands(config=("rotate_order",))
-@vectorize
+@vectorize("(4,4),()->(3)")
 @memoize
 def to_euler(token: Any, rotate_order: Optional[Any] = None) -> Any:
     """``to_euler(matrix, rotate_order=...)`` -- extract euler via
@@ -129,7 +129,7 @@ def to_euler(token: Any, rotate_order: Optional[Any] = None) -> Any:
 
 
 @operands(config=("rotate_order",))
-@vectorize
+@vectorize("(3?),(3)|(4),(3?),(3?),()->(4,4)")
 @memoize
 def compose(
     scale:        Optional[Any] = None,
@@ -163,7 +163,7 @@ def compose(
 
 
 @operands
-@vectorize
+@vectorize("(3),(3),(3),(3)->(4,4)")
 @memoize
 def fourbyfour(
     x:        Optional[Any] = None,
@@ -194,7 +194,7 @@ def fourbyfour(
 
 
 @operands
-@vectorize
+@vectorize("(3),(3),(3),(3)->(4,4)")
 @memoize
 def aim(
     aim_vector: Any,
@@ -233,7 +233,7 @@ def aim(
 
 
 @operands(config=("local",))
-@vectorize
+@vectorize("*(4,4)|(3)->(4,4)|(3)")
 @memoize
 def multiply(*tokens: Any, **kwargs: Any) -> Any:
     """``multiply(m0, m1, ..., local=False)`` -- ``multMatrix`` chain.
@@ -244,7 +244,7 @@ def multiply(*tokens: Any, **kwargs: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("*(4,4)->(4,4)")
 @memoize
 def add(*tokens: Any, **kwargs: Any) -> Any:
     """``add(m0, m1, ..., weights=[w0, w1, ...])`` -- ``addMatrix`` or
@@ -354,7 +354,7 @@ def pow(input1: Any, weight: Any = 0.5) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(4,4)->(4,4)")
 @memoize
 def normalize(token: Any) -> Any:
     """``normalize(m)`` -- orthonormalize a transform matrix: keep its
@@ -377,7 +377,7 @@ def normalize(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(4,4)->()")
 @memoize
 def determinant(token: Any) -> Any:
     """``determinant(matrix)`` -- Maya 2024+ uses native ``determinant``
@@ -417,7 +417,7 @@ def determinant(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(4,4)->(3)")
 @memoize
 def translation(token: Any) -> Any:
     """``translation(matrix)`` -- extract the translate vec3 from a matrix.
@@ -434,7 +434,7 @@ def translation(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(4,4)->(3)")
 @memoize
 def rotation(token: Any) -> Any:
     """``rotation(matrix)`` -- extract the rotate vec3 (degrees, XYZ
@@ -452,7 +452,7 @@ def rotation(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(4,4)->(3)")
 @memoize
 def scale_of(token: Any) -> Any:
     """``scale_of(matrix)`` -- extract the scale vec3 from a matrix.
@@ -475,7 +475,7 @@ _AXIS_INDEX = {"x": 0, "y": 1, "z": 2, "X": 0, "Y": 1, "Z": 2, 0: 0, 1: 1, 2: 2}
 
 
 @operands(config=("axis",))
-@vectorize
+@vectorize("(4,4),()->(3)")
 @memoize
 def axis(token: Any, axis: Any = 0) -> Any:
     """``axis(matrix, axis=0)`` -- extract the X/Y/Z basis vector from a
@@ -508,7 +508,7 @@ def axis(token: Any, axis: Any = 0) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(4,4),()->(4)")
 @memoize
 def column(token: Any, index: Any = 0) -> Any:
     """``column(matrix, index)`` -- extract a column (vec4) from a matrix.
@@ -530,7 +530,7 @@ def column(token: Any, index: Any = 0) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(4,4),()->(4)|(3)")
 @memoize
 def row(token: Any, index: Any = 0) -> Any:
     """``row(matrix, index)`` -- extract a row (vec3 / vec4) from a matrix.
@@ -564,7 +564,7 @@ def row(token: Any, index: Any = 0) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(3),(4,4)->(3)")
 @memoize
 def transform_point(point: Any, token: Any) -> Any:
     """``transform_point(p, m)`` -- multiply a point (vec3) by a matrix
@@ -590,7 +590,7 @@ def transform_point(point: Any, token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(3),(4,4)->(3)")
 @memoize
 def transform_vector(vector_in: Any, token: Any) -> Any:
     """``transform_vector(v, m)`` -- multiply a vector (vec3) by a matrix

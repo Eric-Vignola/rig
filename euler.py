@@ -33,7 +33,7 @@ __all__ = [
 
 
 @operands(config=("rotate_order",))
-@vectorize
+@vectorize("(3),()->(4,4)")
 @memoize
 def to_matrix(token: Any, rotate_order: Optional[Any] = None) -> Any:
     """``to_matrix(euler, rotate_order=)`` -- euler -> rotation matrix
@@ -43,7 +43,7 @@ def to_matrix(token: Any, rotate_order: Optional[Any] = None) -> Any:
 
 
 @operands(config=("rotate_order",))
-@vectorize
+@vectorize("(3),()->(4)")
 @memoize
 def to_quaternion(token: Any, rotate_order: Optional[Any] = None) -> Any:
     """``to_quaternion(euler, rotate_order=)`` -- euler -> quaternion via
@@ -52,7 +52,7 @@ def to_quaternion(token: Any, rotate_order: Optional[Any] = None) -> Any:
 
 
 @operands(config=("rotate_order0", "rotate_order1"))
-@vectorize
+@vectorize("(3),(),()->(3)")
 @memoize
 def reorder(token: Any, rotate_order0: Any, rotate_order1: Any) -> Any:
     """``reorder(euler, rotate_order0, rotate_order1)`` -- convert an euler

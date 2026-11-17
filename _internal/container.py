@@ -2710,6 +2710,25 @@ def _add_attr_with_compound_children(node_name: str, kwargs: Dict[str, Any]) -> 
         )
 
 
+# the data types of a plug one channel of a vector can be (`_infer_attr_type`)
+_CHANNEL_DATA_TYPES = frozenset(
+    {"double", "doubleLinear", "doubleAngle", "float", "long", "short", "byte", "bool", "time"}
+)
+
+
+def _is_channel_value(value: Any) -> bool:
+    """True for a number or a plug of one numeric channel (a translateX, a
+    rotateX, a float)"""
+    if isinstance(value, numbers.Real):
+        return True
+    if not isinstance(value, Attribute):
+        return False
+    try:
+        return type(value)._raw_get_data_type(value) in _CHANNEL_DATA_TYPES
+    except Exception:  # noqa: BLE001 (a plug Maya cannot type is not a channel)
+        return False
+
+
 def _infer_attr_type(source: Any) -> Dict[str, Any]:
     """Return ``addAttr`` kwargs that match ``source``'s type / shape.
 
@@ -2779,6 +2798,17 @@ def _infer_attr_type(source: Any) -> Dict[str, Any]:
             for x in source
         ):
             return {"at": compound_at}
+        # Three or four channels of other scalar kinds, or plugs and numbers
+        # mixed: ``[a.tx, a.ty, a.tz]`` (translateX is a doubleLinear),
+        # ``[a.rx, a.ry, a.rz]``, ``[a.tx, 0, 0]``. The vector they make, as a
+        # vector layout reads them (`rig._internal.layout`), not a multi: a
+        # plain list only (a List is rows).
+        if (
+            n_elems in (3, 4)
+            and type(source) in (list, tuple)
+            and all(_is_channel_value(x) for x in source)
+        ):
+            return {"at": "double3" if n_elems == 3 else "double4"}
         return {
             **_DATA_TYPE_TO_ADDATTR.get(dt, {"at": "double"}),
             "multi": True,

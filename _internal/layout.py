@@ -19,7 +19,8 @@ The cores, rig's dialect::
     *core    every remaining positional argument (multiply(*tokens))
 
 Parameters past the layout are settings, never broadcast. The results' cores follow ``->``, several
-separated by commas (``->(3),()``).
+separated by commas (``->(3),()``), either of two as for a parameter (``->(4,4)|(3)``), or a name for
+a result that is no plug (``->node``).
 
 Broadcasting (`Bound.classify`): each parameter's value is **one value** when it fits the core, or
 **rows** (a sequence of values that fit), one level only:
@@ -189,6 +190,17 @@ class _Reader:
             alternatives.append(self.core())
         return Slot(tuple(alternatives), variadic, self._text(start))
 
+    def result(self) -> Slot:
+        """A result: cores as a parameter's (``(4,4)|(3)``), or a name for a result that is no
+        plug (``node``: decompose's node)"""
+        token = self.peek()
+        if token is not None and (token[0].isalpha() or token[0] == "_"):
+            self.take()
+            return Slot((Core(None, (), token),), False, token)
+        if token == "*":
+            raise LayoutError(f"layout {self.text!r}: a result cannot be variadic (*)")
+        return self.slot()
+
     def _text(self, start: int) -> str:
         out = ""
         for token in self.tokens[start:self.i]:
@@ -213,10 +225,10 @@ class Layout:
                 reader.take(",")
                 slots.append(reader.slot())
         reader.take("->")
-        outputs = [reader.core()]
+        outputs = [reader.result()]
         while reader.peek() == ",":
             reader.take(",")
-            outputs.append(reader.core())
+            outputs.append(reader.result())
         if reader.peek() is not None:
             raise LayoutError(f"layout {text!r}: unexpected {reader.peek()!r} after the results")
         for slot in slots[:-1]:
@@ -225,10 +237,11 @@ class Layout:
                                   f"not {slot.text!r}")
         names = {d.name for s in slots for c in s.alternatives for d in (c.items, *c.channels)
                  if d is not None and d.name}
-        for core in outputs:
-            for d in (core.items, *core.channels):
-                if d is not None and d.name and d.name not in names:
-                    raise LayoutError(f"layout {text!r}: the result's {d.name!r} is no parameter's")
+        for result in outputs:
+            for core in result.alternatives:
+                for d in (core.items, *core.channels):
+                    if d is not None and d.name and d.name not in names:
+                        raise LayoutError(f"layout {text!r}: the result's {d.name!r} is no parameter's")
         self.text = "".join(_tokens(text))
         self.slots, self.outputs, self.names = tuple(slots), tuple(outputs), frozenset(names)
 

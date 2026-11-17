@@ -58,6 +58,8 @@ class TestParse(unittest.TestCase):
                 self.assertEqual([s.text for s in layout.slots], slots)
                 self.assertNotIn(" ", layout.text)
         self.assertEqual([c.text for c in Layout("(4)->(3),()").outputs], ["(3)", "()"])
+        self.assertEqual([c.text for c in Layout("*(4,4)|(3)->(4,4)|(3)").outputs], ["(4,4)|(3)"])
+        self.assertEqual([c.text for c in Layout("(4,4)->node").outputs], ["node"])  # decompose's node
         self.assertEqual(Layout("(n?),(3)->(n?)").names, {"n"})
 
     def test_what_it_refuses(self):
@@ -71,6 +73,7 @@ class TestParse(unittest.TestCase):
             ("*(3),(3)->()", "only the last parameter can be variadic"),
             ("(3)$->()", "cannot read"),
             ("(3)->(3))", "unexpected"),
+            ("(3)->*(3)", "a result cannot be variadic"),
         ):
             with self.subTest(text=text):
                 with self.assertRaisesRegex(LayoutError, words):
@@ -271,7 +274,7 @@ class TestTheTable(_Poles):
     """The table the layouts were made for: rig.vector.slerp, one value or rows (and how many nodes)"""
 
     ONE_ROW = ("slerp(p, q, 0.25)", "slerp([p], q, 0.25)", "slerp(p, [q], 0.25)", "slerp(p, q, [0.25])",
-               "slerp([p], [q], 0.25)", "slerp([p], [q], [0.25])")
+               "slerp([p], [q], 0.25)", "slerp([p], [q], [0.25])", "slerp([px, py, pz], q, 0.25)")
     TWO_ROWS = ("slerp(p, q, [0.25, 0.75])", "slerp([p, a], q, 0.25)", "slerp(p, [q, b], 0.25)",
                 "slerp([p, a], q, [0.25, 0.75])", "slerp(p, [q, b], [0.25, 0.75])",
                 "slerp([p, a], [q, b], [0.25, 0.75])")
@@ -279,7 +282,8 @@ class TestTheTable(_Poles):
     def count(self, code):
         """``code``'s result and the slerps it made, in a fresh scene (memoize would share them)"""
         self.setUp()                     # a new scene, new poles
-        names ={"slerp": rig.vector.slerp, "p": self.p.t, "q": self.q.t, "a": self.a.t, "b": self.b.t}
+        names = {"slerp": rig.vector.slerp, "p": self.p.t, "q": self.q.t, "a": self.a.t, "b": self.b.t,
+                 "px": self.p.tx, "py": self.p.ty, "pz": self.p.tz}
         before = len(cmds.ls(type="angleBetween"))
         out = eval(code, names)
         return out, len(cmds.ls(type="angleBetween")) - before
@@ -319,6 +323,73 @@ class TestTheTable(_Poles):
         out = rig.quaternion.slerp([self.a.qa, self.b.qb], [0, 0, 0, 1], 0.5)
         self.assertEqual(len(out), 2)
         np.testing.assert_allclose(_value(out[0]), [0, 0, 0, 1], atol=1e-4)
+
+
+class TestTypedModules(_Poles):
+    """Step 2: every vectorized function of vector, matrix, quaternion and euler has a layout; channel
+    lists reach them as one vector; the dispatch verbs read rows as the functions do"""
+
+    def test_every_function_has_a_layout(self):
+        missing = []
+        for module in (rig.vector, rig.matrix, rig.quaternion, rig.euler):
+            for name in dir(module):
+                func = getattr(module, name)
+                if callable(func) and getattr(func, "__module__", None) == module.__name__ and \
+                        getattr(func, "_rig_vectorized", False) and func._rig_layout is None:
+                    missing.append(f"{module.__name__}.{name}")
+        self.assertEqual(missing, [])
+
+    def test_channels_are_one_vector(self):
+        p, q = self.p, self.q
+        before = len(cmds.ls(type="angleBetween"))
+        out = rig.vector.slerp([p.tx, p.ty, p.tz], q.t, 0.5)           # before: InjectionError (a multi)
+        self.assertEqual(len(cmds.ls(type="angleBetween")) - before, 1)
+        np.testing.assert_allclose(_value(out), [7.0711, 7.0711, 0.0], atol=1e-4)
+        np.testing.assert_allclose(_value(rig.vector.cross([p.tx, 0, 0], q.t)), [0, 0, 100], atol=1e-4)
+        np.testing.assert_allclose(_value(rig.vector.lerp([p.tx, p.ty, p.tz], q.t, 0.5)), [5, 5, 0], atol=1e-4)
+
+    def test_rows_in_the_typed_functions(self):
+        a, b, p, q = self.a, self.b, self.p, self.q
+        out = rig.vector.length([p.t, q.t])
+        self.assertIsInstance(out, List)
+        np.testing.assert_allclose(_value(out), [10, 10], atol=1e-4)
+        self.assertAlmostEqual(rig.vector.length([3.0, 4.0]), 5.0)          # (n): any size, folded
+        self.assertEqual(len(rig.matrix.axis([a.wm, b.wm])), 2)
+        self.assertEqual(len(rig.matrix.multiply([a.wm, b.wm], p.wm)), 2)
+        out = rig.quaternion.from_axis_angle([0, 1, 0], [0, 90, 180])     # one axis, three angles
+        np.testing.assert_allclose(_value(out), [[0, 0, 0, 1], [0, 0.7071, 0, 0.7071], [0, 1, 0, 0]], atol=1e-4)
+        self.assertEqual(len(rig.euler.to_quaternion([[0, 90, 0], [90, 0, 0]])), 2)
+        with self.assertRaisesRegex(ValueError, r"^rig\.vector\.cross\(\): vector1 has 3 rows and vector2 has 2"):
+            rig.vector.cross([p.t, q.t, a.t], [p.t, q.t])
+
+    def test_a_rotate_order_is_one_per_row(self):
+        # a rotate order (a name, an int, a plug) is a () value: a list of them is rows
+        a = self.a
+        out = rig.euler.to_matrix(a.r, rotate_order=["xyz", "zyx"])
+        self.assertEqual(len(out), 2)
+        for row, order in zip(out, ("xyz", "zyx")):
+            np.testing.assert_allclose(_value(row), _value(rig.euler.to_matrix(a.r, rotate_order=order)), atol=1e-4)
+        self.assertEqual(len(rig.matrix.to_euler([a.wm, self.b.wm], rotate_order=["zxy", 4])), 2)
+        self.assertEqual(len(rig.matrix.axis(a.wm, ["x", "z"])), 2)
+
+    def test_the_dispatch_verbs_read_rows(self):
+        a, p, q = self.a, self.p, self.q
+        out = rig.slerp([p.t, q.t], a.t, 0.5)                             # before: ValueError (length 2)
+        self.assertIsInstance(out, List)
+        for row, one in zip(out, (p.t, q.t)):
+            np.testing.assert_allclose(_value(row), _value(rig.vector.slerp(one, a.t, 0.5)), atol=1e-4)
+        np.testing.assert_allclose(_value(rig.normalize([p.t, q.t])), [[1, 0, 0], [0, 1, 0]], atol=1e-4)
+        self.assertEqual(len(rig.to_matrix([a.r, self.b.r])), 2)
+        self.assertNotIsInstance(rig.lerp([p.tx, p.ty, p.tz], q.t, 0.5), List)   # channels: one vector
+        self.assertEqual(rig.lerp(2, 4, 0.5), 3.0)
+
+    def test_in_a_fuse_block(self):
+        p, q, a = self.p, self.q, self.a
+        with rig.fuse():
+            out = rig.slerp([p.t, q.t], a.t, 0.5)
+            axes = rig.matrix.axis([a.wm, self.b.wm])
+        self.assertEqual((len(out), len(axes)), (2, 2))
+        np.testing.assert_allclose(_value(out[0]), _value(rig.vector.slerp(p.t, a.t, 0.5)), atol=1e-4)
 
 
 class TestWeights(_Poles):

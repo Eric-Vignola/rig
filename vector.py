@@ -73,7 +73,7 @@ __all__ = [
 
 
 @operands
-@vectorize
+@vectorize("(3),(3),(3)->()")
 @memoize
 def triple_product(x: Any, y: Any, z: Any) -> Any:
     """``triple_product(x, y, z)`` -- scalar triple product ``dot(x, cross(y, z))``,
@@ -118,7 +118,7 @@ def triple_product(x: Any, y: Any, z: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(3),(3)->()")
 @memoize
 def angle(vector1: Any, vector2: Any) -> Any:
     """``angle(v1, v2)`` -- unsigned angle (radians) between two vectors:
@@ -137,7 +137,7 @@ def angle(vector1: Any, vector2: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(3),(3)->()")
 @memoize
 def angle_degrees(vector1: Any, vector2: Any) -> Any:
     """``angle_degrees(v1, v2)`` -- unsigned angle (degrees) between two
@@ -159,7 +159,7 @@ def angle_degrees(vector1: Any, vector2: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(3),(3)->()")
 @memoize
 def dot(vector1: Any, vector2: Any, normalize: bool = False) -> Any:
     """``dot(v1, v2, normalize=False)`` -- vector dot product.
@@ -183,7 +183,7 @@ def dot(vector1: Any, vector2: Any, normalize: bool = False) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(3),(3)->(3)")
 @memoize
 def cross(vector1: Any, vector2: Any, normalize: bool = False) -> Any:
     """``cross(v1, v2, normalize=False)`` -- vector cross product.
@@ -206,7 +206,7 @@ def cross(vector1: Any, vector2: Any, normalize: bool = False) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(n)|(4,4)->()")
 @memoize(
     foldable=lambda a, k: (
         len(a) == 1
@@ -250,7 +250,7 @@ def length(vector_in: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(3)->(3)")
 @memoize
 def normalize(vector_in: Any) -> Any:
     """``normalize(v)`` -- scale a vector to unit length.
@@ -273,7 +273,7 @@ def normalize(vector_in: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(3)|(4,4),(3)|(4,4)->()")
 @memoize
 def dist(vector1: Any, vector2: Any) -> Any:
     """``dist(a, b)`` -- point-to-point or matrix-to-matrix distance via
@@ -310,7 +310,7 @@ def dist(vector1: Any, vector2: Any) -> Any:
 
 
 @operands(config=("rotate_order",))
-@vectorize
+@vectorize("(3),(3),()->(3)")
 @memoize
 def rotate(vector_in: Any, rotate_vec: Any, rotate_order: Any = 0) -> Any:
     """``rotate(v, euler, rotate_order=0)`` -- rotate a vector by an

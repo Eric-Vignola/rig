@@ -31,8 +31,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
 from rig._internal.operands import operands
-from rig._internal.types import _is_list, math_type
+from rig._internal.types import _is_attribute, _is_list, _is_matrix_literal, _is_real, math_type
 from rig.euler import (
     slerp as _euler_slerp,
     to_matrix as _euler_to_matrix,
@@ -89,12 +91,29 @@ def _classify(obj: Any) -> str:
 
     A :class:`~rig.List` is a *vectorised* argument: classify it
     by its first element (the per-type impl, being ``@vectorize``, broadcasts
-    the whole list). Everything else goes straight to :func:`math_type`,
-    which also handles plain Python literals (``[1, 2, 3]`` => ``"vector"``).
+    the whole list). So are rows given as a plain list, tuple or array (the
+    per-type impl's layout reads them so): a sequence of vectors, quaternions or
+    matrices (``[a.t, b.t]``, an N x 3 array), not one value. Everything else
+    goes straight to :func:`math_type`, which also handles plain Python
+    literals (``[1, 2, 3]`` => ``"vector"``, ``[a.tx, a.ty, a.tz]``, a 4x4
+    matrix).
     """
     if _is_list(obj):
         return math_type(obj[0]) if len(obj) else "unknown"
+    if _rows(obj):
+        return _classify(obj[0])
     return math_type(obj)
+
+
+def _rows(obj: Any) -> bool:
+    """True if ``obj`` is a plain sequence of values rather than one value: not a
+    matrix literal, and holding something that is no scalar (a vector plug, a
+    nested list)"""
+    if isinstance(obj, np.ndarray):
+        return obj.ndim >= 2 and not _is_matrix_literal(obj)
+    if not isinstance(obj, (list, tuple)) or not obj or _is_matrix_literal(obj):
+        return False
+    return not all(_is_real(x) or (_is_attribute(x) and math_type(x) == "scalar") for x in obj)
 
 
 def _unsupported(verb: str, math_kind: str, hint: str = "") -> None:
