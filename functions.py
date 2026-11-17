@@ -158,10 +158,13 @@ def clamp(token: Any, min_value: Any, max_value: Any) -> Any:
         node.maximum << max_value
         return node.output
 
-    if is_at_least(2024):
+    if is_at_least(2024) and not builtins.any(
+        isinstance(x, List) for x in (token, min_value, max_value)
+    ):
         # vectors: one clampRange per channel, exact in doubles (the condition
         # network below holds floats and is 12 nodes); the same rule as the
-        # network and as clampRange: x > hi gives hi, then x < lo gives lo
+        # network and as clampRange: x > hi gives hi, then x < lo gives lo.
+        # A List is rows, not channels: the network below, row by row, as before
         return _per_channel("clamp1", _clamp_channel, token, min_value, max_value,
                             names=("input", "min", "max"))
 

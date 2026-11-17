@@ -16,7 +16,7 @@ for and / or / not, condition's test meaning == 1, a division by zero.
 
 from maya import cmds
 from rig import functions as F
-from rig import List, Node
+from rig import List, Node, get_options, set_options
 from rig._tests._base import MayaTestCase
 
 
@@ -127,6 +127,29 @@ class TestClamp(_Case):
                     self.assertAlmostEqual(self.value(F.clamp(self.k.tx, 5, 2)), got)
         self.put(self.v.t, (-1, 1.5, 9))
         self.assertValue(F.clamp(self.v.t, 0, 2), [0, 1.5, 2])
+
+    def test_a_list_clamps_row_by_row(self):
+        # a List is rows, not a vector's channels: four plugs clamp one by one (the
+        # per-channel clamp took them for a four-channel vector: one Plug of zeros,
+        # and a '+' on it a quatAdd). Without containers, as on main: rig's network of
+        # a List in one can fail to connect (rig_network_fixes_todo.md, item 8)
+        options = dict(get_options())
+        self.addCleanup(lambda: set_options(**options))
+        set_options(create_containers=False)
+        rows, others = List(), List()
+        for i in range(4):
+            node = Node.create("transform", name=f"p{i}")
+            node.tx << 0.5 * i + 0.25                     # 0.25 0.75 1.25 1.75
+            rows.append(node)
+            node = Node.create("transform", name=f"q{i}")
+            node.tx << 3.1 - i                            # 3.1 2.1 1.1 0.1
+            others.append(node)
+        clamped = F.clamp(rows.tx - 1, 0, 0.75)
+        self.assertIsInstance(clamped, List)
+        self.assertEqual([self.value(p) for p in clamped], [0, 0, 0.25, 0.75])
+        out, types = self.made(lambda: clamped + F.logical_not(others.tx > 2))
+        self.assertNotIn("quatAdd", types)
+        self.assertEqual([self.value(p) for p in out], [0, 0, 1.25, 1.75])
 
 
 class TestSearchsorted(_Case):
