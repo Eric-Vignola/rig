@@ -460,7 +460,7 @@ if __name__ == "__main__":
 
     # Toggle this to True to see rig.fuse()'s effect: the rail's math compiled into
     # rigExpression nodes (rig's plug-in, rig.mll), each rider in nodes of its own (the
-    # rider blocks in create_rail). Here 1,723 nodes become 159 and the build takes less
+    # rider blocks in create_rail). Here 1,731 nodes become 159 and the build takes less
     # than half the time; at 100 riders, parallel playback runs about 2.5 times faster.
     # False (the default) builds rig's network.
     set_options(fuse=False)

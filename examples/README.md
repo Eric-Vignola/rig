@@ -248,7 +248,7 @@ Everything the tutorial omits on purpose, from the original rig
   feeding its `motionPath` and one reading it, since a single node doing
   both would be a DG cycle. Maya's parallel evaluation runs the riders side
   by side. The file's workflow sets `fuse=False`, rig's network; turned on,
-  twenty riders' 1,723 nodes become 159 (49 `rigExpression`: 40 for the
+  twenty riders' 1,731 nodes become 159 (49 `rigExpression`: 40 for the
   riders, 9 for the rail).
 
 `create_rail(position_controls, u, orient_controls=None, scale_controls=None, rail_name="rail1", rider_name="rider1", degree=3, periodic=False, aim_axis=1, up_axis=0, invert_aim=False, invert_up=False, control_up=None, invert_up_control=False, debug=True)`
