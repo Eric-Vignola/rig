@@ -16,9 +16,11 @@
 # plugins/build.bat.
 *.bat text eol=crlf
 
-# The images -- the README banner and the example textures -- are real
-# binaries and must never be touched. `text=auto` already detects them by
-# their NUL bytes; naming them makes it certain rather than inferred.
+# The images -- the README banner, the example textures and image_loop's
+# frames -- are real binaries and must never be touched. `text=auto` already
+# detects them by their NUL bytes; naming them makes it certain rather than
+# inferred.
 
 *.gif binary
 *.jpg binary
+*.png binary

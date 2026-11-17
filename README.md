@@ -379,10 +379,11 @@ rig/
 │                        Mesh, the shaders (Material Blinn Lambert Phong PhongE SurfaceShader
 │                        StandardSurface OpenPBRSurface; astype's Conversion report),
 │                        ShadingEngine (repair / tidy), AnimCurve and AnimCurveTL TA TU TT ...; Attribute,
-│                        the MPlug wrapper; save / load of cgmath files; the lookup errors;
-│                        plugins/ (the undo plug-in)
-├── examples/            rail_spine.py, rail_spine_simple.py, image_loop.py,
-│                        perspective_image_planes.py, ye_olde_lerp.gif
+│                        the MPlug wrapper; save / load of cgmath files; the lookup errors
+├── plugins/             rig's plug-ins: the undo plug-in (load_plugin) and rig.mll (its source,
+│                        build.bat / build.sh, the builds per Maya version); README.md there
+├── examples/            rail_spine.py, rail_spine_simple.py, limb_twist.py, image_loop.py,
+│                        perspective_image_planes.py, images/ (their pictures), ye_olde_lerp.gif
 ├── utils.py             run_tests(): the suite, logged to rig_run_tests.log in the temp folder
 │                        (log=<path> for another file, log=False for none); the line of a test
 │                        is on disk before the test runs, so a crash names its test

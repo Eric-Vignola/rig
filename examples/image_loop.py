@@ -23,7 +23,10 @@ Showcases:
 Run from inside Maya / mayapy::
 
     from rig.examples import image_loop
-    setup = image_loop.create_plane("/Users/me/Downloads/frames_alpha")
+    setup = image_loop.create_plane(image_loop.LOOP_FRAMES)   # the 24 frames beside this file
+    setup = image_loop.create_plane("D:/frames/run_cycle")    # or a folder of your own
+
+``rig.run`` of this file runs the demo at the bottom on ``LOOP_FRAMES``.
 """
 
 from __future__ import annotations
@@ -37,6 +40,17 @@ from rig import condition, container, functions as rf
 from rig.bridges import commands as rc, nodes as rn
 from rig.nodetypes import Lambert
 from rig.spec import Float, Int, lock, String
+
+# The demo's frames: images/loop beside this file, a ball bouncing on a transparent background for
+# 24 frames (images/loop/make_loop.py writes them). rig.run gives a script its __file__; code pasted
+# into the Script Editor has none, and rig's own examples folder holds the same frames.
+try:
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    import rig.examples
+
+    _HERE = os.path.dirname(os.path.abspath(rig.examples.__file__))
+LOOP_FRAMES = os.path.join(_HERE, "images", "loop")
 
 
 # ---------------------------------------------------------------------------
@@ -185,10 +199,10 @@ if __name__ == "__main__":
     # ---- EXAMPLE WORKFLOW ----
     import time
 
-    image_path = "/Users/ericvignola/Downloads/frames_alpha"
+    image_path = LOOP_FRAMES   # or a folder of your own: any numbered sequence
 
     t0      = time.perf_counter()
-    setup   = create_plane(image_path, name="run_cycle")
+    setup   = create_plane(image_path, name="loop")
     elapsed = time.perf_counter() - t0
     print(f"\n=== rig image_loop build time: {elapsed * 1000:.1f} ms ===\n")
     print(

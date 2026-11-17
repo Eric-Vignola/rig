@@ -122,16 +122,19 @@ rail     = rail_spine_simple.create_simple_rail(controls, riders=10)
 rail     = rail_spine.create_rail(controls, 20, orient_controls=controls, scale_controls=controls)
 twist    = limb_twist.create_limb_twist(controls[0].wm, controls[1].wm, count=5, node_type="joint")  # .root .twists
 setup    = perspective_image_planes.create_setup("camera1", 5)  # .camera .planes .shapes
-loop     = image_loop.create_plane("D:/frames/run_cycle")       # .transform .shape .material .texture
+loop     = image_loop.create_plane(image_loop.LOOP_FRAMES)     # .transform .shape .material .texture
 ```
 
 The `__main__` block at the bottom of each file is a demo: open the file
 in the Script Editor and run it, and `__name__` is `"__main__"` there, so
 the demo builds. The two rail demos and the limb twist demo need nothing;
-the two image demos
-look for pictures at paths on the author's machine and only print a
-message when they find none — point them at the `images/` folder instead
-(the blocks below do). Under `mayapy` the demos are not the way in:
+the two image demos use the pictures beside them: the five photos of
+`images/` (`perspective_image_planes`) and the 24 frames of `images/loop/`
+(`image_loop`: a ball bouncing on a transparent background, which
+`images/loop/make_loop.py` writes). `rig.run(path)` gives a script its own
+`__file__`, so a copy of the examples anywhere finds its own pictures;
+code pasted into the Script Editor has none, and the demos then read rig's
+own `examples/` folder. Under `mayapy` the demos are not the way in:
 initialise `maya.standalone` first, as the setup block at the top of this
 page does, then import and call.
 
@@ -514,6 +517,19 @@ print(frames)                                               # [1, 5, 1, 2]  -- w
 print(loop.shape >> Material(), cmds.ls(type="container"))  # [Lambert("dogs")] ['dogs_container']
 ```
 
+`image_loop.LOOP_FRAMES` is the demo's own sequence, `images/loop/`: 24 PNG
+frames of a ball bouncing on a transparent background, written by
+`images/loop/make_loop.py`. Their alpha is what the transparency remap
+reads.
+
+```python
+cmds.file(new=True, force=True)
+ball = image_loop.create_plane(image_loop.LOOP_FRAMES, name="ball")
+print(ball.shape.sequenceStart.get(), ball.shape.sequenceEnd.get())   # 1 24
+print(os.path.basename(ball.shape.sequenceName.get()))               # loop.0001.png
+print(cmds.getAttr(f"{ball.texture}.fileHasAlpha"))                  # True
+```
+
 ---
 
 ## The shading boilerplate, before and after
@@ -622,10 +638,10 @@ Verified on Maya 2025; not bugs to work around blindly.
   units from a 35 mm camera), because an `outSizeX` / `outSizeY` of `0`
   is clamped to `1` by a `condition`. `create_plane` raises `ValueError`
   on a folder with no image files.
-- The `__main__` demos of the two image scripts point at
-  `/Users/ericvignola/...`; on any other machine `perspective_image_planes`
-  builds and prints "No images found", `image_loop` raises. The `images/`
-  folder beside them is a valid input for both.
+- The `__main__` demos of the two image scripts read the pictures beside
+  them, `images/*.jpg` and `images/loop/`: from the script's own folder
+  under `rig.run` (it gives the script its `__file__`), from
+  `rig.examples`' folder when the code is pasted into the Script Editor.
 - `List` reads come back as NumPy arrays (`controls.ty.get()` is
   `[ 0.  5. 10. 15.]`), and so does a compound on a single node
   (`rider.t.get()` is `[ 0. 15.  0.]`).
