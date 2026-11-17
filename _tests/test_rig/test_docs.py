@@ -69,11 +69,16 @@ def _blocks(relpath, with_notest=False):
 
 def _expected(src):
     """The ``# expected`` comment of every annotated ``print(`` line, without the
-    ``-- ...`` explanation."""
+    ``-- ...`` explanation; from Maya 2027, what the explanation gives after
+    ``Maya 2027:``, where it does (that Maya's default shader is openPBR_shader1)."""
+    later = int(cmds.about(majorVersion=True)) >= 2027
     expected = []
     for line in src.splitlines():
         if line.strip().startswith("print(") and "  # " in line:
-            expected.append(line.split("  # ", 1)[1].strip().split(" -- ")[0].strip())
+            want, _, note = line.split("  # ", 1)[1].strip().partition(" -- ")
+            if later and "Maya 2027: " in note:
+                want = note.split("Maya 2027: ", 1)[1]
+            expected.append(want.strip())
     return expected
 
 

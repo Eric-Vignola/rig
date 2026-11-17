@@ -336,8 +336,9 @@ class TestUserCasting(_Case):
             np.eye(4), inner, Node(cmds.polyCube(name="cube")[0]).f[:2],
         ])
         kinds = [type(x).__name__ for x in items]
+        numpy_bool = type(np.bool_(True)).__name__      # bool_, and bool from numpy 2 (Maya 2027)
         self.assertEqual(kinds[:11], ["Transform", "Plug", "float", "int", "NoneType", "bool",
-                                      "float32", "int64", "bool_", "Transform", "Plug"])
+                                      "float32", "int64", numpy_bool, "Transform", "Plug"])
         self.assertEqual(items[11], (1, 2, 3))
         self.assertEqual(items[12], [[1, 0], [0, 1]])
         self.assertIs(type(items[13]), np.ndarray)

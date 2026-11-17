@@ -243,7 +243,8 @@ class ShadingEngine(ObjectSet):
         """Returns the shading engine that renders a material.
 
         The candidates are the shading engines fed through ``.surfaceShader``,
-        ``initialParticleSE`` excluded (standardSurface1 feeds both defaults):
+        ``initialParticleSE`` excluded (the default shader feeds both:
+        standardSurface1, openPBR_shader1 from Maya 2027):
 
         - none: with ``create``, a ``<material>SG`` is built and connected and the
           material is listed in ``defaultShaderList1`` the way

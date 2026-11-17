@@ -17,7 +17,7 @@ from maya import cmds
 
 from rig import container, Node
 from rig.nodetypes import Blinn, DisplayLayer, Material, Transform
-from rig._tests._base import MayaTestCase
+from rig._tests._base import MayaTestCase, default_shader, default_shader_class
 
 
 def _scene():
@@ -692,7 +692,7 @@ class TestMaterialEngines(_Case):
         self.assertEqual((_sets("cube.f[4]"), _sets("cube.f[5]")), ([], []))
 
     def test_the_default_engine_with_relative_names(self):
-        from rig.nodetypes import ShadingEngine, StandardSurface
+        from rig.nodetypes import ShadingEngine
         from rig import Default
 
         other = Node(cmds.polyCube(name="other", constructionHistory=False)[0])
@@ -701,7 +701,7 @@ class TestMaterialEngines(_Case):
         cmds.namespace(relativeNames=True)
         other << Default()
         self.assertEqual(Material.of(other), [ShadingEngine("initialShadingGroup")])
-        std = StandardSurface(":standardSurface1")
+        std = default_shader_class()(f":{default_shader()}")
         self.assertIn(other, std)
         other << self.red
         other << std

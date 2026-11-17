@@ -27,7 +27,7 @@ from rig.bridges import commands as rc
 cube = rc.polyCube(name="cube", ch=False)[0]  # a Transform
 mesh = cube.get_shape()                       # a typed method, on the same object
 print(repr(cube), (cube >> None) is cube, repr(mesh))  # Transform("cube") True Mesh("cubeShape")
-print(mesh.get_materials(), mesh.get_vertex_count())   # [StandardSurface("standardSurface1")] 8
+print(mesh.get_materials(), mesh.get_vertex_count())   # [StandardSurface("standardSurface1")] 8 -- Maya 2027: [OpenPBRSurface("openPBR_shader1")] 8
 ```
 
 You rarely import from `rig.nodetypes` at all: `Node(x)` and the `rc` / `rn`

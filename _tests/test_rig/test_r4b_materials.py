@@ -59,7 +59,7 @@ from rig.nodetypes import (
     Phong,
     StandardSurface,
 )
-from rig._tests._base import MayaTestCase
+from rig._tests._base import MayaTestCase, default_shader, default_shader_class
 
 
 ISG     = "initialShadingGroup"
@@ -237,7 +237,8 @@ class TestMaterialNodes(_Case):
         self.assertEqual(hash(found[1]), hash(red))
         self.assertEqual(_names(Blinn.of(self.cube)), ['Blinn("red")'])
         self.assertEqual(_names(Lambert.of(self.cube)), ['Lambert("skin")'])   # flat: no blinn
-        self.assertEqual(_names(StandardSurface.of(self.cube)), ['StandardSurface("standardSurface1")'])
+        shader = default_shader_class()                 # StandardSurface; OpenPBRSurface from Maya 2027
+        self.assertEqual(_names(shader.of(self.cube)), [f'{shader.__name__}("{default_shader()}")'])
         self.assertEqual(_names(self.cube >> Blinn()), _names(Blinn.of(self.cube)))
         # a shader over two engines holding faces is listed once
         _engine("altSG")

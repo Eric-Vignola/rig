@@ -161,10 +161,13 @@ class TestLateClassAssignment(MayaTestCase):
         class LatePlug(Plug):
             pass
 
+        # Python 3.13 (Maya 2027) gave functools.partial a __get__: rig calls it a descriptor
+        partial = "descriptor" if hasattr(functools.partial, "__get__") else "data"
         for cls in (LateNode, LatePlug):
-            for value in (functools.partial(len), len, type("Call", (), {"__call__": lambda s: 1})()):
+            for value, kind in ((functools.partial(len), partial), (len, "data"),
+                                (type("Call", (), {"__call__": lambda s: 1})(), "data")):
                 with self.subTest(cls=cls.__name__, value=type(value).__name__):
-                    with self.assertRaisesRegex(TypeError, r"has no public data"):
+                    with self.assertRaisesRegex(TypeError, rf"has no public {kind}"):
                         setattr(cls, "helper", value)
                     self.assertNotIn("helper", vars(cls))
 

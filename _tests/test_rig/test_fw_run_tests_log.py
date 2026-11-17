@@ -96,7 +96,7 @@ def _samples(seen, path):
         def test_h_documented(self):
             """A first line the stream shows and the log does not."""
 
-    return unittest.TestSuite(Sample(name) for name in sorted(unittest.getTestCaseNames(Sample, "test")))
+    return unittest.TestSuite(Sample(name) for name in sorted(unittest.defaultTestLoader.getTestCaseNames(Sample)))
 
 
 def _stopped():
@@ -112,7 +112,7 @@ def _stopped():
         def test_c_never_runs(self):
             pass
 
-    return unittest.TestSuite(Sample(name) for name in sorted(unittest.getTestCaseNames(Sample, "test")))
+    return unittest.TestSuite(Sample(name) for name in sorted(unittest.defaultTestLoader.getTestCaseNames(Sample)))
 
 
 def _lines(path):

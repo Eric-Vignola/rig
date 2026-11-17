@@ -3462,9 +3462,9 @@ materialInfo); `cmds.delete("red")` deletes the shader alone.
 
 ```python
 print(Material.of(cube))                        # [ShadingEngine("initialShadingGroup"), Lambert("decal")]
-print(Default().get_material())                 # standardSurface1
+print(Default().get_material())                 # standardSurface1 -- Maya 2027: openPBR_shader1
 for material, faces in cube.get_shape().get_material_bindings():
-    print(material, faces)                      # decal [0 1 2] / standardSurface1 [3 4 5]
+    print(material, faces)                      # decal [0 1 2] / standardSurface1 [3 4 5] -- Maya 2027: decal [0 1 2] / openPBR_shader1 [3 4 5]
 
 decal.delete()                                  # material + engine + materialInfo; members go green
 print(Material.of(cube.f[0]))  # []

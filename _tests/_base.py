@@ -52,6 +52,20 @@ def own_interpreter(why: str) -> None:
     raise unittest.SkipTest(f"needs an interpreter of its own ({why}); the suite runs in this Maya session only")
 
 
+def default_shader() -> str:
+    """The live default shader, the one ``initialShadingGroup`` (and ``initialParticleSE``)
+    shows: ``standardSurface1`` up to Maya 2026, ``openPBR_shader1`` from 2027, whose
+    ``standardSurface1`` is still in the scene, feeding no engine."""
+    return "openPBR_shader1" if int(cmds.about(majorVersion=True)) >= 2027 else "standardSurface1"
+
+
+def default_shader_class() -> type:
+    """rig's class of `default_shader`: ``StandardSurface``, ``OpenPBRSurface`` from Maya 2027."""
+    from rig.nodetypes import OpenPBRSurface, StandardSurface
+
+    return OpenPBRSurface if int(cmds.about(majorVersion=True)) >= 2027 else StandardSurface
+
+
 class MayaTestCase(unittest.TestCase):
     """
     Base Maya unit test base class.
