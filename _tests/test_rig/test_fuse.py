@@ -1,10 +1,12 @@
 """``rig.fuse()``: scalar and vector math compiled into rigExpression nodes (prototype).
 
-Needs rig's plug-in, rig.mll (``RIG_PLUGIN``, its path, or on Maya's plug-in
-path); without it, every test here is skipped but the fallback one.
+Needs rig's plug-in, rig.mll (its build in ``rig/plugin/<Maya version>``, ``RIG_PLUGIN``,
+its path, or on Maya's plug-in path); without it, every test here is skipped but the
+fallback and lookup ones.
 Values are checked against numpy, which the fused node follows.
 """
 import os
+import sys
 import tempfile
 
 import numpy as np
@@ -20,13 +22,12 @@ from rig._tests._base import MayaTestCase
 def _plugin_loads():
     if cmds.pluginInfo("rig", query=True, loaded=True):
         return True
-    for candidate in (os.environ.get("RIG_PLUGIN"), "rig"):
-        if candidate:
-            try:
-                cmds.loadPlugin(candidate, quiet=True)
-                return True
-            except RuntimeError:
-                pass
+    for candidate in _fuse._plugin_candidates():
+        try:
+            cmds.loadPlugin(candidate, quiet=True)
+            return True
+        except RuntimeError:
+            pass
     return False
 
 
@@ -37,7 +38,8 @@ class _Case(MayaTestCase):
     def setUpClass(cls):
         super().setUpClass()
         if not _plugin_loads():
-            raise __import__("unittest").SkipTest("the rig plug-in (rig.mll) is not available (RIG_PLUGIN)")
+            raise __import__("unittest").SkipTest(
+                "the rig plug-in (rig.mll) is not available (plugin/build.bat, RIG_PLUGIN or MAYA_PLUG_IN_PATH)")
 
     def setUp(self):
         super().setUp()
@@ -1993,3 +1995,60 @@ class TestNoPlugin(MayaTestCase):
         self.assertEqual(cmds.ls(type="rigExpression"), [])
         self.assertEqual(warning.call_count, 1)
         self.assertIn("rig.mll", warning.call_args[0][0])
+        self.assertIn("plugin/build.bat", warning.call_args[0][0])
+
+
+class TestPluginLookup(MayaTestCase):
+    """Where rig loads rig.mll from when it is not loaded: its build for this Maya next to
+    rig's source (``rig/plugin/<version>/``, plugin/build.bat's output), ``RIG_PLUGIN``,
+    then its name on ``MAYA_PLUG_IN_PATH``; one that is not there or does not load is
+    skipped"""
+
+    def built(self):
+        ext = {"win32": ".mll", "darwin": ".bundle"}.get(sys.platform, ".so")
+        return os.path.join(os.path.dirname(os.path.abspath(rig.__file__)), "plugin",
+                            cmds.about(majorVersion=True), "rig" + ext)
+
+    def candidates(self, built_there, rig_plugin):
+        from unittest import mock
+        there = self.built() if built_there else None
+        with mock.patch.object(_fuse.os.path, "isfile", lambda path: path == there), \
+                mock.patch.dict(os.environ, {"RIG_PLUGIN": rig_plugin}):
+            return _fuse._plugin_candidates()
+
+    def test_the_build_next_to_rig_comes_first(self):
+        self.assertEqual(_fuse._built_plugin_path(), self.built())
+        self.assertEqual(self.candidates(True, "D:/elsewhere/rig.mll"),
+                         [self.built(), "D:/elsewhere/rig.mll", "rig"])
+
+    def test_what_is_not_there_is_skipped(self):
+        self.assertEqual(self.candidates(False, "D:/elsewhere/rig.mll"), ["D:/elsewhere/rig.mll", "rig"])
+        self.assertEqual(self.candidates(True, ""), [self.built(), "rig"])
+        self.assertEqual(self.candidates(False, ""), ["rig"])
+
+    def test_the_first_that_loads_is_kept(self):
+        # the build is there but does not load (another Maya's, say): RIG_PLUGIN's does,
+        # and the name is not tried
+        from unittest import mock
+        tried, loaded = [], []
+
+        def load(candidate, quiet=False):
+            tried.append(candidate)
+            if candidate == self.built():
+                raise RuntimeError("not a plug-in for this Maya")
+            loaded.append(candidate)
+
+        def info(name, query=True, **flags):
+            if flags.get("loaded"):
+                return bool(loaded)
+            if flags.get("version"):
+                return "%d.%d" % _fuse.MIN_VERSION
+            raise AssertionError(flags)
+
+        there = self.built()
+        with mock.patch.object(_fuse.os.path, "isfile", lambda path: path == there), \
+                mock.patch.dict(os.environ, {"RIG_PLUGIN": "D:/elsewhere/rig.mll"}), \
+                mock.patch.object(_fuse.cmds, "loadPlugin", load), \
+                mock.patch.object(_fuse.cmds, "pluginInfo", info):
+            self.assertTrue(_fuse._load_plugin())
+        self.assertEqual(tried, [self.built(), "D:/elsewhere/rig.mll"])
