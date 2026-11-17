@@ -219,7 +219,7 @@ def to_vector(quat: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize(rows=("weight",))
 @memoize
 def slerp(quat0: Any, quat1: Any, weight: Any = 0.5) -> Any:
     """``slerp(q0, q1, weight=0.5)`` -- spherical linear interpolation
@@ -237,7 +237,7 @@ def slerp(quat0: Any, quat1: Any, weight: Any = 0.5) -> Any:
 
 
 @operands
-@vectorize
+@vectorize(rows=("weight",))
 @memoize
 def pow(quat: Any, weight: Any = 0.5) -> Any:
     """``pow(q, t)`` -- fractional power of a unit quaternion.

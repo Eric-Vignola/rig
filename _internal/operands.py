@@ -52,6 +52,7 @@ from __future__ import annotations
 import collections.abc
 import functools
 import inspect
+import types
 from typing import Any, Callable, Iterable, Optional, Tuple
 
 import numpy as np
@@ -391,6 +392,36 @@ def _public_name(func: Callable[..., Any]) -> str:
     return f"{module}.{func.__name__}"
 
 
+def _row_slots_of(func: Callable[..., Any]) -> dict:
+    """The row parameters a ``@vectorize(rows=...)`` under ``func`` declares
+    (``{name: position}``, `rig._internal.memoize.vectorize`), or none"""
+    while func is not None:
+        slots = getattr(func, "_rig_rows", None)
+        if slots:
+            return slots
+        func = getattr(func, "__wrapped__", None)
+    return {}
+
+
+def list_alias(value: Any) -> bool:
+    """True if ``value`` is ``List[...]``: the type alias subscripting the class makes
+    (``list[int]``'s syntax), where ``List([...])`` was meant"""
+    if type(value) is not types.GenericAlias:
+        return False
+    from rig._internal.list import List
+    return getattr(value, "__origin__", None) is List
+
+
+LIST_ALIAS = "List[...] makes a type alias, not a List: build the List with List([...])"
+
+
+def _refuse_list_alias(label: str, args: tuple, kwargs: dict) -> None:
+    """TypeError for a ``List[...]`` among a call's arguments, before anything is built"""
+    for value in (*args, *kwargs.values()):
+        if type(value) is types.GenericAlias and list_alias(value):
+            raise TypeError(f"{label}(): {LIST_ALIAS}")
+
+
 def operands(
     func:      Optional[Callable[..., Any]]                 = None,
     *,
@@ -548,6 +579,11 @@ def operands(
     _fuse.register(fuse_key, func)   # a rig function whose body fuses inside (`fuse.TRACE`)
     traced = fuse_key in _fuse.RAW and skip_when is None
     fusable = traced or fuse_key in _fuse.FORMS
+    # a @vectorize(rows=...) under it: a plain sequence given to a row parameter is a
+    # List from the entry on, so rig.fuse() broadcasts it as rig does
+    row_slots = _row_slots_of(func)
+    if row_slots:
+        from rig._internal.memoize import rows_as_lists
 
     # the statement entry (`journal.statement`), where rig.fuse() hooks in: user code
     # fusing gets the fused form of a fusable function, and any other call gets its
@@ -556,6 +592,9 @@ def operands(
     def entry(*args: Any, **kwargs: Any) -> Any:
         if _JOURNAL.open:
             return wrapper(*args, **kwargs)
+        if row_slots:
+            args, kwargs = rows_as_lists(row_slots, args, kwargs)
+        _refuse_list_alias(label, args, kwargs)
         if _FUSE.on:
             args, kwargs = _fuse.listed(args, kwargs)
             if fusable:

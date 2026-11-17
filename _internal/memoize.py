@@ -24,6 +24,7 @@ with its raw arguments.
 
 from __future__ import annotations
 
+import inspect
 import numbers
 import sys
 import weakref
@@ -33,6 +34,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 # A node object's MObject and fn set are read only once its handle (built
 # while the node was alive, see rig.nodetypes._base._ensure_owner_alive) says
 # the node is valid: after a new scene they point at freed memory.
+import numpy as np
 from maya import cmds
 from maya.api import OpenMaya
 from rig._internal import callbacks as _callbacks
@@ -673,10 +675,78 @@ def _broadcast_len(obj: Any) -> int:
         return 1
 
 
+# --------------------------------------------------------------------- #
+#  Row parameters: a plain sequence where a function takes one number
+# --------------------------------------------------------------------- #
+#
+# A plain list is a value in rig (a vector [0, 1, 0], a matrix, the channels
+# [a.tx, a.ty, a.tz]), so a plain list does not broadcast on its own. A
+# parameter that only ever takes one number per call (a blend weight) is
+# different: a list there can only mean several calls. `vectorize(rows=...)`
+# names such parameters, and a plain sequence given to one is read as a List.
+
+
+def _plain_rows(value: Any) -> bool:
+    """True if ``value`` is a plain sequence of values: a list, a tuple, a range or a
+    1-D numpy array (a List broadcasts already; a str, a Plug or a node is one value).
+    Types only: a fused value answers any attribute (``.ndim`` would be an expression)."""
+    if isinstance(value, (List, str)):
+        return False
+    if isinstance(value, (list, tuple, range)):
+        return True
+    return isinstance(value, np.ndarray) and value.ndim == 1
+
+
+def row_slots(func: Callable[..., Any], names: Tuple[str, ...]) -> Dict[str, int]:
+    """``{name: position}`` of ``func``'s row parameters ``names`` (its own signature,
+    under any functools.wraps); TypeError for a name it does not have"""
+    params = list(inspect.signature(func).parameters)
+    for name in names:
+        if name not in params:
+            raise TypeError(f"vectorize(rows=...): {getattr(func, '__name__', func)!r} has no "
+                            f"parameter {name!r}")
+    return {name: params.index(name) for name in names}
+
+
+def rows_as_lists(slots: Dict[str, int], args: tuple, kwargs: dict) -> Tuple[tuple, dict]:
+    """``args`` and ``kwargs`` with each plain sequence given to a row parameter
+    (``slots``, `row_slots`) made a List: one call per element, as a List gives.
+
+    When the call broadcasts (that List, or another), a plain sequence given to any
+    other parameter is one value for every row (``[10, 0, 0]`` a vector, a 4x4 array a
+    matrix), not rows of its own: in a function with row parameters, rows come from a
+    List or a row parameter only."""
+    for name, index in slots.items():
+        if name in kwargs:
+            if _plain_rows(kwargs[name]):
+                kwargs = {**kwargs, name: _as_rows(kwargs[name])}
+        elif index < len(args) and _plain_rows(args[index]):
+            args = (*args[:index], _as_rows(args[index]), *args[index + 1:])
+    if any(isinstance(v, List) for v in args) or any(isinstance(v, List) for v in kwargs.values()):
+        rows_at = set(slots.values())
+        args = tuple(List([v]) if i not in rows_at and _plain_value(v) else v for i, v in enumerate(args))
+        kwargs = {k: (List([v]) if k not in slots and _plain_value(v) else v) for k, v in kwargs.items()}
+    return args, kwargs
+
+
+def _plain_value(value: Any) -> bool:
+    """True if ``value`` is a plain sequence or array (a vector, a matrix, a list of
+    channels): one value, which a broadcast gives every row"""
+    if isinstance(value, (List, str)):
+        return False
+    return isinstance(value, (list, tuple, range, np.ndarray))
+
+
+def _as_rows(value: Any) -> List:
+    """The List of a plain sequence's elements (an array's as Python numbers)"""
+    return List(value.tolist() if isinstance(value, np.ndarray) else list(value))
+
+
 def vectorize(
     func:        Optional[Callable[..., Any]] = None,
     *,
     favor_index: Optional[int]                = None,
+    rows:        Tuple[str, ...]              = (),
 ) -> Callable[..., Any]:
     """Broadcast ``func`` across :class:`List` arguments -- NumPy-style strict.
 
@@ -685,6 +755,14 @@ def vectorize(
     NumPy's broadcasting rule: have the same length as the longest, OR
     be length 1, OR be scalar. Mismatched non-1 lengths raise
     :class:`ValueError`.
+
+    ``rows`` names the parameters that take one number per call (a blend
+    weight): a plain list, tuple, range or 1-D array given to one of them is
+    read as a List, so it broadcasts on its own. In such a function a plain
+    sequence given to any other parameter is one value (a vector, a matrix, the
+    channels of a list of plugs) even in a broadcast, where it is otherwise read
+    as rows (`rows_as_lists`). `rig._internal.operands.operands` applies the
+    same rule at its entry, before rig.fuse() reads the arguments.
 
     This differs from the original Eric Vignola ``rig`` library (which
     silently capped each shorter argument to its last element). The
@@ -699,10 +777,13 @@ def vectorize(
         favor_index: Optional positional index. If given, vectorisation
             stops once ``func`` has been called ``len(args[favor_index])``
             times. Used to limit broadcasts driven by a particular argument.
+        rows: The parameters that take one number per call, where a plain
+            sequence means one call per element (see above).
 
     Raises:
         ValueError: When two or more sequence-typed arguments have
             different non-1 lengths (NumPy-style broadcast violation).
+        TypeError: When ``rows`` names a parameter ``func`` does not have.
 
     Examples::
 
@@ -713,19 +794,28 @@ def vectorize(
         f(List([a, b, c, d, e]), 5, [x])                 # OK -- [x] broadcasts
         f(List([a, b, c, d, e]), 5, x)                   # OK -- x is scalar
         f(List([a, b, c, d, e]), 5, [x, y, z])           # ValueError: lengths {3, 5}
+
+        @vectorize(rows=("weight",))
+        def g(a, b, weight=0.5): ...
+
+        g(a, b, [0.25, 0.5, 0.75])                       # a List of three: weight is a row parameter
     """
-    # Support both @vectorize and @vectorize(favor_index=N) syntaxes.
+    # Support both @vectorize and @vectorize(favor_index=N, rows=...) syntaxes.
     if func is None:
 
         def deco(f: Callable[..., Any]) -> Callable[..., Any]:
-            return vectorize(f, favor_index=favor_index)
+            return vectorize(f, favor_index=favor_index, rows=rows)
 
         return deco
+
+    slots = row_slots(func, tuple(rows)) if rows else {}
 
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         if not args and not kwargs:
             return func()
+        if slots:
+            args, kwargs = rows_as_lists(slots, args, kwargs)
 
         valid_args   = any(_is_list(x) for x in args)
         valid_kwargs = any(_is_list(v) for v in kwargs.values())
@@ -790,6 +880,7 @@ def vectorize(
     # favor_index limits the rows
     wrapper._rig_vectorized = True
     wrapper._rig_favor_index = favor_index
+    wrapper._rig_rows = slots       # read by `operands` (its entry applies them before rig.fuse())
     # a statement for rig's own functions only (as memoize)
     return statement(wrapper) if rig_code(func) else wrapper
 

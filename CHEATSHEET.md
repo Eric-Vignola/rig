@@ -1036,6 +1036,10 @@ A `List` is a `list`, so `list`'s own methods (`count`, `index`, `remove`,
 `copy`, `sort`, ...) are the List's: a Maya attr of one of those names does
 not broadcast bare (`[x.count for x in nodes]` reads it).
 
+Build one by calling it: `List([a, b])`. `List[a, b]` is Python's
+type-alias syntax (`list[int]`) and makes no List; rig refuses it where it
+arrives (a function's argument, the right of `<<`) with that hint.
+
 The rule is the same for `List(items)`, `append`, `extend`, `insert`, `+=`
 and item / slice assignment. A sequence of nodes, names or other objects
 is no element (nest a `List`: `List([List([a, b]), List([c])])`). The Lists
@@ -2077,7 +2081,7 @@ Seven rules that hold everywhere:
 |---|---|
 | Literals fold | all-number input returns a Python number and builds nothing (`f.clamp(5, 0, 1)` is `1`). `tween` and `random` are the exceptions: they always build |
 | Calls are memoised | the same function with the same arguments returns the same plug, so a value used twice costs one network |
-| `List` broadcasts, a plain list is a value | `f.abs(List([a, b]))` is two networks; `f.abs([a, b])` tries to inject a 2-vector |
+| `List` broadcasts, a plain list is a value | `f.abs(List([a, b]))` is two networks; `f.abs([a, b])` tries to inject a 2-vector. A weight is the exception: it takes one number, so a plain list, tuple or array there is one call per number, as a `List` is: `v.slerp(a.t, b.t, [0.25, 0.5, 0.75])` is three slerps (`lerp` / `slerp` / `elerp` of `vector`, the `slerp`s of `quaternion`, `euler` and `matrix`, matrix `blend` / `lerp` / `pow`, quaternion `pow`) |
 | Maya 2024+ gets native nodes | `absolute`, `clampRange`, `sin`, `dotProduct`, `lerp`, `smoothStep` … Older Maya gets the equivalent legacy network — same value, more nodes. Each section's table says which |
 | `functions` shadows builtins | `abs`, `int`, `round`, `min`, `max`, `sum`, `pow`, `all`, `any` … Always `from rig import functions as f`, never `import *` |
 | A plain string is not an operand | `f.abs("src.tx")` and `v.lerp(a, [1, "src.tx", 0])` raise `TypeError` before any node is built; write `Plug("src.tx")`. Config strings pass through: `side=`, `axis=`, `name=`, `dtype=`. `method=` takes a callable; `rotate_order` takes a name (`"zxy"`, matched like an enum plug's fields, so `"ZXY"` too), a number or a plug, and any other string is a `TypeError` |
@@ -2490,7 +2494,9 @@ print(f"pow    {kind(half):13s}", *trs(half))
 | `slerp(m0, m1, w)` | rotation **only**; returns a pure rotation matrix | `decomposeMatrix` → `quatSlerp` → `composeMatrix` | orientation blends |
 | `pow(m, w)` | `blend(identity, m, w)` | `blendMatrix` with its `inputMatrix` left at identity | a fraction of a transform |
 
-None of them clamp: `w < 0` and `w > 1` extrapolate.
+None of them clamp: `w < 0` and `w > 1` extrapolate. A list of weights is
+one result per weight: `blend(m0, m1, [0.25, 0.5, 0.75])` is a `List` of
+three.
 
 ---
 

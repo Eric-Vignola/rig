@@ -3749,6 +3749,9 @@ def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> No
                 f"'{_name_of(dst)} << {_name_of(src)}.matrix' (local matrix)."
             )
 
+    from rig._internal.operands import LIST_ALIAS, list_alias
+    if list_alias(src):
+        raise TypeError(f"{LIST_ALIAS} (into Plug({_name_of(dst)}))")
     raise TypeError(f"Don't know how to inject {type(src).__name__} into Plug({_name_of(dst)})")
 
 

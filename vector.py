@@ -349,7 +349,7 @@ def rotate(vector_in: Any, rotate_vec: Any, rotate_order: Any = 0) -> Any:
 
 
 @operands
-@vectorize
+@vectorize(rows=("weight",))
 @memoize(foldable="scalar")
 def lerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
     """``lerp(a, b, weight=0.5)`` -- linear interpolation
@@ -431,7 +431,7 @@ def lerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
 
 
 @operands
-@vectorize
+@vectorize(rows=("weight",))
 @memoize
 def slerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
     """``slerp(a, b, weight=0.5)`` -- spherical linear interpolation
@@ -516,7 +516,7 @@ def slerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
 
 
 @operands
-@vectorize
+@vectorize(rows=("weight",))
 @memoize(foldable="scalar")
 def elerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
     """``elerp(a, b, weight=0.5)`` -- exponential lerp

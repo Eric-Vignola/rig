@@ -253,7 +253,7 @@ def add(*tokens: Any, **kwargs: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize(rows=("weight",))
 @memoize
 def lerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
     """``lerp(m0, m1, weight=0.5)`` -- element-wise linear blend between
@@ -281,7 +281,7 @@ def lerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
 
 
 @operands
-@vectorize
+@vectorize(rows=("weight",))
 @memoize
 def blend(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
     """``blend(m0, m1, weight=0.5)`` -- full-transform interpolation
@@ -303,7 +303,7 @@ def blend(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
 
 
 @operands
-@vectorize
+@vectorize(rows=("weight",))
 @memoize
 def slerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
     """``slerp(m0, m1, weight=0.5)`` -- ORIENTATION-ONLY spherical
@@ -329,7 +329,7 @@ def slerp(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
 
 
 @operands
-@vectorize
+@vectorize(rows=("weight",))
 @memoize
 def pow(input1: Any, weight: Any = 0.5) -> Any:
     """``pow(m, t)`` -- fractional transform toward identity (TRS blend).
