@@ -46,7 +46,7 @@ them too.
 | File | Contents |
 |---|---|
 | `__init__.py` | empty — import the submodules by name: `from rig.bridges import commands, nodes` |
-| `commands.py` | the PEP 562 `__getattr__` that builds one wrapper per `maya.cmds` name, `_coerce` (arguments in), `_wrap_result` (results out), `_NO_COERCE`, `_WRAPPER_CACHE`, `__dir__` |
+| `commands.py` | the PEP 562 `__getattr__` that builds one wrapper per `maya.cmds` name, `_coerce` (arguments in), `_wrap_result` (results out), `_NO_COERCE`, `_PATH_FLAGS` (the `listRelatives` flags it replaces), `_WRAPPER_CACHE`, `__dir__` |
 | `nodes.py` | the `__getattr__` that builds one factory per node type, `_CREATE_KWARGS`, `_resolve_alias` (`and_` → `and`), `_refresh_node_types`, `_NODE_TYPES`, `__dir__` |
 
 Neither module defines a public function of its own. Every name you call is a
@@ -94,6 +94,13 @@ So `rc.createNode("transform")` is a `Transform`, `rc.polyCube()` is
 selected is `List([])`, `rc.listRelatives(x, p=True)` on a root node is
 `None`, and `rc.getAttr("x.tx")` is a `float`. A `List` broadcasts, so
 `rc.ls(sl=True).ty << 2` is a one-liner.
+
+`rc.listRelatives` asks Maya for full paths, whatever the call passes for
+`fullPath=` or `path=`. Maya's own answer is each node's name, which nodes
+under different parents share (a setup built twice in one scene), and no
+node is cast from a shared name. A full path names one node, and the node is
+the same whichever path named it. Every other command answers names that are
+unique.
 
 Two consequences are easy to trip on. A string *value* that happens to name
 an existing node is wrapped as that node (`rc.getAttr("x.label")` holding
@@ -243,9 +250,10 @@ that is not a node passes through. It never touches the container scope.
 
 - **Maya's names, Maya's flags.** `rc.<name>` takes exactly what
   `cmds.<name>` takes; `rn.<type>` is exactly the Maya type name. The only
-  kwarg the bridge consumes on a command is `container`; a factory also
-  consumes `name` / `n`, `parent` / `p`, `skipSelect` / `ss`, and refuses
-  `shared`.
+  kwarg the bridge consumes on a command is `container`, and the only flag it
+  sets is `fullPath=True` on `listRelatives`, in place of the call's
+  `fullPath` / `path`; a factory also consumes `name` / `n`, `parent` / `p`,
+  `skipSelect` / `ss`, and refuses `shared`.
 - **Factories are keyword-only.**
 - **`str(node)` is the real name.** Maya uniquifies a clash at the same DAG
   level, so `rn.transform(name="root")` twice gives `root` and `root1`; a
@@ -266,6 +274,14 @@ Not bugs to work around blindly — how it actually behaves under Maya 2025.
 - A string result that names an existing node is wrapped as that node, even
   when it is a value: `rc.getAttr("x.label")` holding `"persp"` returns
   `Transform("persp")`; holding `"hello"` it returns `'hello'`.
+- `cmds.listRelatives` answers each node's own name: with a `part` under
+  `left` and another under `right`, `cmds.listRelatives("left", c=True)` is
+  `['part']`, a name no node is cast from, and
+  `rc.listRelatives("left", c=True)` is `List([Transform("left|part")])`.
+  Every other command answers unique names: the creators, `parent`,
+  `duplicate`, `rename`, `group`, `instance`, `ls` (`shortNames=True` too),
+  `listConnections`, `listHistory`, `sets`, and the skinCluster, blendShape,
+  cluster, constraint and ikHandle queries.
 - Plug strings collapse to nodes. `rc.listConnections("b.tx", p=True)` is
   `List([Transform("a")])`, the same as without `p=True`. Use
   `b.tx.get_inputs()` (`List([Plug("a.translateX")])`) or

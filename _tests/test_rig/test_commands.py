@@ -144,6 +144,53 @@ def uninitializePlugin(obj):
 '''
 
 
+class TestListRelativesSharedNames(MayaTestCase):
+    """``rc.listRelatives`` asks Maya for full paths. Maya's own answer is each
+    node's name, which nodes under different parents share, and no node is cast
+    from a shared name: a second ``perspective_image_planes`` build got a str for
+    its shape, and its ``<<`` raised ``TypeError``."""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        for side in ("left", "right"):  # a "part" (and its "partShape") under each
+            rc.parent(rc.polyCube(name="part")[0], rc.createNode("transform", name=side))
+
+    @staticmethod
+    def _long(nodes):
+        return [cmds.ls(str(n), long=True)[0] for n in nodes]
+
+    def test_maya_answers_the_name_both_share(self):
+        self.assertEqual(cmds.listRelatives("left", children=True), ["part"])
+        self.assertEqual(len(cmds.ls("part")), 2)
+
+    def test_rc_answers_nodes_whatever_the_name_flags_say(self):
+        for flags in ({}, {"fullPath": False}, {"f": False}, {"path": True}, {"pa": False},
+                      {"fullPath": True}):
+            with self.subTest(flags=flags):
+                got = rc.listRelatives("left", children=True, **flags)
+                self.assertIsInstance(got, List)
+                self.assertEqual([type(n).__name__ for n in got], ["Transform"])
+                self.assertEqual(self._long(got), ["|left|part"])
+
+    def test_shapes_descendants_and_parents(self):
+        shapes = rc.listRelatives("left|part", shapes=True)
+        self.assertEqual([type(n).__name__ for n in shapes], ["Mesh"])
+        self.assertEqual(self._long(shapes), ["|left|part|partShape"])
+        self.assertEqual(self._long(rc.listRelatives("right", allDescendents=True, type="mesh")),
+                         ["|right|part|partShape"])
+        self.assertEqual(self._long(rc.listRelatives(shapes[0], parent=True)), ["|left|part"])
+        self.assertIsNone(rc.listRelatives("left", parent=True))  # a root: None, as cmds answers
+
+    def test_a_string_value_that_names_two_nodes_comes_back_unchanged(self):
+        # a shared name raises nowhere: a getAttr string is a value, not a name, and
+        # every other command answers unique names (listRelatives was the one)
+        cmds.addAttr("left", longName="label", dataType="string")
+        cmds.setAttr("left.label", "part", type="string")
+        self.assertEqual(rc.getAttr("left.label"), "part")
+
+
 class TestCommandsContainerScope(MayaTestCase):
     """Only the nodes a call CREATES join the active container: a query,
     a parent or a rename never moves a node in; creation is tracked through

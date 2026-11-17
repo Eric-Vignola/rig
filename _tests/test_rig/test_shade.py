@@ -1543,6 +1543,25 @@ class TestShadeExamples(MayaTestCase):
             )
             self.assertIn(shape, Lambert(f"sticker_layer_{i}"))
 
+    def test_perspective_image_planes_builds_twice_under_one_name(self):
+        # the second build's planes take the first's names, each under its own camera:
+        # their shapes came back as strs, and `shape << material` raised TypeError
+        from rig.examples import perspective_image_planes
+
+        first  = perspective_image_planes.create_setup("camera1", 2)
+        second = perspective_image_planes.create_setup("camera1", 2)
+        leaves = [[str(s).rsplit("|", 1)[-1] for s in setup.shapes] for setup in (first, second)]
+        self.assertEqual(leaves[0], leaves[1])          # the names the two builds share
+        self.assertNotEqual(first.camera, second.camera)
+        materials = []
+        for setup in (first, second):
+            for shape in setup.shapes:
+                engine = _engines(str(shape))
+                self.assertEqual(len(engine), 1)
+                materials += cmds.listConnections(f"{engine[0]}.surfaceShader", source=True, destination=False)
+                self.assertTrue(cmds.attributeQuery("sequenceType", node=str(shape), exists=True))
+        self.assertEqual(len(set(materials)), 4)        # a material per plane
+
     def test_perspective_image_planes_transparency_without_lookdevkit(self):
         # round 6, user decision 3B: the example drops lookdevKit; its colorCorrect is
         # rig math, transparency = texture.outTransparency * gain + offset per channel
