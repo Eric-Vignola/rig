@@ -1060,7 +1060,9 @@ except TypeError as err:
 ```
 
 `<<` broadcasts a scalar to every element and pairs a sequence element by
-element; a shorter right side is capped to its last entry.
+element; a shorter right side is capped to its last entry, and a longer one
+stops at the List's end: each element is written once (`nodes.tx <<
+range(100)` sets 0, 1, 2).
 
 ```python
 nodes.t  << 0          # every translate to the origin

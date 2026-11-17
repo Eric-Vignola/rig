@@ -34,7 +34,8 @@ other read is AttributeError, as Python's probes (``__deepcopy__``) expect
 (an assignment: see `List.__setattr__`).
 
 Asymmetric operators use :func:`sequences` to broadcast (the shorter operand
-caps to its last element).
+caps to its last element), but ``<<`` writes each element once: a right side
+longer than the List stops at its end.
 
 Connection queries are methods, N-aligned -- one result slot per element,
 so index correspondence with the source list holds::
@@ -82,6 +83,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import itertools
 import numbers
 import operator
 import reprlib
@@ -752,9 +754,8 @@ class List(list):
         # unpopulated multi + a sequence source -> route the write
         # through the parent multi so we can auto-create indices to
         # match the source length. Without this fallback,
-        # ``empty_multi[:] << values`` would silently no-op (the
-        # asymmetric broadcast caps at the shorter side, which is
-        # empty).
+        # ``empty_multi[:] << values`` would raise (an empty List has no
+        # element to pair: `_yield`'s IndexError).
         parent = getattr(self, "_parent_multi", None)
         if not list.__len__(self) and parent is not None:
             from rig._internal.types import _is_sequence
@@ -768,8 +769,15 @@ class List(list):
         # Asymmetric broadcast. A Components element dispatches too, so
         # ``List([cube.f[:2], cube.f[2:]]) << [Tag("a"), Tag("b")]``
         # pairs each selection with its own spec. Enum field names are read
-        # for every row first, so a wrong one sets nothing.
+        # for every row first, so a wrong one sets nothing. Each element is
+        # written once: a right side longer than the List stops at its end
+        # (``nodes.tx << range(100)`` on four nodes sets 0, 1, 2, 3), where the
+        # broadcast would hold the last element for every value left over (and
+        # write it, connect it or add it to a set again for each). An empty
+        # List still raises (`_yield`'s IndexError).
         rows = sequences(list(self), other)
+        if list.__len__(self):
+            rows = itertools.islice(rows, list.__len__(self))
         if isinstance(other, (list, tuple)) and any(_is_membership(o) for o in other):
             return self._membership_rows(list(rows))
         if isinstance(other, (list, tuple)) and any(type(o) is _Keys for o in other):

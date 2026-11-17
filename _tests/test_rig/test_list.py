@@ -1,7 +1,8 @@
 """Tests for ``rig._internal.list`` -- vectorised List broadcasts."""
 
 from maya import cmds
-from rig import List, Node, Plug
+from maya.api import OpenMaya
+from rig import List, Node, Plug, Tag
 from rig._tests._base import MayaTestCase
 
 
@@ -83,6 +84,43 @@ class TestPlugListInjection(MayaTestCase):
         pl.tx << [1.0, 2.0]
         self.assertAlmostEqual(cmds.getAttr("cube1.tx"), 1.0)
         self.assertAlmostEqual(cmds.getAttr("cube2.tx"), 2.0)
+
+    def _four(self, prefix="cube"):
+        return List([Node.create("transform", name=f"{prefix}{i}") for i in range(4)])
+
+    def test_lshift_a_shorter_right_side_holds_its_last(self):
+        nodes = self._four()
+        nodes.tx << [10.0, 20.0]
+        self.assertEqual([cmds.getAttr(f"cube{i}.tx") for i in range(4)], [10.0, 20.0, 20.0, 20.0])
+
+    def test_lshift_a_longer_right_side_stops_at_the_end(self):
+        # each element is written once: the last one is never written again with every
+        # value left over (it read 99 after range(100))
+        nodes = self._four()
+        for values in (range(100), list(range(100)), tuple(range(100))):
+            with self.subTest(type(values).__name__):
+                nodes.tx << -1
+                nodes.tx << values
+                self.assertEqual([cmds.getAttr(f"cube{i}.tx") for i in range(4)], [0.0, 1.0, 2.0, 3.0])
+        nodes.ty = range(10)                              # the assignment sugar too
+        self.assertEqual([cmds.getAttr(f"cube{i}.ty") for i in range(4)], [0.0, 1.0, 2.0, 3.0])
+
+    def test_lshift_longer_plugs_connect_each_element_once(self):
+        nodes, sources = self._four(), List([Node.create("transform", name=f"src{i}") for i in range(6)])
+        events = []
+        callback = OpenMaya.MDGMessage.addConnectionCallback(
+            lambda src, dst, made, data: events.append((src.name(), dst.name(), made)))
+        self.addCleanup(OpenMaya.MMessage.removeCallback, callback)
+        nodes.tx << sources.tx
+        self.assertEqual(sorted(events), [(f"src{i}.translateX", f"cube{i}.translateX", True) for i in range(4)])
+        for i in (4, 5):
+            self.assertEqual(cmds.listConnections(f"src{i}.tx", source=False, destination=True) or [], [])
+
+    def test_lshift_a_longer_membership_right_side_stops_at_the_end(self):
+        pair = List([Node(cmds.polyCube(name=f"m{i}", constructionHistory=False)[0]) for i in range(2)])
+        pair << [Tag("ta"), Tag("tb"), Tag("tc")]
+        tags = [{str(t) for t in Tag.of(x)} & {"ta", "tb", "tc"} for x in pair]
+        self.assertEqual(tags, [{"ta"}, {"tb"}])         # m1 was in tc too
 
 
 class TestPlugListSlicing(MayaTestCase):
