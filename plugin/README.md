@@ -24,14 +24,18 @@ plug-in loaded keeps the file locked: close it before building again.
 The first time a session fuses (a `rig.fuse()` block, or `set_options(fuse=True)`), rig
 uses the plug-in already loaded, else loads the first of these that loads:
 
-1. its build for the running Maya here, `plugin/<version>/rig.mll` (`rig.so` on Linux,
-   `rig.bundle` on macOS), when the file is there;
-2. `RIG_PLUGIN`, a path to a plug-in file, when set;
-3. the name `rig`, which Maya looks for on `MAYA_PLUG_IN_PATH`.
+1. `RIG_PLUGIN`, a path to a plug-in file, when set;
+2. the name `rig`, which Maya looks for on `MAYA_PLUG_IN_PATH` (a deployed one: a module's
+   `plug-ins` folder, say);
+3. its build for the running Maya here, `plugin/<version>/rig.mll` (`rig.so` on Linux,
+   `rig.bundle` on macOS), when the file is there: a checkout nothing points at needs no
+   setup.
 
 One that is not there or does not load (a build for another Maya, say) is skipped. When none
 loads, or the one loaded is older than `rig._internal.fuse.MIN_VERSION`, rig warns once per
-session and builds its own nodes instead.
+session and builds its own nodes instead. `cmds.pluginInfo("rig", query=True, path=True)`
+says which one is loaded: where `rig.mll` is also on `MAYA_PLUG_IN_PATH`, a build here is
+used only through `RIG_PLUGIN`.
 
 `MIN_VERSION` is the lowest version its programs run on (1.2: `Q_ARC`, angleBetween's turn as
 Maya's `MQuaternion(a, b)`; `TIME`, the scene's time; `RAND`, rig.random; eulers through

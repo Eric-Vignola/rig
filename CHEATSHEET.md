@@ -4581,10 +4581,10 @@ A fused value is built when it is used, not when it is written, so:
 * `constant([plug, ...])` fuses; `constant(numbers)` stays rig's node, a
   value to edit after the build.
 * rig's plug-in, `rig.mll` (1.2), is loaded on first use: already loaded, else
-  its build for this Maya next to rig's source, `rig/plugin/<version>/rig.mll`
-  (`plugin/build.bat` writes it there), else from `RIG_PLUGIN` (its path), else
-  by name from `MAYA_PLUG_IN_PATH`; one that is not there or does not load is
-  skipped.
+  from `RIG_PLUGIN` (its path), else by name from `MAYA_PLUG_IN_PATH`, else its
+  build for this Maya next to rig's source, `rig/plugin/<version>/rig.mll`
+  (`plugin/build.bat` writes it there); one that is not there or does not load
+  is skipped.
   Without it, the block builds rig's nodes, with one warning per session.
 * A saved scene needs only the plug-in: the program is an int array and the
   constants a double array on the node.

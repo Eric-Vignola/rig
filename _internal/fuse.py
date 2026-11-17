@@ -258,11 +258,12 @@ def _built_plugin_path() -> str:
 
 
 def _plugin_candidates() -> list:
-    """Where rig loads its plug-in from when it is not loaded, in order: its build for this
-    Maya next to rig's source (`_built_plugin_path`, when the file is there), ``RIG_PLUGIN``
-    (a path, when set), then its name, which Maya looks for on ``MAYA_PLUG_IN_PATH``"""
+    """Where rig loads its plug-in from when it is not loaded, in order: ``RIG_PLUGIN`` (a
+    path, when set), its name, which Maya looks for on ``MAYA_PLUG_IN_PATH`` (a deployed
+    one), then its build for this Maya next to rig's source (`_built_plugin_path`, when the
+    file is there: a checkout nothing points at needs no setup)"""
     built = _built_plugin_path()
-    return [c for c in (built if os.path.isfile(built) else None, os.environ.get("RIG_PLUGIN"), PLUGIN) if c]
+    return [c for c in (os.environ.get("RIG_PLUGIN"), PLUGIN, built if os.path.isfile(built) else None) if c]
 
 
 def _load_plugin() -> bool:
@@ -282,8 +283,8 @@ def _load_plugin() -> bool:
                 break
     why = None
     if not loaded:
-        why = (f"the rig plug-in (rig.mll) is not loaded: none at {_built_plugin_path()} (plugin/build.bat "
-               f"builds it there), at RIG_PLUGIN or on MAYA_PLUG_IN_PATH")
+        why = (f"the rig plug-in (rig.mll) is not loaded: none at RIG_PLUGIN, on MAYA_PLUG_IN_PATH or at "
+               f"{_built_plugin_path()} (plugin/build.bat builds it there)")
     elif _plugin_version() < MIN_VERSION:
         why = (f"the loaded rig plug-in ({cmds.pluginInfo(PLUGIN, query=True, path=True)}) is "
                f"{_plugin_version()}, older than {MIN_VERSION}")
