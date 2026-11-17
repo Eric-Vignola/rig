@@ -53,6 +53,23 @@ from rig._internal.memoize import (
 from rig._internal.types import _get_compound, _is_compound, _is_real
 
 
+def _is_channel_list(value: Any) -> bool:
+    """A plain list / tuple of several values, read as a vector's channels."""
+    from rig._internal.list import List
+
+    return isinstance(value, (list, tuple)) and not isinstance(value, List) and len(value) > 1
+
+
+def _publish_channels(value: Any, name: str) -> Any:
+    """``container.publish_input`` for one operand of a per-channel fan-out: a
+    channel list is published item by item (``nameX`` / ``nameY`` / ...), so
+    its channels stay channels; anything else as one input."""
+    if _is_channel_list(value):
+        suffixes = "XYZW" if len(value) <= 4 else [str(k) for k in range(len(value))]
+        return [container.publish_input(v, f"{name}{suffixes[k]}") for k, v in enumerate(value)]
+    return container.publish_input(value, name)
+
+
 # Valid scope values for impl declarations.
 SCOPE_SCALAR   = "scalar"
 SCOPE_COMPOUND = "compound"
@@ -240,8 +257,11 @@ class NodeOp(_Declared):
         if scope == SCOPE_COMPOUND:
             return user_call(fn, *args, **kwargs)
 
-        # Scalar / auto impl with non-compound input -> call directly.
-        is_compound_input = any(_is_compound(a) for a in args)
+        # Scalar / auto impl with non-compound input -> call directly. A plain
+        # list or tuple of several values ([a.tx, a.ty, a.tz], [1, 2, 3]) is a
+        # vector too: its items are the channels (a rig List never reaches here
+        # as one argument: @vectorize takes it apart first).
+        is_compound_input = any(_is_compound(a) or _is_channel_list(a) for a in args)
         if not is_compound_input:
             return user_call(fn, *args, **kwargs)
 
@@ -274,12 +294,10 @@ class NodeOp(_Declared):
                 new_args = list(args)
                 if len(data_indices) == 1:
                     i           = data_indices[0]
-                    new_args[i] = container.publish_input(args[i], "input")
+                    new_args[i] = _publish_channels(args[i], "input")
                 else:
                     for pub_idx, i in enumerate(data_indices):
-                        new_args[i] = container.publish_input(
-                            args[i], f"input{pub_idx + 1}"
-                        )
+                        new_args[i] = _publish_channels(args[i], f"input{pub_idx + 1}")
                 args = tuple(new_args)
 
             channels_per_arg = [_get_compound(a) for a in args]
