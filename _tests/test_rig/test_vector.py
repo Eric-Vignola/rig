@@ -182,12 +182,16 @@ class TestVectorLengthNormalizeDist(MayaTestCase):
         result = v.length(a.wm)
         self.assertEqual(cmds.nodeType(str(result).split(".")[0]), "distanceBetween")
 
-    def test_length_of_scalar_uses_distancebetween(self):
-        # A non-compound, non-matrix input falls through to ``distanceBetween``
-        # fed via ``point1`` (the native ``length`` node needs a vec3).
+    def test_length_of_a_scalar_is_refused(self):
+        # A scalar is no vector: its layout, "(n)|(4,4)->()", refuses it on every
+        # call (vectorize decision 1A). It used to fall through to a
+        # ``distanceBetween`` fed via ``point1``, which spread it over three
+        # channels: length(a.tx) with tx = 2 was 3.464 (2 * sqrt(3)), not 2.
         a      = Node.create("transform", name="a")
-        result = v.length(a.tx)
-        self.assertEqual(cmds.nodeType(str(result).split(".")[0]), "distanceBetween")
+        before = set(cmds.ls())
+        with self.assertRaisesRegex(TypeError, r"vector_in takes a vector \(n\) or a matrix \(4,4\).*got a scalar plug"):
+            v.length(a.tx)
+        self.assertEqual(set(cmds.ls()) - before, set())
 
     def test_normalize_creates_normalize_or_divide_network(self):
         # Disable publishing so the result is the internal node plug, not the

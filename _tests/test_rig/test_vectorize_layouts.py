@@ -211,6 +211,16 @@ class TestClassify(_Poles):
         with self.assertRaisesRegex(TypeError, "rows of rows|takes"):
             self.rows(self.vector, [[a.t, b.t], [a.t, b.t]], b.t, 0.5)  # one level only
 
+    def test_every_call_is_checked(self):
+        # decision 1A: a wrong shape raises with no rows too (it used to be spread over channels)
+        a, b = self.a, self.b
+        with self.assertRaisesRegex(TypeError, r"input1 takes a 3-channel vector \(3\).*got a scalar plug"):
+            self.rows(self.vector, a.tx, b.t, 0.5)
+        with self.assertRaisesRegex(TypeError, r"input1 takes a matrix \(4,4\).*got a 3-channel plug"):
+            self.rows(self.matrix, a.t, b.wm, 0.5)
+        self.assertIsNone(self.rows(self.vector, a.t, b.t, a.tx))         # a () takes any one value
+        self.assertIsNone(self.rows(self.lerp, a.tx, b.t, 0.5))           # a scalar meets n
+
     def test_n_is_one_size(self):
         a, b = self.a, self.b
         cmds.addAttr("p", ln="uv", at="double2")
@@ -225,6 +235,8 @@ class TestClassify(_Poles):
             self.rows(self.lerp, List([a.t]), uv, 0.5)
         with self.assertRaisesRegex(ValueError, r"input1 has 3 for 'n' and input2 has 2"):
             self.rows(self.lerp, a.t, [0, 0], 0.5)
+        with self.assertRaisesRegex(ValueError, r"input1 has 3 for 'n' and input2 has 2"):
+            self.rows(self.lerp, a.t, uv, 0.5)                              # no rows: checked too (1A)
 
     def test_matrices(self):
         a, b = self.a, self.b
@@ -361,6 +373,25 @@ class TestTypedModules(_Poles):
         self.assertEqual(len(rig.euler.to_quaternion([[0, 90, 0], [90, 0, 0]])), 2)
         with self.assertRaisesRegex(ValueError, r"^rig\.vector\.cross\(\): vector1 has 3 rows and vector2 has 2"):
             rig.vector.cross([p.t, q.t, a.t], [p.t, q.t])
+
+    def test_a_wrong_shape_builds_nothing(self):
+        # decision 1A: each of these gave a value without a word (scalar spread over three channels,
+        # a double2 cut to [5, 0, 0], a vector read as a quaternion)
+        a, b, p = self.a, self.b, self.p
+        cmds.addAttr("p", ln="uv", at="double2")
+        cmds.addAttr("p", ln="uvX", at="double", p="uv")
+        cmds.addAttr("p", ln="uvY", at="double", p="uv")
+        b << Quat("qb") << [0, 0.7071068, 0, 0.7071068]
+        before = set(cmds.ls())
+        for call, error in ((lambda: rig.vector.slerp(a.tx, b.t, 0.5), TypeError),
+                            (lambda: rig.vector.lerp(a.t, p.uv, 0.5), ValueError),
+                            (lambda: rig.matrix.blend(a.t, b.wm, 0.5), TypeError),
+                            (lambda: rig.quaternion.slerp(a.t, b.qb, 0.5), TypeError),
+                            (lambda: rig.slerp(a.tx, b.t, 0.5), TypeError)):
+            with self.subTest(call=call):
+                with self.assertRaises(error):
+                    call()
+        self.assertEqual(set(cmds.ls()) - before, set())
 
     def test_a_rotate_order_is_one_per_row(self):
         # a rotate order (a name, an int, a plug) is a () value: a list of them is rows

@@ -32,8 +32,10 @@ Broadcasting (`Bound.classify`): each parameter's value is **one value** when it
 * rows combine with single values and with rows of 1 or of the same length: ``[a.t, b.t]`` with
   ``[c.t]`` is two calls, with ``[c.t, d.t, e.t]`` an error, raised before anything is built.
 
-A value whose shape is not known here (a node, a value of another library) fits any core: the
-function decides what it means, as it does when nothing broadcasts.
+Every call is checked, rows or not (decision 1A): ``slerp(a.tx, b.t, 0.5)`` raises that input1 takes
+a 3-channel vector, where the scalar used to be spread over three channels without a word. A value
+whose shape is not known here (a node, a value of another library) fits any core: the function
+decides what it means.
 """
 from __future__ import annotations
 
@@ -99,11 +101,12 @@ class Slot:
     positional argument). ``scalar``: one of them is ``()``; ``takes_number``: a number fits one
     of them (``()``, ``(n?)``, ``(3?)``)."""
 
-    __slots__ = ("alternatives", "variadic", "text", "scalar", "takes_number")
+    __slots__ = ("alternatives", "variadic", "text", "scalar", "only_scalar", "takes_number")
 
     def __init__(self, alternatives: Tuple[Core, ...], variadic: bool, text: str) -> None:
         self.alternatives, self.variadic, self.text = alternatives, variadic, text
         self.scalar = any(c.scalar for c in alternatives)
+        self.only_scalar = all(c.scalar for c in alternatives)
         self.takes_number = any(c.items is None and all(d.optional for d in c.channels) for c in alternatives)
 
     def __repr__(self) -> str:
@@ -557,7 +560,7 @@ class Bound:
     """A layout tied to its function's signature: which parameter each slot is, and the label its
     errors use. `classify` reads one call's arguments."""
 
-    __slots__ = ("layout", "label", "names", "positions", "variadic", "slots_by_name", "doc")
+    __slots__ = ("layout", "label", "names", "positions", "variadic", "slots_by_name", "doc", "checked")
 
     def __init__(self, layout: Layout, func: Callable[..., Any]) -> None:
         params = list(inspect.signature(func).parameters.values())
@@ -582,6 +585,8 @@ class Bound:
         self.positions = tuple(fixed)
         self.variadic = variadic
         self.slots_by_name = {n: s for n, s in zip(self.names, fixed)}
+        # a parameter with a shape (not () only): every call is checked (`_check`)
+        self.checked = any(not s.only_scalar for s in (*fixed, *((variadic,) if variadic else ())))
         cores = ", ".join(f"{n} {s.text}" for n, s in zip(self.names, fixed))
         if variadic is not None:
             cores = f"{cores}, *{var.name} {variadic.text[1:]}".lstrip(", ")
@@ -632,6 +637,8 @@ class Bound:
         ValueError for rows that do not broadcast (or sizes that disagree), before anything is
         built."""
         if not self.needs_classifying(args, kwargs):
+            if self.checked:
+                self._check(args, kwargs)
             return None
         rows: Dict[Any, list] = {}
         sizes: Dict[str, Dict[int, Any]] = {}        # named size -> {its value: the argument giving it}
@@ -660,11 +667,8 @@ class Bound:
             for key, value in pending:
                 if len(value) not in channels:
                     rows[key] = _row_items(value)
-        for name, found in sizes.items():
-            if len(found) > 1:
-                (n1, k1), (n2, k2) = list(found.items())[:2]
-                raise ValueError(f"{self.label}(): {self._argument(k1)} has {n1} for {name!r} and "
-                                 f"{self._argument(k2)} has {n2}; they must agree ({self._layout_text()})")
+        if sizes:
+            self._agree(sizes)
         if not rows:
             return None
         lengths = {key: len(items) for key, items in rows.items()}
@@ -676,6 +680,31 @@ class Bound:
             raise ValueError(f"{self.label}(): {' and '.join(parts)}; each must have 1 row or {count} "
                              f"({self._layout_text()})")
         return Plan(count, rows)
+
+    def _check(self, args: tuple, kwargs: dict) -> None:
+        """Every value of a call with no rows against its core (decision 1A): a plug of the wrong
+        shape raises whether or not another argument broadcasts. A () parameter takes any one
+        value, so nothing is read for it (a weight costs nothing)."""
+        sizes = None
+        for key, slot, value in self._given(args, kwargs):
+            if slot.only_scalar:
+                continue
+            found = self._classify_one(key, slot, value)[1][1]
+            if found:
+                if sizes is None:
+                    sizes = {}
+                for name, n in found.items():
+                    sizes.setdefault(name, {}).setdefault(n, key)
+        if sizes:
+            self._agree(sizes)
+
+    def _agree(self, sizes: Dict[str, Dict[int, Any]]) -> None:
+        """ValueError for a named size given two values (``lerp(a.t, uv, 0.5)``: n is 3 and 2)"""
+        for name, found in sizes.items():
+            if len(found) > 1:
+                (n1, k1), (n2, k2) = list(found.items())[:2]
+                raise ValueError(f"{self.label}(): {self._argument(k1)} has {n1} for {name!r} and "
+                                 f"{self._argument(k2)} has {n2}; they must agree ({self._layout_text()})")
 
     def _layout_text(self) -> str:
         return f"layout {self.layout.text}"
@@ -711,7 +740,7 @@ class Bound:
             if all(any(_fits(c, x, row_sizes) for c in alternatives) for x in items):
                 return _ROWS, (items, row_sizes)
             raise TypeError(self._refusal(key, slot, value))
-        # one value; its shape is checked only when it is known (and something broadcasts)
+        # one value: checked against the core when its shape is known
         for c in alternatives:
             trial = {}
             if _fits(c, value, trial):

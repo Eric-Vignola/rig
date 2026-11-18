@@ -695,8 +695,9 @@ def vectorize(
       list, tuple, range or array whose elements fit (``[a.t, b.t]`` for a
       vector, ``[0.25, 0.5, 0.75]`` for a ``()`` weight, an N x 3 array). Rows
       combine with single values and with rows of 1 or of the same length;
-      anything else raises before the first call. The layout is added to the
-      function's docstring.
+      anything else raises before the first call, and so does a value of the
+      wrong shape, rows or not (``slerp(a.tx, b.t, 0.5)``). The layout is added
+      to the function's docstring.
     * ``@vectorize``, no layout: only a ``List`` argument broadcasts, and once
       one does, every list or sequence argument is rows (NumPy-style strict:
       the same length as the longest, or length 1, or a scalar).
