@@ -6,7 +6,8 @@ according to per-control modes along the curve. Showcases the FULL
 rig API surface:
 
   * Math primitives: ``functions``, ``matrix``, ``interpolate``
-  * Operators: ``<<`` inject, compound fan-out, ``cv[:]`` slice
+  * Operators: ``<<`` inject (a List takes one value for all, or one
+    each), compound fan-out, ``cv[:]`` slice
   * Spec objects: ``Float``, ``Enum`` for parameterized rig knobs
   * Bridges: ``commands as rc`` for cmds wrappers, ``nodes as rn``
     for nodetype factories with one-line attr-init
@@ -322,32 +323,19 @@ def create_rail(
         # tangent there: the curve's own tangent, whatever the rider axes.
         # ``uTangentStart`` / ``uTangentEnd`` are 0..1 of the curve's
         # parameter range (``turnOnPercentage``); 0 and 1 are its two ends.
+        # A List of the two nodes takes one value for both or one each, and
+        # reads and computes as a List: two end points, two tangents.
         if not periodic:
             rail << Enum("translateProjection", en="Clamped:Infinite", dv=1)
             rail << Float("uTangentStart", dv=0, min=0, max=1) << hide
             rail << Float("uTangentEnd", dv=1, min=0, max=1) << hide
 
-            tangent0 = rn.pointOnCurveInfo()
-            tangent0.turnOnPercentage << 1
-            tangent0.parameter        << rail.uTangentStart
-            tangent0.inputCurve       << rail_shape.worldSpace[0]
-            edge0    = tangent0.position
-            tangent0 = (
-                tangent0.normalizedTangent
-                * current_length
-                * rail.translateProjection
-            )
-
-            tangent1 = rn.pointOnCurveInfo()
-            tangent1.turnOnPercentage << 1
-            tangent1.parameter        << rail.uTangentEnd
-            tangent1.inputCurve       << rail_shape.worldSpace[0]
-            edge1    = tangent1.position
-            tangent1 = (
-                tangent1.normalizedTangent
-                * current_length
-                * rail.translateProjection
-            )
+            ends = List([rn.pointOnCurveInfo(), rn.pointOnCurveInfo()])
+            ends.turnOnPercentage << 1
+            ends.parameter        << [rail.uTangentStart, rail.uTangentEnd]
+            ends.inputCurve       << rail_shape.worldSpace[0]
+            edge0, edge1          = ends.position
+            tangent0, tangent1    = ends.normalizedTangent * current_length * rail.translateProjection
 
         # ---- ADD RAIL RIDERS ---- #
 
@@ -466,11 +454,8 @@ if __name__ == "__main__":
     set_options(fuse=False)
 
     # 5 control locators stacked along Y.
-    position_controls = List()
-    for i in range(5):
-        loc_xform = mc.spaceLocator()[0]
-        position_controls.append(Node(loc_xform))
-        position_controls[i].ty << i * 5
+    position_controls = List(rc.spaceLocator()[0] for _ in range(5))
+    position_controls.ty << [0, 5, 10, 15, 20]  # one height each
 
     # 20 evenly-spaced riders.
     count = 20

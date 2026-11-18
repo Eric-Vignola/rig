@@ -20,17 +20,15 @@ from maya import cmds
 cmds.file(new=True, force=True)
 ```
 
-A spine in six lines: four locators become the CVs of a curve, twelve
+A spine in four lines: four locators become the CVs of a curve, twelve
 joints ride it.
 
 ```python
 from rig import Node, List
 from rig.examples import rail_spine_simple
 
-controls = List()
-for i in range(4):
-    controls.append(Node(cmds.spaceLocator()[0]))
-    controls[i].ty << i * 5                                 # stacked along Y
+controls = List(Node(cmds.spaceLocator()[0]) for _ in range(4))
+controls.ty << [0, 5, 10, 15]                               # stacked along Y: one height each
 
 rail   = rail_spine_simple.create_simple_rail(controls, riders=12)
 riders = cmds.listRelatives(str(rail), type="joint")
@@ -92,8 +90,9 @@ image rigs, a `List` of nodes for the in-betweens.
 | `quaternion.from_axis_angle`, `quaternion.pow` — a turn as a quaternion, and a share of it | yes | | | | | |
 | `normalize`, `dist` — cross-type dispatch verbs | `normalize` | both | `normalize` | `dist` | | |
 | `lerp`, `slerp`, `elerp`, `interpolate.sequence(method=...)` | `lerp` | `slerp`, `elerp`, `sequence` | `lerp`, `slerp` (quaternions) | | | `blend` |
-| A list is rows — `matrix.axis([wm0, wm1])`, `rf.choice(..., selector=[...])`, `matrix.aim(v, [up0, up1])`: one call per element | `matrix.axis` | | yes | | | |
+| A list is rows — `matrix.axis([wm0, wm1])`, `rf.choice(..., selector=[...])`, `rf.condition([t0, t1], -1, 1)`, `matrix.aim(v, [up0, up1])`: one call per element | `matrix.axis` | | yes | | | |
 | A `List` of values is rows — `slerp(a, b, twists.u)`, `blend(a.wm, b.wm, nodes.weight)`: one call per node | | | yes | | | yes |
+| A `List` takes one value for all, or one each — `ends.parameter << [0, 1]`, `controls.ty << [0, 5, 10, 15]`, `List([t.tx, t.ty, t.s]) << lock << hide`, `twists << Float("u") << weights` | yes | yes | yes | yes | | yes |
 | `condition(a > b, x, y)` — comparisons build `condition` nodes | `rf.condition` | yes | `rf.condition` | yes | yes | |
 | `rf.choice`, `rf.clamp`, `rf.cumsum`, `rf.rev`, `rf.max`, `rf.abs` | | choice, clamp, cumsum, rev | choice | choice, clamp, rev, max, abs | rev | |
 | `rf.frame()` and `%` — scene time and modulo | | `%` | | both | both | |
@@ -171,9 +170,11 @@ feature at a time, in eight numbered steps you can read in one sitting:
    the two matrices is two rows: one call each). An `angleBetween` gives the axis
    and angle from one to the other, and `quaternion.from_axis_angle(...)`
    turns them into one quaternion, `turn`.
-5. Two `pointOnCurveInfo` nodes sit on the curve's two ends
-   (`turnOnPercentage`, `parameter` 0 and 1): `position` is the end point
-   and `normalizedTangent` the end tangent, scaled by the live length.
+5. A `List` of two `pointOnCurveInfo` nodes sits on the curve's two ends:
+   `ends.parameter << [0, 1]` gives one value each and
+   `ends.turnOnPercentage << 1` one for both. `ends.position` is the two
+   end points and `ends.normalizedTangent * current_length` the two end
+   tangents, scaled by the live length.
 6. Per rider: a joint (`container=False`, then `rc.parent`), a `uDefault`
    attribute, and the u maths — `lerp(anchored, uDefault, rail.stretch)`
    between glide and locked, then `Scale` around `pivot`, then `shift`.
@@ -272,10 +273,8 @@ from rig.examples import rail_spine
 set_options(create_containers=True)                        # False shows the raw graph instead of railNode1
 set_options(fuse=False)                                    # True: the riders fused into rigExpression nodes
 
-controls = List()
-for i in range(5):
-    controls.append(Node(cmds.spaceLocator()[0]))
-    controls[i].ty << i * 5
+controls = List(Node(cmds.spaceLocator()[0]) for _ in range(5))
+controls.ty << [0, 5, 10, 15, 20]                          # one height each
 
 rail = rail_spine.create_rail(
     controls, 20,                                          # twenty riders, evenly spread
@@ -335,7 +334,7 @@ in five steps:
 2. Each end's pole, both ends at once (a list of the two is two rows):
    `rf.choice([[1,0,0],[0,1,0],[0,0,1]], selector=[root.startAxis, root.endAxis])`
    (one choice per end, the three axes made once for both) times
-   `rf.condition(List([root.startInvert, root.endInvert]), -1, 1)`, turned
+   `rf.condition([root.startInvert, root.endInvert], -1, 1)`, turned
    into world space by `matrix.multiply(..., [start_matrix, end_matrix], local=True)`
    and normalized.
 3. Each end's frame, built once: `matrix.aim(end - start, [start_pole, end_pole], ...)`,
@@ -479,8 +478,9 @@ drives the camera's `hfa` / `vfa`; an orthographic camera is handled by
 
 It returns `(camera, planes, shapes)`: the camera's `Transform`, a
 `List` of plane transforms and a `List` of plane shapes. Because
-`shapes.image` is a `List` of plugs, `shapes.image[:] << list_of_paths`
-fans a list of files across the planes in one line.
+`shapes.image` is a `List` of plugs, `shapes.image << list_of_paths`
+gives each plane its own file in one line: one path per plane (another
+count is a `ValueError`, raised before a file is set).
 
 ```python
 cmds.file(new=True, force=True)
@@ -498,7 +498,7 @@ print(setup.planes.tz.get())                           # [-10. -20. -30. -40. -5
 print(cmds.listAttr(str(setup.shapes[0]), userDefined=True))
 # ['image', 'sequenceType', 'sequenceStart', 'sequenceEnd', 'sequenceOffset', 'alpha', 'opacity']
 
-setup.shapes.image[:] << sorted(glob.glob(os.path.join(images_dir, "*.jpg")))
+setup.shapes.image << sorted(glob.glob(os.path.join(images_dir, "*.jpg")))
 print([os.path.basename(p) for p in setup.shapes.image.get()])
 # ['dog1.jpg', 'dog2.jpg', 'dog3.jpg', 'dog4.jpg', 'dog5.jpg']
 

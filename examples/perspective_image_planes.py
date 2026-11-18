@@ -18,8 +18,8 @@ Run from inside Maya / mayapy::
     from rig.examples import perspective_image_planes
     setup = perspective_image_planes.create_setup("camera1", 5)
 
-``rig.run`` of this file runs the demo at the bottom, which puts the five pictures of
-``images/`` beside it on the planes.
+``rig.run`` of this file runs the demo at the bottom: one plane for each picture of
+``images/`` beside it (five), each picture on its own plane.
 
 Original BSD-3 license: Copyright (c) 2023, Eric Vignola.
 """
@@ -123,12 +123,8 @@ def create_setup(
             # Offset the plane along -Z relative to the camera.
             transform.tz << (i + 1) * -offset
 
-            # Lock + hide all but tz.
-            transform.tx << lock << hide
-            transform.ty << lock << hide
-            transform.s  << lock << hide
-            transform.r  << lock << hide
-            transform.v  << lock << hide
+            # Lock + hide all but tz: one List, the same two specs for each plug.
+            List([transform.tx, transform.ty, transform.s, transform.r, transform.v]) << lock << hide
 
             shape = transform.get_shape()  # the plane's mesh
 
@@ -238,14 +234,7 @@ if __name__ == "__main__":
     import os
     import time
 
-    t0      = time.perf_counter()
-    setup   = create_setup("camera1", 5)
-    elapsed = time.perf_counter() - t0
-    print(
-        f"\n=== rig perspective_image_planes build time: {elapsed * 1000:.1f} ms ===\n"
-    )
-
-    # Populate the planes with the pictures in images/ beside this file. rig.run gives a script its
+    # The pictures in images/ beside this file, one plane each. rig.run gives a script its
     # __file__; code pasted into the Script Editor has none, and rig's own examples folder holds the
     # same pictures.
     try:
@@ -256,8 +245,16 @@ if __name__ == "__main__":
         here = os.path.dirname(os.path.abspath(rig.examples.__file__))
     pattern = os.path.join(here, "images", "*.jpg")
     images  = sorted(glob.glob(pattern))
+
+    t0      = time.perf_counter()
+    setup   = create_setup("camera1", len(images) or 5)
+    elapsed = time.perf_counter() - t0
+    print(
+        f"\n=== rig perspective_image_planes build time: {elapsed * 1000:.1f} ms ===\n"
+    )
+
     if images:
-        setup.shapes.image[:] << images
+        setup.shapes.image << images  # one picture each
         print(f"Assigned {len(images)} images to {len(setup.shapes)} planes.")
     else:
         print("No images found at: {}".format(pattern))

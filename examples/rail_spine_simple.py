@@ -39,6 +39,7 @@ DSL features showcased here
   * ``with container("..."):``                -- scoped utility graph
   * ``List(controls).wm * rail.wim``          -- broadcast matrix mul
   * ``rail_shape.cv[:] << matrices``          -- matrix -> CV shorthand
+  * ``ends.parameter << [0, 1]``              -- a List of nodes: one value each, or one for all
   * ``rn.curveInfo / pointOnCurveInfo / motionPath`` -- node-type bridges
   * ``Float("pivot", min=0, max=1)``          -- spec-object injection
   * ``plug.get()``                            -- read-value idiom
@@ -173,22 +174,17 @@ def create_simple_rail(
         # A ``pointOnCurveInfo`` on each end of the curve: ``position`` is
         # the end point, ``normalizedTangent`` the unit tangent there.
         # ``turnOnPercentage`` reads ``parameter`` as 0..1 of the curve's
-        # parameter range, so 0 and 1 are its two ends. Scale by
-        # ``current_length`` so one unit of u-overshoot ~= one
-        # curve-length of travel.
-        curve_start = rn.pointOnCurveInfo()
-        curve_start.turnOnPercentage << 1
-        curve_start.parameter        << 0
-        curve_start.inputCurve       << rail_shape.worldSpace[0]
-        edge_start    = curve_start.position
-        tangent_start = curve_start.normalizedTangent * current_length
-
-        curve_end = rn.pointOnCurveInfo()
-        curve_end.turnOnPercentage << 1
-        curve_end.parameter        << 1
-        curve_end.inputCurve       << rail_shape.worldSpace[0]
-        edge_end    = curve_end.position
-        tangent_end = curve_end.normalizedTangent * current_length
+        # parameter range, so 0 and 1 are its two ends. A List of the two
+        # nodes takes one value for both (``<< 1``) or one each
+        # (``<< [0, 1]``), and its plugs read and compute as Lists: two
+        # positions, two tangents. Scale by ``current_length`` so one unit
+        # of u-overshoot ~= one curve-length of travel.
+        ends = List([rn.pointOnCurveInfo(), rn.pointOnCurveInfo()])
+        ends.turnOnPercentage << 1
+        ends.parameter        << [0, 1]
+        ends.inputCurve       << rail_shape.worldSpace[0]
+        edge_start, edge_end       = ends.position
+        tangent_start, tangent_end = ends.normalizedTangent * current_length
 
         # ---- 6. Build evenly-spaced riders. ----
         for i in range(riders):
@@ -260,11 +256,8 @@ def create_simple_rail(
 
 if __name__ == "__main__":
     # ---- Demo: 4 locators stacked along Y, 12 evenly-spaced riders. ----
-    controls = List()
-    for i in range(4):
-        loc = mc.spaceLocator()[0]
-        controls.append(Node(loc))
-        controls[i].ty << i * 5
+    controls = List(rc.spaceLocator()[0] for _ in range(4))
+    controls.ty << [0, 5, 10, 15]  # one height each
 
     rail = create_simple_rail(controls, riders=12)
 

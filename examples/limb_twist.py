@@ -172,7 +172,7 @@ def create_limb_twist(
         # and ``normalize`` drops any scale.
         ends                 = [start_matrix, end_matrix]
         axis_vectors         = rf.choice(AXES, selector=[root.startAxis, root.endAxis])
-        flips                = rf.condition(List([root.startInvert, root.endInvert]), -1, 1)
+        flips                = rf.condition([root.startInvert, root.endInvert], -1, 1)
         start_pole, end_pole = normalize(matrix.multiply(axis_vectors * flips, ends, local=True))
 
         # ---- 3. The two end frames, built once. ----
@@ -189,11 +189,8 @@ def create_limb_twist(
         length = float(np.linalg.norm(limb.get()))
 
         # ---- 4. The twist nodes, each with its own u. ----
-        twists = List()
-        for _ in weights:
-            twist = _twist_node(node_type, twist_name, length, count, aim_axis, up_axis)
-            rc.parent(twist, root)
-            twists.append(twist)
+        twists = List(_twist_node(node_type, twist_name, length, count, aim_axis, up_axis) for _ in weights)
+        rc.parent(twists, root)
 
         # 0 on the start, 1 on the end: where each node sits, and how much of
         # the twist it takes. One u per node, from the list of weights; change
