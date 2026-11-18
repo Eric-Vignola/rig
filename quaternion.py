@@ -206,11 +206,10 @@ def to_matrix(quat: Any) -> Any:
 @memoize
 def to_vector(quat: Any) -> Any:
     """``to_vector(quat)`` -- extract the 3-vector component (x, y, z) of
-    a quaternion as a constant network."""
-    with container("quat_to_vector1"):
-        quat  = container.publish_input(quat, "input")
-        attrs = _get_compound(quat)
-        return container.publish_output(constant(attrs[:-1]), "output")
+    a quaternion as a constant network: one node, so no container of its
+    own."""
+    attrs = _get_compound(quat)
+    return constant(attrs[:-1])
 
 
 # --------------------------------------------------------------------- #
@@ -223,17 +222,13 @@ def to_vector(quat: Any) -> Any:
 @memoize
 def slerp(quat0: Any, quat1: Any, weight: Any = 0.5) -> Any:
     """``slerp(q0, q1, weight=0.5)`` -- spherical linear interpolation
-    via ``quatSlerp``."""
+    via ``quatSlerp``: one node, so no container of its own."""
     container._load_plugin_for_quaternion()
-    with container("quat_slerp1"):
-        quat0  = container.publish_input(quat0,  "input1")
-        quat1  = container.publish_input(quat1,  "input2")
-        weight = container.publish_input(weight, "weight")
-        node   = container.createNode("quatSlerp", name="quat_slerp1")
-        node.input1Quat << quat0
-        node.input2Quat << quat1
-        node.inputT     << weight
-        return container.publish_output(node.outputQuat, "output")
+    node = container.createNode("quatSlerp", name="quat_slerp1")
+    node.input1Quat << quat0
+    node.input2Quat << quat1
+    node.inputT     << weight
+    return node.outputQuat
 
 
 @operands
@@ -247,16 +242,13 @@ def pow(quat: Any, weight: Any = 0.5) -> Any:
     so no explicit identity node is needed. For a unit quaternion this is the
     exact quaternion power ``q**t`` (``q**0`` = identity, ``q**1`` = q,
     ``q**0.5`` = half rotation, ``q**-1`` = inverse). No clamp: ``t<0`` /
-    ``t>1`` extrapolate.
+    ``t>1`` extrapolate. One node, so no container of its own.
     """
     container._load_plugin_for_quaternion()
-    with container("quat_pow1"):
-        quat   = container.publish_input(quat, "input")
-        weight = container.publish_input(weight, "weight")
-        node   = container.createNode("quatSlerp", name="quat_pow1")
-        node.input2Quat << quat
-        node.inputT     << weight
-        return container.publish_output(node.outputQuat, "output")
+    node = container.createNode("quatSlerp", name="quat_pow1")
+    node.input2Quat << quat
+    node.inputT     << weight
+    return node.outputQuat
 
 
 # --------------------------------------------------------------------- #
@@ -291,20 +283,19 @@ def from_axis_angle(axis_vec: Any, angle: Any) -> Any:
     """``from_axis_angle(axis, angle)`` -- build a quaternion from an
     axis (vec3) and an angle.
 
-    ``angle`` is interpreted as Maya's standard ``doubleAngle`` (radians
-    internally; pass ``math.radians(deg)`` if you have degrees).
+    The node's angle is a ``doubleAngle``: a number, or a plug of no unit,
+    is read in the scene's angle unit, degrees by default (``90`` is a
+    quarter turn, ``math.pi / 2`` about 1.6 degrees); an angle plug
+    (``ctrl.ry``) needs no conversion.
 
     Uses the native ``axisAngleToQuat`` node from the ``quatNodes``
-    plugin (auto-loaded if needed).
+    plugin (auto-loaded if needed): one node, so no container of its own.
     """
     cmds.loadPlugin("quatNodes", quiet=True)
-    with container("from_axis_angle1"):
-        axis_vec = container.publish_input(axis_vec, "axis", at="double3")
-        angle    = container.publish_input(angle, "angle")
-        node     = container.createNode("axisAngleToQuat", name="from_axis_angle1")
-        node.inputAxis  << axis_vec
-        node.inputAngle << angle
-        return container.publish_output(node.outputQuat, "output")
+    node = container.createNode("axisAngleToQuat", name="from_axis_angle1")
+    node.inputAxis  << axis_vec
+    node.inputAngle << angle
+    return node.outputQuat
 
 
 @operands
@@ -317,14 +308,9 @@ def to_axis_angle(quat: Any) -> tuple:
     standard ``doubleAngle`` (radians internally).
 
     Uses the native ``quatToAxisAngle`` node from the ``quatNodes``
-    plugin (auto-loaded if needed).
+    plugin (auto-loaded if needed): one node, so no container of its own.
     """
     cmds.loadPlugin("quatNodes", quiet=True)
-    with container("to_axis_angle1"):
-        quat = container.publish_input(quat, "input")
-        node = container.createNode("quatToAxisAngle", name="to_axis_angle1")
-        node.inputQuat << quat
-        return (
-            container.publish_output(node.outputAxis, "axis"),
-            container.publish_output(node.outputAngle, "angle"),
-        )
+    node = container.createNode("quatToAxisAngle", name="to_axis_angle1")
+    node.inputQuat << quat
+    return node.outputAxis, node.outputAngle

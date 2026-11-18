@@ -259,8 +259,9 @@ def set_options(
     The ``maya_version`` option lets you build rigs compatible with older
     Maya releases by forcing the DSL to dispatch to legacy node networks
     instead of native Maya 2024+ nodes. A few operations have NO legacy
-    fallback (e.g. ``functions.pi()``, ``matrix.axis()``, ``vector.rotate()``)
-    -- those will raise ``RuntimeError`` when ``maya_version < 2024``.
+    fallback (``functions.log()``, ``matrix.column()``, a ``matrix.row()``
+    whose index is a plug) -- those raise ``RuntimeError`` when
+    ``maya_version < 2024``.
 
     Switching ``maya_version`` clears all NodeOp + ``@memoize`` caches so
     subsequent dedupe lookups don't return entries built for the previous

@@ -6,6 +6,7 @@ from maya import cmds
 from rig import (
     angle,
     angle_degrees,
+    container,
     dist,
     elerp,
     lerp,
@@ -745,12 +746,33 @@ class TestVectorPublishedInterface(MayaTestCase):
             "vector_triple_product1", ["input1", "input2", "input3", "output"]
         )
 
-    def test_rotate_publishes(self):
+    def test_rotate_is_one_node(self):
+        # Maya 2024+: one rotateVector, no container of its own (at the top level,
+        # and in a block, where flatten_containers=False would make it a real one),
+        # and an angle plug drives its rotate with no unitConversion
+        if not is_at_least(2024):
+            self.skipTest("rotateVector is Maya 2024+")
         a   = Node.create("transform", name="a")
         eul = Node.create("transform", name="eul")
-        a.t << [1, 0, 0]
-        v.rotate(a.t, eul.r)
-        self._assert_attrs("rotate1", ["vector", "rotate", "output"])
+        a.t   << [1, 0, 0]
+        eul.r << [0, 90, 0]
+        out = self.assert_one_node(lambda: v.rotate(a.t, eul.r), "rotateVector")
+        self.assertEqual([round(x, 4) for x in out.get()], [0.0, 0.0, -1.0])
+        with container("blk"):
+            container.createNode("network", name="first")   # (the block's hyperLayout)
+            self.assert_one_node(lambda: v.rotate(a.t, (0, 0, 90)), "rotateVector")
+
+    def test_rotate_legacy_publishes(self):
+        # before 2024, two nodes (composeMatrix + vectorProduct): a published container
+        set_options(maya_version=2022)
+        try:
+            a   = Node.create("transform", name="a")
+            eul = Node.create("transform", name="eul")
+            a.t << [1, 0, 0]
+            v.rotate(a.t, eul.r)
+            self._assert_attrs("rotate1", ["vector", "rotate", "output"])
+        finally:
+            set_options(maya_version=None)
 
     def test_normalize_legacy_publishes(self):
         # Pre-2024 ``normalize`` wraps ``v / length(v)`` in a published

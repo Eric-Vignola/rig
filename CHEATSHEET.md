@@ -2193,7 +2193,9 @@ With the default options every composite function's container is
 flattened, so you get the raw node plugs shown here.
 `rig.set_options(flatten_containers=False)` turns each one into a real
 container with a published `input` / `output` (or `input1` / `input2` /
-`weight`) interface instead.
+`weight`) interface instead. A function that builds one node (`m.axis`,
+`m.aim`, `m.compose`, `q.slerp`, `v.rotate` on 2024+ ...) has no container
+of its own, with any option: you get that node's plug.
 
 ---
 
@@ -2522,12 +2524,12 @@ vector-to-orientation primitive. Convert its output with `to_euler` /
 
 ```python
 basis = m.fourbyfour(x=[0, 0, -1], z=[1, 0, 0], position=[5, 5, 5])
-print(repr(basis), kind(basis), m.translation(basis) >> None)   # Plug("fourbyfour2.output") fourByFourMatrix [5. 5. 5.]
+print(repr(basis), kind(basis), m.translation(basis) >> None)   # Plug("fourbyfour1.output") fourByFourMatrix [5. 5. 5.]
 
 fwd = Node.create("transform", name="fwd")
 fwd.t << (0, 0, -1)
 orient = m.aim(fwd.t, [0, 1, 0])                  # aim_axis=X, up_axis=Y by default
-print(repr(orient), kind(orient), to_euler(orient) >> None)     # Plug("matrix_aim2.outputMatrix") aimMatrix [-0. 90.  0.]
+print(repr(orient), kind(orient), to_euler(orient) >> None)     # Plug("matrix_aim1.outputMatrix") aimMatrix [-0. 90.  0.]
 ```
 
 Arithmetic:
@@ -2738,10 +2740,10 @@ units take care of themselves.
 
 ```python
 ax = q.from_axis_angle([0, 0, 1], 90)
-print(repr(ax), kind(ax), (ax >> None).round(4))   # Plug("from_axis_angle2.outputQuat") axisAngleToQuat [0.     0.     0.7071 0.7071]
+print(repr(ax), kind(ax), (ax >> None).round(4))   # Plug("from_axis_angle1.outputQuat") axisAngleToQuat [0.     0.     0.7071 0.7071]
 
 axis_plug, angle_plug = q.to_axis_angle(qb)     # a 2-tuple of plugs
-print(repr(axis_plug), repr(angle_plug))      # Plug("to_axis_angle2.outputAxis") Plug("to_axis_angle2.outputAngle")
+print(repr(axis_plug), repr(angle_plug))      # Plug("to_axis_angle1.outputAxis") Plug("to_axis_angle1.outputAngle")
 print(axis_plug >> None, angle_plug >> None)  # [0. 0. 1.] 90.0
 ```
 
@@ -2968,10 +2970,10 @@ u3 = r.uniform3D([0, 0, 0], [10, 10, 10], seed=[1, 2, 3])
 i3 = r.randint3D([0, 0, 0], [10, 10, 10], seed=[1, 2, 3])
 
 print(repr(u),  kind(u),  5 <= (u >> None) < 15)          # Plug("add33.output") sum True
-print(repr(i),  kind(i),  float(i >> None).is_integer())  # Plug("constant7.value") network True
-print(repr(v3), kind(v3), (v3 >> None).shape)             # Plug("constant8.value") network (3,)
+print(repr(i),  kind(i),  float(i >> None).is_integer())  # Plug("constant9.value") network True
+print(repr(v3), kind(v3), (v3 >> None).shape)             # Plug("constant10.value") network (3,)
 print(repr(u3), kind(u3), (u3 >> None).shape)             # Plug("add34.output3D") plusMinusAverage (3,)
-print(repr(i3), kind(i3), (i3 >> None).dtype)             # Plug("constant9.value") network int32
+print(repr(i3), kind(i3), (i3 >> None).dtype)             # Plug("constant11.value") network int32
 ```
 
 The cycle is intentional and evaluates correctly, but Maya will print

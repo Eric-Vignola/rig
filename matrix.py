@@ -140,26 +140,15 @@ def compose(
 ) -> Any:
     """``compose(scale=, rotate=, translate=, shear=, rotate_order=)``
     -- ``composeMatrix`` node. ``rotate`` may be a 3-channel euler or
-    a 4-channel quaternion (auto-detected by channel count)."""
-    with container("compose1"):
-        if scale is not None:
-            scale = container.publish_input(scale, "scale")
-        if rotate is not None:
-            rotate = container.publish_input(rotate, "rotate")
-        if translate is not None:
-            translate = container.publish_input(translate, "translate")
-        if shear is not None:
-            shear = container.publish_input(shear, "shear")
-        return container.publish_output(
-            _compose_matrix(
-                scale        = scale,
-                rotate       = rotate,
-                translate    = translate,
-                shear        = shear,
-                rotate_order = rotate_order,
-            ),
-            "output",
-        )
+    a 4-channel quaternion (auto-detected by channel count). One node, so
+    no container of its own."""
+    return _compose_matrix(
+        scale        = scale,
+        rotate       = rotate,
+        translate    = translate,
+        shear        = shear,
+        rotate_order = rotate_order,
+    )
 
 
 @operands
@@ -174,23 +163,22 @@ def fourbyfour(
     """``fourbyfour(x=, y=, z=, position=)`` -- build a 4x4 from up to 4
     vectors (the matrix rows) via a ``fourByFourMatrix`` node. ``x`` /
     ``y`` / ``z`` fill rows 0-2 (the basis vectors) and ``position``
-    fills row 3 (translation). Identity for any omitted row."""
-    with container("fourbyfour1"):
-        node = container.createNode("fourByFourMatrix", name="fourbyfour1")
-        # (published-input name, source vec3, the three row plugs to fill)
-        rows = (
-            ("x", x, (node.in00, node.in01, node.in02)),
-            ("y", y, (node.in10, node.in11, node.in12)),
-            ("z", z, (node.in20, node.in21, node.in22)),
-            ("position", position, (node.in30, node.in31, node.in32)),
-        )
-        for name, vec, plugs in rows:
-            if vec is None:
-                continue
-            vec = container.publish_input(vec, name, at="double3")
-            for plug, comp in sequences(plugs, _get_compound(vec)):
-                plug << comp
-        return container.publish_output(node.output, "output")
+    fills row 3 (translation). Identity for any omitted row. One node, so
+    no container of its own."""
+    node = container.createNode("fourByFourMatrix", name="fourbyfour1")
+    # (source vec3, the three row plugs it fills)
+    rows = (
+        (x, (node.in00, node.in01, node.in02)),
+        (y, (node.in10, node.in11, node.in12)),
+        (z, (node.in20, node.in21, node.in22)),
+        (position, (node.in30, node.in31, node.in32)),
+    )
+    for vec, plugs in rows:
+        if vec is None:
+            continue
+        for plug, comp in sequences(plugs, _get_compound(vec)):
+            plug << comp
+    return node.output
 
 
 @operands
@@ -211,20 +199,17 @@ def aim(
 
         to_euler(aim(a, u), rotate_order=0)
         to_quaternion(aim(a, u))
+
+    One node, so no container of its own.
     """
-    with container("matrix_aim1"):
-        aim_vector = container.publish_input(aim_vector, "aim_vector", at="double3")
-        up_vector  = container.publish_input(up_vector,  "up_vector",  at="double3")
-        aim_axis   = container.publish_input(aim_axis,   "aim_axis",   at="double3")
-        up_axis    = container.publish_input(up_axis,    "up_axis",    at="double3")
-        node       = container.createNode("aimMatrix", name="matrix_aim1")
-        node.primaryMode           << 1  # aim
-        node.secondaryMode         << 2  # align
-        node.primaryTargetVector   << aim_vector
-        node.secondaryTargetVector << up_vector
-        node.primaryInputAxis      << aim_axis
-        node.secondaryInputAxis    << up_axis
-        return container.publish_output(node.outputMatrix, "output")
+    node = container.createNode("aimMatrix", name="matrix_aim1")
+    node.primaryMode           << 1  # aim
+    node.secondaryMode         << 2  # align
+    node.primaryTargetVector   << aim_vector
+    node.secondaryTargetVector << up_vector
+    node.primaryInputAxis      << aim_axis
+    node.secondaryInputAxis    << up_axis
+    return node.outputMatrix
 
 
 # --------------------------------------------------------------------- #
@@ -291,16 +276,13 @@ def blend(input1: Any, input2: Any, weight: Any = 0.5) -> Any:
     single weight drives all components. No clamp -- values outside
     ``[0, 1]`` extrapolate.
 
-    For orientation-only spherical interpolation use :func:`slerp`."""
-    with container("matrix_blend1"):
-        input1 = container.publish_input(input1, "input1")
-        input2 = container.publish_input(input2, "input2")
-        weight = container.publish_input(weight, "weight")
-        node   = container.createNode("blendMatrix", name="matrix_blend1")
-        node.inputMatrix            << input1
-        node.target[0].targetMatrix << input2
-        node.target[0].weight       << weight
-        return container.publish_output(node.outputMatrix, "output")
+    For orientation-only spherical interpolation use :func:`slerp`. One
+    node, so no container of its own."""
+    node = container.createNode("blendMatrix", name="matrix_blend1")
+    node.inputMatrix            << input1
+    node.target[0].targetMatrix << input2
+    node.target[0].weight       << weight
+    return node.outputMatrix
 
 
 @operands
@@ -343,15 +325,12 @@ def pow(input1: Any, weight: Any = 0.5) -> Any:
 
     Intentionally shadows the built-in :func:`pow` so callers reading
     ``matrix.pow`` get this fractional-transform op; nothing in this
-    module uses the built-in.
+    module uses the built-in. One node, so no container of its own.
     """
-    with container("matrix_pow1"):
-        input1 = container.publish_input(input1, "input")
-        weight = container.publish_input(weight, "weight")
-        node   = container.createNode("blendMatrix", name="matrix_pow1")
-        node.target[0].targetMatrix << input1
-        node.target[0].weight       << weight
-        return container.publish_output(node.outputMatrix, "output")
+    node = container.createNode("blendMatrix", name="matrix_pow1")
+    node.target[0].targetMatrix << input1
+    node.target[0].weight       << weight
+    return node.outputMatrix
 
 
 @operands
@@ -486,26 +465,25 @@ def axis(token: Any, axis: Any = 0) -> Any:
     Maya 2024+ uses the native ``axisFromMatrix`` node. Pre-2024 falls
     back to ``vectorProduct(operation=3)`` (Vector Matrix Product)
     transforming the matching unit vector -- a single node that ignores
-    translation and yields the basis vector.
+    translation and yields the basis vector. One node either way, so no
+    container of its own.
     """
     if axis not in _AXIS_INDEX:
         raise ValueError(f"axis must be 0/1/2 or 'x'/'y'/'z'; got {axis!r}")
     idx = _AXIS_INDEX[axis]
 
-    with container("axis1"):
-        token = container.publish_input(token, "matrix")
-        if not is_at_least(2024):
-            unit = (1, 0, 0) if idx == 0 else (0, 1, 0) if idx == 1 else (0, 0, 1)
-            node = container.createNode("vectorProduct", name="axis1")
-            node.operation << 3  # Vector Matrix Product (ignores translation)
-            node.input1    << unit
-            node.matrix    << token
-            return container.publish_output(node.output, "output")
+    if not is_at_least(2024):
+        unit = (1, 0, 0) if idx == 0 else (0, 1, 0) if idx == 1 else (0, 0, 1)
+        node = container.createNode("vectorProduct", name="axis1")
+        node.operation << 3  # Vector Matrix Product (ignores translation)
+        node.input1    << unit
+        node.matrix    << token
+        return node.output
 
-        node = container.createNode("axisFromMatrix", name="axis1")
-        node.input << token
-        node.axis  << idx
-        return container.publish_output(node.output, "output")
+    node = container.createNode("axisFromMatrix", name="axis1")
+    node.input << token
+    node.axis  << idx
+    return node.output
 
 
 @operands
@@ -515,19 +493,16 @@ def column(token: Any, index: Any = 0) -> Any:
     """``column(matrix, index)`` -- extract a column (vec4) from a matrix.
 
     ``index`` is ``0..3``. Maya 2024+ ``columnFromMatrix`` node only --
-    raises on older Maya.
+    raises on older Maya. One node, so no container of its own.
     """
 
     if not is_at_least(2024):
         raise RuntimeError("matrix.column() requires Maya 2024+")
 
-    with container("column1"):
-        token = container.publish_input(token, "matrix")
-        index = container.publish_input(index, "index")
-        node  = container.createNode("columnFromMatrix", name="column1")
-        node.matrix << token
-        node.input  << index
-        return container.publish_output(node.output, "output")
+    node = container.createNode("columnFromMatrix", name="column1")
+    node.matrix << token
+    node.input  << index
+    return node.output
 
 
 @operands
@@ -544,6 +519,7 @@ def row(token: Any, index: Any = 0) -> Any:
     raw row including the homogeneous w component. Pre-2024 falls back
     to :func:`axis` (rows 0-2) or :func:`translation` (row 3) for
     literal int indices. A Plug-valued ``index`` requires Maya 2024+.
+    One node either way, so no container of its own.
     """
     if not is_at_least(2024):
         # Pre-2024 fallback handles literal int indices only.
@@ -555,13 +531,10 @@ def row(token: Any, index: Any = 0) -> Any:
             raise ValueError(f"matrix.row index must be 0-3; got {index!r}")
         raise RuntimeError("matrix.row() with a Plug-valued index requires Maya 2024+")
 
-    with container("row1"):
-        token = container.publish_input(token, "matrix")
-        index = container.publish_input(index, "index")
-        node  = container.createNode("rowFromMatrix", name="row1")
-        node.matrix << token
-        node.input  << index
-        return container.publish_output(node.output, "output")
+    node = container.createNode("rowFromMatrix", name="row1")
+    node.matrix << token
+    node.input  << index
+    return node.output
 
 
 @operands
@@ -571,23 +544,19 @@ def transform_point(point: Any, token: Any) -> Any:
     """``transform_point(p, m)`` -- multiply a point (vec3) by a matrix
     *with* translation. Maya 2024+ uses native
     ``multiplyPointByMatrix``; older falls back to ``pointMatrixMult``.
+    One node either way, so no container of its own.
     """
 
-    with container("transform_point1"):
-        point = container.publish_input(point, "point")
-        token = container.publish_input(token, "matrix")
-        if is_at_least(2024):
-            node = container.createNode(
-                "multiplyPointByMatrix", name="transform_point1"
-            )
-            node.input  << point
-            node.matrix << token
-            return container.publish_output(node.output, "output")
-        # Pre-2024 fallback: pointMatrixMult.
-        node = container.createNode("pointMatrixMult", name="transform_point1")
-        node.inMatrix << token
-        node.inPoint  << point
-        return container.publish_output(node.output, "output")
+    if is_at_least(2024):
+        node = container.createNode("multiplyPointByMatrix", name="transform_point1")
+        node.input  << point
+        node.matrix << token
+        return node.output
+    # Pre-2024 fallback: pointMatrixMult.
+    node = container.createNode("pointMatrixMult", name="transform_point1")
+    node.inMatrix << token
+    node.inPoint  << point
+    return node.output
 
 
 @operands
@@ -599,22 +568,20 @@ def transform_vector(vector_in: Any, token: Any) -> Any:
 
     Maya 2024+ uses native ``multiplyVectorByMatrix``. Pre-2024 falls
     back to ``vectorProduct(operation=3)`` (Vector Matrix Product),
-    which also ignores the translation portion of the matrix.
+    which also ignores the translation portion of the matrix. One node
+    either way, so no container of its own.
     """
-    with container("transform_vector1"):
-        vector_in = container.publish_input(vector_in, "vector")
-        token     = container.publish_input(token, "matrix")
-        if not is_at_least(2024):
-            node = container.createNode("vectorProduct", name="transform_vector1")
-            node.operation << 3  # Vector Matrix Product
-            node.input1    << vector_in
-            node.matrix    << token
-            return container.publish_output(node.output, "output")
+    if not is_at_least(2024):
+        node = container.createNode("vectorProduct", name="transform_vector1")
+        node.operation << 3  # Vector Matrix Product
+        node.input1    << vector_in
+        node.matrix    << token
+        return node.output
 
-        node = container.createNode("multiplyVectorByMatrix", name="transform_vector1")
-        node.input  << vector_in
-        node.matrix << token
-        return container.publish_output(node.output, "output")
+    node = container.createNode("multiplyVectorByMatrix", name="transform_vector1")
+    node.input  << vector_in
+    node.matrix << token
+    return node.output
 
 
 # --------------------------------------------------------------------- #

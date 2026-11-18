@@ -4,9 +4,11 @@ import math
 
 from maya import cmds
 from rig import (
+    container,
     dist,
     inverse,
     lerp,
+    List,
     matrix as m,
     Node,
     normalize,
@@ -16,7 +18,6 @@ from rig import (
     to_euler,
     to_quaternion,
 )
-from rig._internal.maya_version import get_maya_version
 from rig._tests._base import MayaTestCase
 
 
@@ -744,9 +745,10 @@ class TestMatrixDistValue(MayaTestCase):
 
 
 class TestMatrixPublishedInterface(MayaTestCase):
-    """Verify each wrapped composite matrix function creates a container
-    with the expected published attributes when ``flatten_containers=False``.
-    Spot-checks the 8 functions wrapped in v4.J."""
+    """Verify each wrapped composite matrix function (more than one node)
+    creates a container with the expected published attributes when
+    ``flatten_containers=False``. A function that builds one node has no
+    container of its own (`TestMatrixOneNode`)."""
 
     TEST_START_NEW_SCENE = True
 
@@ -771,27 +773,6 @@ class TestMatrixPublishedInterface(MayaTestCase):
                 f"{target}.{attr} should be published",
             )
 
-    def test_compose_publishes_inputs(self):
-        a = Node.create("transform", name="a")
-        a.t << [1, 2, 3]
-        m.compose(translate=a.t, rotate=a.r, scale=a.s)
-        self._assert_attrs("compose1", ["translate", "rotate", "scale", "output"])
-
-    def test_fourbyfour_publishes_inputs(self):
-        a = Node.create("transform", name="a")
-        a.t << [4, 5, 6]
-        m.fourbyfour(x=[1, 0, 0], y=[0, 1, 0], z=[0, 0, 1], position=a.t)
-        self._assert_attrs("fourbyfour1", ["x", "y", "z", "position", "output"])
-
-    def test_aim_publishes(self):
-        a = Node.create("transform", name="a")
-        a.t << [1, 0, 0]
-        m.aim(a.t, [0, 1, 0])
-        self._assert_attrs(
-            "matrix_aim1",
-            ["aim_vector", "up_vector", "aim_axis", "up_axis", "output"],
-        )
-
     def test_lerp_publishes(self):
         a = Node.create("transform", name="a")
         b = Node.create("transform", name="b")
@@ -809,43 +790,101 @@ class TestMatrixPublishedInterface(MayaTestCase):
         normalize(a.matrix)
         self._assert_attrs("matrix_normalize1", ["input", "output"])
 
-    def test_transform_point_publishes(self):
-        p      = Node.create("transform", name="p")
-        m_node = Node.create("transform", name="mtx")
-        p.t << [1, 0, 0]
-        m.transform_point(p.t, m_node.matrix)
-        self._assert_attrs("transform_point1", ["point", "matrix", "output"])
 
-    def test_transform_vector_publishes(self):
-        v      = Node.create("transform", name="v")
-        m_node = Node.create("transform", name="mtx")
-        v.t << [1, 0, 0]
-        m.transform_vector(v.t, m_node.matrix)
-        self._assert_attrs("transform_vector1", ["vector", "matrix", "output"])
+class TestMatrixOneNode(MayaTestCase):
+    """A matrix function that builds one node builds no container of its own:
+    at the top level (where a composite function's container is real) and
+    under ``flatten_containers=False`` (where every function's is), it makes
+    just its node and returns that node's plug. Targeting Maya before 2024
+    (``maya_version=2022``), the older node it builds is one node too."""
 
-    def test_axis_publishes(self):
+    TEST_START_NEW_SCENE = True
+
+    def _check(self, call, node_type, legacy_type=None):
+        """``call(a, b)`` builds one ``node_type`` node, and one ``legacy_type``
+        node for Maya 2022 when that is given: at the top level, and inside a
+        block under ``flatten_containers=False``, where a function's own container
+        would be a real sub-container (every option set back after)."""
+        targets = [(None, node_type)] + ([(2022, legacy_type)] if legacy_type else [])
+        for version, kind in targets:
+            for where in ("top level", "top level, flatten off", "in a block, flatten off"):
+                with self.subTest(maya_version=version, where=where):
+                    self.new_scene()
+                    set_options(flatten_containers=where == "top level", maya_version=version)
+                    try:
+                        a = Node.create("transform", name="a")
+                        b = Node.create("transform", name="b")
+                        a.t << (1, 2, 3)
+                        b.r << (0, 90, 0)
+                        if where == "in a block, flatten off":
+                            with container("blk"):
+                                # (the block's hyperLayout comes with its first member)
+                                container.createNode("network", name="first")
+                                self.assert_one_node(lambda: call(a, b), kind)
+                        else:
+                            self.assert_one_node(lambda: call(a, b), kind)
+                    finally:
+                        set_options(flatten_containers=True, maya_version=None)
+
+    def test_compose(self):
+        self._check(lambda a, b: m.compose(translate=a.t, rotate=b.r, scale=a.s), "composeMatrix")
+
+    def test_fourbyfour(self):
+        self._check(lambda a, b: m.fourbyfour(x=[1, 0, 0], y=[0, 1, 0], z=[0, 0, 1], position=a.t),
+                    "fourByFourMatrix")
+
+    def test_fourbyfour_row_of_scalar_plugs(self):
+        # a plain list of three plugs is one row, connected channel by channel
         a = Node.create("transform", name="a")
-        m.axis(a.matrix, axis=0)
-        self._assert_attrs("axis1", ["matrix", "output"])
+        a.t << (4, 5, 6)
+        out = self.assert_one_node(lambda: m.fourbyfour(position=[a.tx, a.ty, a.tz]), "fourByFourMatrix")
+        self.assertEqual(list(m.translation(out).get()), [4.0, 5.0, 6.0])
 
-    def test_column_publishes(self):
-        # ``columnFromMatrix`` has no pre-2024 equivalent, so matrix.column()
-        # raises rather than falling back.
-        if get_maya_version() < 2024:
-            self.skipTest("matrix.column() requires Maya 2024+")
-        a = Node.create("transform", name="a")
-        m.column(a.matrix, index=0)
-        self._assert_attrs("column1", ["matrix", "index", "output"])
+    def test_aim(self):
+        self._check(lambda a, b: m.aim(a.t, [0, 1, 0]), "aimMatrix")
 
-    def test_row_publishes(self):
+    def test_aim_of_literals_and_scalar_plugs(self):
         a = Node.create("transform", name="a")
-        m.row(a.matrix, index=0)
-        if get_maya_version() < 2024:
-            # Pre-2024 row() delegates rows 0-2 to axis(), so the container
-            # and its published attrs carry that name instead.
-            self._assert_attrs("axis1", ["matrix", "output"])
-        else:
-            self._assert_attrs("row1", ["matrix", "index", "output"])
+        a.t << (0, 0, -1)
+        aimed = self.assert_one_node(lambda: m.aim([a.tx, a.ty, a.tz], (0, 1, 0)), "aimMatrix")
+        self.assertEqual([round(x, 4) for x in to_euler(aimed).get()], [0.0, 90.0, 0.0])
+        literal = self.assert_one_node(lambda: m.aim((0, 0, -1), (0, 1, 0)), "aimMatrix")
+        self.assertEqual([round(x, 4) for x in to_euler(literal).get()], [0.0, 90.0, 0.0])
+
+    def test_blend(self):
+        self._check(lambda a, b: m.blend(a.matrix, b.matrix, 0.5), "blendMatrix")
+
+    def test_pow(self):
+        self._check(lambda a, b: m.pow(b.matrix, 0.5), "blendMatrix")
+
+    def test_axis(self):
+        self._check(lambda a, b: m.axis(b.matrix, axis=0), "axisFromMatrix", "vectorProduct")
+
+    def test_column(self):
+        # ``columnFromMatrix`` has no pre-2024 equivalent: matrix.column() raises there
+        self._check(lambda a, b: m.column(b.matrix, index=0), "columnFromMatrix")
+
+    def test_row(self):
+        # before 2024, rows 0-2 are axis() (a vectorProduct) and row 3 translation()
+        self._check(lambda a, b: m.row(b.matrix, index=0), "rowFromMatrix", "vectorProduct")
+
+    def test_transform_point(self):
+        # (Maya 2027 names the pointMatrixMult it makes a pointMatrixMultDL)
+        self._check(lambda a, b: m.transform_point(a.t, b.matrix), "multiplyPointByMatrix",
+                    ("pointMatrixMult", "pointMatrixMultDL"))
+
+    def test_transform_vector(self):
+        self._check(lambda a, b: m.transform_vector(a.t, b.matrix), "multiplyVectorByMatrix", "vectorProduct")
+
+    def test_rows_are_one_node_each(self):
+        # a List of matrices is rows: one node per matrix, still no container
+        a = Node.create("transform", name="a")
+        b = Node.create("transform", name="b")
+        before = set(cmds.ls())
+        axes = m.axis(List([a.wm, b.wm]), 1)
+        made = sorted(cmds.nodeType(n) for n in set(cmds.ls()) - before)
+        self.assertEqual(made, ["axisFromMatrix", "axisFromMatrix"])
+        self.assertEqual(len(axes), 2)
 
 
 # --------------------------------------------------------------------- #

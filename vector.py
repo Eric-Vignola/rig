@@ -321,26 +321,28 @@ def rotate(vector_in: Any, rotate_vec: Any, rotate_order: Any = 0) -> Any:
     back to ``composeMatrix`` (build a rotation matrix from the euler)
     + ``vectorProduct(operation=3)`` (transform the vector by it,
     ignoring translation). Two nodes vs. one, but functionally
-    equivalent.
+    equivalent. The one native node has no container of its own (an
+    angle plug drives its rotate with no unitConversion); the two-node
+    network keeps its container.
     """
-    with container("rotate1"):
-        vector_in  = container.publish_input(vector_in, "vector", at="double3")
-        rotate_vec = container.publish_input(rotate_vec, "rotate", at="double3")
-        if not is_at_least(2024):
-            cm = container.createNode("composeMatrix", name="rotate_compose1")
-            cm.inputRotate      << rotate_vec
-            cm.inputRotateOrder << rotate_order
-            vp = container.createNode("vectorProduct", name="rotate_vp1")
-            vp.operation << 3  # Vector Matrix Product
-            vp.input1    << vector_in
-            vp.matrix    << cm.outputMatrix
-            return container.publish_output(vp.output, "output")
-
+    if is_at_least(2024):
         node = container.createNode("rotateVector", name="rotate1")
         node.input       << vector_in
         node.rotate      << rotate_vec
         node.rotateOrder << rotate_order
-        return container.publish_output(node.output, "output")
+        return node.output
+
+    with container("rotate1"):
+        vector_in  = container.publish_input(vector_in, "vector", at="double3")
+        rotate_vec = container.publish_input(rotate_vec, "rotate", at="double3")
+        cm = container.createNode("composeMatrix", name="rotate_compose1")
+        cm.inputRotate      << rotate_vec
+        cm.inputRotateOrder << rotate_order
+        vp = container.createNode("vectorProduct", name="rotate_vp1")
+        vp.operation << 3  # Vector Matrix Product
+        vp.input1    << vector_in
+        vp.matrix    << cm.outputMatrix
+        return container.publish_output(vp.output, "output")
 
 
 # --------------------------------------------------------------------- #

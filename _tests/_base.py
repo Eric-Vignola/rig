@@ -139,6 +139,22 @@ class MayaTestCase(unittest.TestCase):
         b = [str(x) for x in b] if isinstance(b, (list, tuple)) else [str(b)]
         self.assertEqual(sorted(a), sorted(b))
 
+    def assert_one_node(self, call, node_type):
+        """``call()`` builds one ``node_type`` node (a type name, or a tuple of the
+        names one type has across Maya versions) and nothing else (a rig function
+        that builds one node has no container of its own: no container, hyperLayout
+        or network beside it), and every plug it returns (a plug, or a tuple of them)
+        is that node's. Returns what ``call()`` returned."""
+        types  = (node_type,) if isinstance(node_type, str) else tuple(node_type)
+        before = set(cmds.ls())
+        result = call()
+        made   = sorted(set(cmds.ls()) - before)
+        self.assertEqual(len(made), 1, f"made {made}")
+        self.assertIn(cmds.nodeType(made[0]), types, f"made {made}")
+        for plug in result if isinstance(result, tuple) else (result,):
+            self.assertEqual(str(plug).split(".")[0], made[0], f"{plug} is not {made[0]}'s")
+        return result
+
     def assert_list_equal(self, a, b):
         """Checks if two lists are equivalent.
 

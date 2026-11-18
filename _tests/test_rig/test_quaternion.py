@@ -4,6 +4,7 @@ from maya import cmds
 from rig import (
     angle,
     angle_degrees,
+    container,
     inverse,
     Node,
     normalize,
@@ -320,9 +321,10 @@ class TestToAxisAngleValue(MayaTestCase):
 
 
 class TestQuaternionPublishedInterface(MayaTestCase):
-    """Verify each wrapped composite quaternion function creates a
-    container with the expected published attributes when
-    ``flatten_containers=False``."""
+    """Verify each wrapped composite quaternion function (more than one
+    node) creates a container with the expected published attributes when
+    ``flatten_containers=False``. A function that builds one node has no
+    container of its own (`TestQuaternionOneNode`)."""
 
     TEST_START_NEW_SCENE = True
 
@@ -370,43 +372,66 @@ class TestQuaternionPublishedInterface(MayaTestCase):
         angle_degrees(q1, q2)
         self._assert_attrs("quat_angle_degrees1", ["input1", "input2", "output"])
 
-    def test_to_vector_publishes(self):
-        a  = Node.create("transform", name="a")
-        q1 = to_quaternion(a.matrix)
-        q.to_vector(q1)
-        self._assert_attrs("quat_to_vector1", ["input", "output"])
 
-    def test_slerp_publishes(self):
-        a  = Node.create("transform", name="a")
-        b  = Node.create("transform", name="b")
-        q1 = to_quaternion(a.matrix)
-        q2 = to_quaternion(b.matrix)
-        slerp(q1, q2, weight=0.5)
-        self._assert_attrs("quat_slerp1", ["input1", "input2", "weight", "output"])
+class TestQuaternionOneNode(MayaTestCase):
+    """A quaternion function that builds one node builds no container of its
+    own, at the top level and inside a block under ``flatten_containers=False``
+    (where a function's own container would be a real sub-container): it makes
+    just its node and returns that node's plug (``to_axis_angle``: both)."""
 
-    def test_from_axis_angle_publishes(self):
-        a = Node.create("transform", name="a")
-        a.t << [1, 0, 0]
-        q.from_axis_angle(a.t, a.tx)
-        self._assert_attrs("from_axis_angle1", ["axis", "angle", "output"])
+    TEST_START_NEW_SCENE = True
 
-    def test_to_axis_angle_publishes(self):
-        a  = Node.create("transform", name="a")
-        q1 = to_quaternion(a.matrix)
-        axis_out, angle_out = q.to_axis_angle(q1)
-        # Both outputs come from the same container.
-        self._assert_attrs("to_axis_angle1", ["input", "axis", "angle"])
-        # Native publish returns the REAL bound inner plug (the published name
-        # is an alias). The returned plugs must be exactly the plugs published
-        # as ``axis`` / ``angle`` on the container.
-        from rig._internal.container import _resolve_published
+    def _check(self, call, node_type):
+        for where in ("top level", "top level, flatten off", "in a block, flatten off"):
+            with self.subTest(where=where):
+                self.new_scene()
+                set_options(flatten_containers=where == "top level")
+                try:
+                    a = Node.create("transform", name="a")
+                    b = Node.create("transform", name="b")
+                    b.r << (0, 0, 90)
+                    q1, q2 = to_quaternion(a.matrix), to_quaternion(b.matrix)
+                    if where == "in a block, flatten off":
+                        with container("blk"):
+                            # (the block's hyperLayout comes with its first member)
+                            container.createNode("network", name="first")
+                            self.assert_one_node(lambda: call(a, b, q1, q2), node_type)
+                    else:
+                        self.assert_one_node(lambda: call(a, b, q1, q2), node_type)
+                finally:
+                    set_options(flatten_containers=True)
 
-        self.assertEqual(
-            str(_resolve_published("to_axis_angle1", "axis")), str(axis_out)
-        )
-        self.assertEqual(
-            str(_resolve_published("to_axis_angle1", "angle")), str(angle_out)
-        )
+    def test_to_vector(self):
+        self._check(lambda a, b, q1, q2: q.to_vector(q2), "network")
+
+    def test_slerp(self):
+        self._check(lambda a, b, q1, q2: q.slerp(q1, q2, 0.5), "quatSlerp")
+        self._check(lambda a, b, q1, q2: slerp(q1, q2, weight=0.5), "quatSlerp")
+
+    def test_pow(self):
+        self._check(lambda a, b, q1, q2: q.pow(q2, 0.5), "quatSlerp")
+
+    def test_from_axis_angle(self):
+        # an angle plug, or a number: no unitConversion either way
+        self._check(lambda a, b, q1, q2: q.from_axis_angle(a.t, b.rz), "axisAngleToQuat")
+        self._check(lambda a, b, q1, q2: q.from_axis_angle((0, 0, 1), 90), "axisAngleToQuat")
+
+    def test_to_axis_angle(self):
+        self._check(lambda a, b, q1, q2: q.to_axis_angle(q2), "quatToAxisAngle")
+
+    def test_values(self):
+        b = Node.create("transform", name="b")
+        b.r << (0, 0, 90)
+        qb = to_quaternion(b.matrix)
+        # the angle is read in the scene's unit: 90 is a quarter turn
+        self.assertEqual([round(x, 4) for x in q.from_axis_angle((0, 0, 1), 90).get()], [0.0, 0.0, 0.7071, 0.7071])
+        axis_plug, angle_plug = q.to_axis_angle(qb)
+        self.assertEqual([round(x, 4) for x in axis_plug.get()], [0.0, 0.0, 1.0])
+        self.assertAlmostEqual(angle_plug.get(), 90.0, places=4)
+        self.assertEqual([round(x, 4) for x in q.to_vector(qb).get()], [0.0, 0.0, 0.7071])
+        self.assertEqual([round(x, 4) for x in to_euler(q.pow(qb, 0.5)).get()], [0.0, 0.0, 45.0])
+        self.assertEqual([round(x, 4) for x in to_euler(q.slerp(to_quaternion(Node.create("transform").matrix),
+                                                               qb, 0.5)).get()], [0.0, 0.0, 45.0])
 
 
 # --------------------------------------------------------------------- #
