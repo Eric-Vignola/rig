@@ -751,6 +751,12 @@ class Plug(Attribute):
             if _fuse.shorthand(_fuse.output_value(other), self):
                 return self                       # a fused node's output, converted in its node
             other = _fuse.rerouted(other, self)   # a fused output that would ring back: a loop copy
+        if isinstance(other, lazy.list.List) and list.__len__(other) == 1 and not _multi_root(self):
+            # a List of one into a plug is the value it holds: a vectorized call with rows
+            # gives a List even of one (``n.t << slerp(a.t, b.t, [0.25])``), and
+            # ``n.t << List([a.t])`` connects a.t (a multi root keeps the List's rule:
+            # its element [0])
+            other = list.__getitem__(other, 0)
         if type(other) in _PLUG_TYPES:
             d = other.__dict__
             h = d.get("_handle")
@@ -3598,6 +3604,15 @@ def _named_with_dot(src: Any) -> bool:
             _ensure_dg_named(src, owner)
             return True
     return "." in _name_of(src)
+
+
+def _multi_root(plug: Any) -> bool:
+    """True for a multi attribute read without an index (``node.input``): a List goes
+    into it item by item, never as the one value it holds"""
+    try:
+        return type(plug)._raw_is_multi(plug) and not _name_of(plug).endswith("]")
+    except Exception:  # noqa: BLE001 (a plug Maya cannot read: not a multi root)
+        return False
 
 
 def _set_or_connect(src: Any, dst: Any, _dst_compound: bool | None = None) -> None:

@@ -312,10 +312,18 @@ class TestTheTable(_Poles):
         return out, len(cmds.ls(type="angleBetween")) - before
 
     def test_one_row(self):
+        # one slerp each; a call with rows (a list of vectors or of weights, of one) returns a List of
+        # one (decision 2A), one with none its Plug: the channels [px, py, pz] are one vector
         for code in self.ONE_ROW:
             with self.subTest(code=code):
                 out, made = self.count(code)
                 self.assertEqual(made, 1)
+                if code in ("slerp(p, q, 0.25)", "slerp([px, py, pz], q, 0.25)"):
+                    self.assertNotIsInstance(out, List)
+                else:
+                    self.assertIsInstance(out, List)
+                    self.assertEqual(len(out), 1)
+                    out = out[0]
                 np.testing.assert_allclose(_value(out), [9.2388, 3.8268, 0.0], atol=1e-4)
 
     def test_two_rows(self):
@@ -549,6 +557,39 @@ class TestPerChannel(_Poles):
         # yp's elements are anything the method takes: matrices for rig.slerp
         out = rig.interpolate.sequence(tx[2], [0, 1], [self.a.wm, self.b.wm], method=rig.slerp)
         np.testing.assert_allclose(_value(out), _value(rig.slerp(self.a.wm, self.b.wm, 0.5)), atol=1e-4)
+
+
+class TestAListInAListOut(_Poles):
+    """Step 4 (decision 2A): a call with rows returns a List, even of one or of none; << takes a List of
+    one into a plug as the value it holds"""
+
+    def test_a_list_of_one_gives_a_list_of_one(self):
+        p, q, n = self.p, self.q, self.a
+        out = rig.vector.slerp(p.t, q.t, [0.25])                         # before: a Plug
+        self.assertIsInstance(out, List)
+        self.assertEqual([len(out), len([x for x in out])], [1, 1])     # it iterates
+        self.assertNotIsInstance(rig.vector.slerp(p.t, q.t, 0.25), List)  # no rows: its Plug, as before
+        n.t << out                                                       # a List of one connects
+        self.assertEqual(cmds.listConnections("a.t", source=True, destination=False, plugs=True),
+                         [str(out[0])])
+        self.assertEqual(len(rig.vector.lerp(p.t, q.t, [])), 0)          # before: None
+        with rig.fuse():
+            fused = rig.vector.slerp(p.t, q.t, [0.25])
+        self.assertIsInstance(fused, List)
+        self.assertEqual(len(fused), 1)
+
+    def test_lshift_takes_a_list_of_one(self):
+        a, b, n = self.a, self.b, self.p
+        n.t << List([a.t])                                              # before: InjectionError
+        self.assertEqual(cmds.listConnections("p.t", source=True, destination=False, plugs=True), ["a.translate"])
+        n.tx << List([b.tx])
+        self.assertEqual(cmds.listConnections("p.tx", source=True, destination=False, plugs=True), ["b.translateX"])
+        # a multi root keeps the List's rule: its element [0]
+        pma = Node.create("plusMinusAverage", name="pma")
+        pma.input1D[0] << b.ty
+        pma.input1D << List([a.tz])
+        self.assertEqual(cmds.listConnections("pma.input1D[0]", source=True, plugs=True), ["a.translateZ"])
+        self.assertEqual(cmds.getAttr("pma.input1D", multiIndices=True), [0])
 
 
 class TestTheInBetweensExample(_Poles):

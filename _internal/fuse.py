@@ -1718,6 +1718,8 @@ def _broadcast(form, traced, args: tuple, kwargs: dict, layout=None):
         return NotImplemented            # numbers only: rig folds them
     plugs = iter(materialize_all(fused))
     results = [next(plugs) if type(v) is Fused else v for v in results]
+    if layout is not None:
+        return _values_list(results)          # a list in, a List out, even of one (as vectorize)
     return results[0] if len(results) == 1 else _values_list(results)
 
 

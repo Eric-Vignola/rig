@@ -702,7 +702,10 @@ def vectorize(
       one does, every list or sequence argument is rows (NumPy-style strict:
       the same length as the longest, or length 1, or a scalar).
 
-    One row returns its single value, more a :class:`List`.
+    With a layout, a call with rows returns a :class:`List` of its rows' results,
+    even of one (``slerp(a.t, b.t, [0.25])``): a list in, a List out, which ``<<``
+    connects as the value it holds; a call with none returns its one value.
+    Without a layout, one row returns its single value, more a :class:`List`.
 
     This differs from the original Eric Vignola ``rig`` library (which
     silently capped each shorter argument to its last element). The
@@ -752,6 +755,15 @@ def vectorize(
     return _vectorized(func, favor_index, None)
 
 
+def _rows_of(results: list) -> Any:
+    """What a call with rows returns under a layout: a List of its results, even of one or
+    of none (decision 2A: a list in, a List out)"""
+    try:
+        return _values_list(results)
+    except Exception:
+        return results
+
+
 def _collected(results: list) -> Any:
     """What a broadcast returns: None for no result, the one result, or a List of them"""
     if not results:
@@ -785,7 +797,7 @@ def _vectorized(
                 res = func(*row_args, **row_kwargs)
                 if res is not None:
                     results.append(res)
-            return _collected(results)
+            return _rows_of(results)
 
         doc = wrapper.__doc__
         wrapper.__doc__ = f"{doc.rstrip()}\n\n    {bound.doc}\n" if doc else bound.doc
