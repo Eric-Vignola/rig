@@ -778,11 +778,17 @@ class TestTheInBetweensExample(_Poles):
         self.assertIsInstance(mids, List)
         self.assertEqual(len(cmds.ls(type="blendMatrix")), 3)
         np.testing.assert_allclose(mids.weight.get(), W, atol=1e-6)
-        # a.t (2, 0, 0), b.t (10, 4, 0), b.s 2: a quarter, a half, three quarters of the way
-        np.testing.assert_allclose(mids.tx.get(), [4, 6, 8], atol=1e-4)
-        np.testing.assert_allclose(mids.sx.get(), [1.25, 1.5, 1.75], atol=1e-4)
+
+        def world():
+            return np.array([cmds.getAttr(f"{mid}.worldMatrix[0]") for mid in mids]).reshape(-1, 4, 4)
+
+        # a.t (2, 0, 0), b.t (10, 4, 0), b.s 2: a quarter, a half, three quarters of the way,
+        # through each node's offsetParentMatrix (its own channels stay at 0)
+        np.testing.assert_allclose(world()[:, 3, 0], [4, 6, 8], atol=1e-4)
+        np.testing.assert_allclose(np.linalg.norm(world()[:, 0, :3], axis=1), [1.25, 1.5, 1.75], atol=1e-4)
+        np.testing.assert_allclose(mids.tx.get(), [0, 0, 0], atol=1e-9)
         mids[1].weight << 1                                          # live
-        self.assertAlmostEqual(mids[1].tx.get(), 10, places=4)
+        self.assertAlmostEqual(world()[1, 3, 0], 10, places=4)
 
     def test_it_checks_before_it_builds(self):
         from rig.examples import in_betweens

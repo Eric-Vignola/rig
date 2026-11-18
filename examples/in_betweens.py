@@ -14,11 +14,13 @@ What this does
     ``weights=``, or evenly spaced strictly between the two (three nodes:
     0.25, 0.5 and 0.75).
   * Blend the two matrices by every node's weight, one ``blendMatrix`` per
-    node, and inject each result into its node.
+    node, and drive each node's ``offsetParentMatrix`` with its result: no
+    ``decomposeMatrix``, and the node's own channels stay at 0, free to
+    offset it.
 
 The nodes are made at the top of the scene, as the matrices are world ones
-(``start.wm``): parent them and the injection would read the matrix in the
-parent's space.
+(``start.wm``): parent them and their ``offsetParentMatrix`` would read the
+matrix in the parent's space.
 
 DSL features showcased here
 ---------------------------
@@ -26,7 +28,7 @@ DSL features showcased here
   * ``nodes << Float("weight", min=0, max=1) << weights``  -- one value per node
   * ``blend(start, end, nodes.weight)``                    -- a List of weights: one blendMatrix per node
   * ``blend(start, end, [0.25, 0.5, 0.75])``               -- so is a plain list
-  * ``nodes << matrices``                                  -- matrix -> t/r/s decompose, node by node
+  * ``nodes.offsetParentMatrix << matrices``               -- one matrix per node, no decompose
 
 Run from inside Maya / mayapy::
 
@@ -104,8 +106,10 @@ def create_in_betweens(
         nodes << Float("weight", min=0, max=1) << weights
 
         # ``nodes.weight`` is a List, so ``blend`` makes one blendMatrix per
-        # node; the List of matrices it gives goes into the nodes one by one.
-        nodes << blend(start_matrix, end_matrix, nodes.weight)
+        # node; the List of matrices it gives drives the nodes'
+        # offsetParentMatrix one by one (no decomposeMatrix: the channels stay
+        # at 0, free).
+        nodes.offsetParentMatrix << blend(start_matrix, end_matrix, nodes.weight)
 
     return nodes
 

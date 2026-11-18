@@ -1218,6 +1218,10 @@ class TestLimbTwistExample(MayaTestCase):
             angles.append(math.degrees(math.atan2(-y_axis[1], y_axis[2])))
         return angles
 
+    def along(self, twist=None):
+        """each twist node's place along the limb (world X): where its offsetParentMatrix puts it"""
+        return [cmds.getAttr(f"{node}.worldMatrix[0]")[12] for node in (twist or self.twist).twists]
+
     def assert_close(self, got, want):
         self.assertEqual(len(got), len(want))
         for a, b in zip(got, want):
@@ -1225,8 +1229,21 @@ class TestLimbTwistExample(MayaTestCase):
 
     def test_at_rest_the_nodes_are_even_and_untwisted(self):
         self.assert_close(self.twist.twists.u.get(), [0, 0.25, 0.5, 0.75, 1])
-        self.assert_close(self.twist.twists.tx.get(), [0, 2.5, 5, 7.5, 10])
+        self.assert_close(self.along(), [0, 2.5, 5, 7.5, 10])
         self.assert_close(self.twists(), [0] * 5)
+
+    def test_the_nodes_ride_their_offset_parent_matrix(self):
+        # one matrix per node into its offsetParentMatrix, no decomposeMatrix: the
+        # channels stay at 0, unconnected, free to offset a node
+        for node in self.twist.twists:
+            self.assertTrue(cmds.listConnections(f"{node}.offsetParentMatrix", source=True, destination=False))
+            self.assertIsNone(cmds.listConnections(f"{node}.translate", source=True, destination=False))
+        self.assert_close(self.twist.twists.tx.get(), [0] * 5)
+        node   = self.twist.twists[2]
+        before = cmds.getAttr(f"{node}.worldMatrix[0]")
+        node.ty << 1                                          # an offset on top of the ride, in its frame
+        after  = cmds.getAttr(f"{node}.worldMatrix[0]")
+        self.assert_close([after[12 + i] - before[12 + i] for i in range(3)], before[4:7])   # one unit along its Y
 
     def test_a_twist_node_is_a_transform_by_default(self):
         self.assertEqual([cmds.nodeType(str(node)) for node in self.twist.twists], ["transform"] * 5)
@@ -1239,7 +1256,7 @@ class TestLimbTwistExample(MayaTestCase):
     def test_u_moves_and_retwists_a_node(self):
         self.lowerarm.rx       << 0
         self.twist.twists[1].u << 0.5
-        self.assertAlmostEqual(self.twist.twists[1].tx.get(), 5)
+        self.assertAlmostEqual(self.along()[1], 5)
         self.assertAlmostEqual(self.twists()[1], 45)
 
     def test_the_pole_toggles_are_live(self):
@@ -1283,7 +1300,7 @@ class TestLimbTwistExample(MayaTestCase):
     def test_weights_give_each_node_its_u(self):
         twist = self.create(self.upperarm.wm, self.lowerarm.wm, count=3, name="limbTwist2", weights=[0, 0.1, 1])
         self.assert_close(twist.twists.u.get(), [0, 0.1, 1])
-        self.assert_close(twist.twists.tx.get(), [0, 1, 10])
+        self.assert_close(self.along(twist), [0, 1, 10])
 
     def test_bad_arguments_raise_before_building(self):
         before = len(cmds.ls())

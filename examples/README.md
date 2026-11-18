@@ -8,7 +8,10 @@ each script does and which features it leans on — read those first, then
 run one.
 
 Every `python` block on this page runs top to bottom as one script, inside
-Maya or under `mayapy`. The first block is the setup.
+Maya or under `mayapy`. The first block is the setup. Its `world` reads
+where a node is: the examples drive their nodes through
+`offsetParentMatrix`, so a driven node's own channels stay at 0 and its
+place is in its world matrix.
 
 ```python
 from maya import standalone
@@ -18,6 +21,18 @@ except Exception:
     pass
 from maya import cmds
 cmds.file(new=True, force=True)
+
+
+def world(nodes, channel):
+    """A node's world translate, rotate or scale ("t", "r", "s", or one axis: "tx", "ry" ...),
+    one per node for a list or a List."""
+    flag = {"t": "translation", "r": "rotation", "s": "scale"}[channel[0]]
+
+    def one(node):
+        values = [round(v, 3) + 0.0 for v in cmds.xform(str(node), query=True, worldSpace=True, **{flag: True})]
+        return values if len(channel) == 1 else values["xyz".index(channel[1])]
+
+    return [one(node) for node in nodes] if isinstance(nodes, list) else one(nodes)
 ```
 
 A spine in four lines: four locators become the CVs of a curve, twelve
@@ -33,7 +48,8 @@ controls.ty << [0, 5, 10, 15]                               # stacked along Y: o
 rail   = rail_spine_simple.create_simple_rail(controls, riders=12)
 riders = cmds.listRelatives(str(rail), type="joint")
 print(rail, len(riders), riders[0], riders[-1])  # rail1 12 rider1 rider12
-print(Node(riders[-1]).t.get())                  # [ 0. 15.  0.]
+print(world(riders[-1], "t"))                    # [0.0, 15.0, 0.0]
+print(Node(riders[-1]).t.get())                  # [0. 0. 0.]  -- its offsetParentMatrix places it
 ```
 
 ---
@@ -83,7 +99,7 @@ image rigs, a `List` of nodes for the in-betweens.
 | `plug << lock`, `plug << hide` | `hide` | both | | both | `lock` | |
 | `List(controls).wm * rail.wim` — broadcast matrix multiply | yes | yes | | | | |
 | `rail_shape.cv[:] << matrices` — matrix-to-CV shorthand | yes | yes | | | | |
-| `rider << matrix_plug` — matrix-to-transform shorthand (t / r / s + shear) | yes | yes | yes | | | yes |
+| `rider.offsetParentMatrix << matrix` — a matrix drives a node with no `decomposeMatrix` (its channels stay at 0) | yes | yes | yes | | | yes |
 | `plug.get()` — the `getAttr` idiom | yes | yes | yes | | demo | demo |
 | `matrix.axis`, `matrix.multiply(local=True)`, `matrix.decompose` | axis, multiply | multiply, decompose | multiply | | | |
 | `matrix.aim`, `to_quaternion`, `matrix.compose`, `matrix.translation` — an aim frame, and a matrix from a quaternion and a point | `compose` | | yes | | | |
@@ -185,8 +201,9 @@ feature at a time, in eight numbered steps you can read in one sitting:
    drift as the spine deforms.
 8. `rf.condition(u < 0, tangent_start * u + edge_start, ...)` extrapolates
    along the end tangents outside `[0, 1]`; `composeMatrix` assembles
-   translate + rotate; `rider << rider_matrix.outputMatrix * rail.wim`
-   decomposes it into the joint's channels.
+   translate + rotate; `rider.offsetParentMatrix << rider_matrix.outputMatrix * rail.wim`
+   drives the joint with it: no `decomposeMatrix`, and the joint's own
+   channels stay at 0, free to offset it.
 
 The knobs land on the rail transform:
 
@@ -205,13 +222,13 @@ print(cmds.listAttr(str(rail), userDefined=True))                               
 print(rail.pivot.get(), rail.stretch.get(), rail.Scale.get(), rail.shift.get())  # 0.0 0.0 1.0 0.0
 
 mid = Node(riders[6])
-print([round(v, 3) for v in mid.t.get()])                 # [0.0, 8.182, 0.0]
+print(world(mid, "t"))                                     # [0.0, 8.182, 0.0]
 
 controls[1].tx << 10                                       # bend the spine: the riders glide with it
-print([round(v, 3) for v in mid.t.get()])                 # [4.29, 6.12, 0.0]
+print(world(mid, "t"))                                     # [4.29, 6.12, 0.0]
 
 rail.shift << 0.5                                          # push the last rider past u = 1 ...
-print([round(v, 3) for v in Node(riders[-1]).t.get()])    # [0.0, 20.926, 0.0]  -- on the end tangent
+print(world(riders[-1], "t"))                              # [0.0, 20.926, 0.0]  -- on the end tangent
 ```
 
 The last rider is past the end of the curve and keeps going along its
@@ -306,8 +323,8 @@ controls[1].s        << [5, 0.1, 5]  # a fat, flat second control
 
 print(round(rail.stretchRatio.get(), 4))                   # 0.8016  -- the curve got longer
 mid = Node(riders[5])
-print([round(v, 3) for v in mid.t.get()])  # [4.436, 2.805, 0.0]
-print([round(v, 3) for v in mid.s.get()])  # [2.671, 0.245, 2.671]  -- elerp toward control 1
+print(world(mid, "t"))                     # [4.436, 2.805, 0.0]
+print(world(mid, "s"))                     # [2.671, 0.245, 2.671]  -- elerp toward control 1
 ```
 
 Twenty riders with orient and scale is about 1,600 nodes in `railNode1`
@@ -345,8 +362,10 @@ in five steps:
    `weights=` or spread evenly: `twists << Float("u") << weights`.
 5. `slerp(start_frame, end_frame, twists.u)` and
    `lerp(start, end, twists.u)`: `twists.u` is a List, so each is one call
-   for every node (a `quatSlerp` each, a lerp each), composed and injected:
-   `twists << matrix.compose(rotate=..., translate=...) * root.wim`.
+   for every node (a `quatSlerp` each, a lerp each), composed into each
+   node's `offsetParentMatrix`:
+   `twists.offsetParentMatrix << matrix.compose(rotate=..., translate=...) * root.wim`
+   (no `decomposeMatrix`: a node's own channels stay at 0, free to offset it).
 
 | Knob | On | Default | Does |
 |---|---|---|---|
@@ -382,15 +401,15 @@ print(twist.root, [str(node) for node in twist.twists])    # limbTwist1 ['twist1
 print(cmds.listAttr(str(twist.root), userDefined=True))    # ['startAxis', 'startInvert', 'endAxis', 'endInvert']
 print(cmds.nodeType(str(twist.twists[0].get_shape())))     # mesh
 print(twist.twists.u.get())                                # [0.   0.25 0.5  0.75 1.  ]
-print(twist.twists.tx.get())                               # [ 0.   2.5  5.   7.5 10. ]
-print(twist.twists.rx.get())                               # [90. 90. 90. 90. 90.]
+print(world(twist.twists, "tx"))                           # [0.0, 2.5, 5.0, 7.5, 10.0]
+print(world(twist.twists, "rx"))                           # [90.0, 90.0, 90.0, 90.0, 90.0]
 
 lowerarm.rx << 0                                              # twist the end 90 degrees about the limb
-print(twist.twists.rx.get())                               # [ 90.  112.5 135.  157.5 180. ]
+print(world(twist.twists, "rx"))                           # [90.0, 112.5, 135.0, 157.5, 180.0]
 
 twist.twists[1].u << 0.5                                      # slide twist2 to the middle
-print(twist.twists.tx.get())                               # [ 0.   5.   5.   7.5 10. ]
-print(twist.twists.rx.get())                               # [ 90.  135.  135.  157.5 180. ]
+print(world(twist.twists, "tx"))                           # [0.0, 5.0, 5.0, 7.5, 10.0]
+print(world(twist.twists, "rx"))                           # [90.0, 135.0, 135.0, 157.5, 180.0]
 ```
 
 Each twist node takes its `u`'s share of the twist: none on `twist1`, a
@@ -407,16 +426,20 @@ puts `count` nodes between two matrices (a hip's `wm` and its knee's,
 say), each at its own share of the way from one to the other. It is the
 shortest rig of rows: the nodes get their weights at once,
 `nodes << Float("weight", min=0, max=1) << weights`, and one call blends
-the matrices for all of them, `nodes << blend(start, end, nodes.weight)`.
+the matrices for all of them,
+`nodes.offsetParentMatrix << blend(start, end, nodes.weight)`.
 `nodes.weight` is a `List`, so `blend` makes one `blendMatrix` per node
 (rotation slerped, translation and scale lerped), and the `List` of
-matrices goes into the nodes one by one. A plain list of numbers is rows
-the same way: `blend(start, end, [0.25, 0.5, 0.75])` is three blends.
+matrices drives the nodes' `offsetParentMatrix` one by one: no
+`decomposeMatrix`, and each node's own channels stay at 0, free to offset
+it. A plain list of numbers is rows the same way:
+`blend(start, end, [0.25, 0.5, 0.75])` is three blends.
 
 Without `weights=` the nodes are evenly spaced strictly between the two
 matrices (three of them: 0.25, 0.5 and 0.75); each `weight` stays live.
 The nodes are made at the top of the scene, as the matrices are world
-ones: parent one and the injection reads the matrix in the parent's space.
+ones: parent one and its `offsetParentMatrix` reads the matrix in the
+parent's space.
 
 ```python
 cmds.file(new=True, force=True)
@@ -432,13 +455,14 @@ end.s << (2, 2, 2)
 mids = in_betweens.create_in_betweens(start.wm, end.wm, count=3, node_type="locator")
 print([str(node) for node in mids])         # ['inBetween1', 'inBetween2', 'inBetween3']
 print(mids.weight.get())                    # [0.25 0.5  0.75]
-print(mids.tx.get())                        # [2.5 5.  7.5]
-print(mids.ry.get())                        # [22.5 45.  67.5]
-print(mids.sx.get())                        # [1.25 1.5  1.75]
-print(len(cmds.ls(type="blendMatrix")))     # 3
+print(world(mids, "tx"))                    # [2.5, 5.0, 7.5]
+print(world(mids, "ry"))                    # [22.5, 45.0, 67.5]
+print(world(mids, "sx"))                    # [1.25, 1.5, 1.75]
+print(mids.tx.get())                        # [0. 0. 0.]  -- the channels stay at 0, free to offset a node
+print(len(cmds.ls(type="blendMatrix")), len(cmds.ls(type="decomposeMatrix")))   # 3 0
 
 mids[1].weight << 0.9                        # slide inBetween2 most of the way to end
-print(mids.tx.get())                        # [2.5 9.  7.5]
+print(world(mids, "tx"))                    # [2.5, 9.0, 7.5]
 ```
 
 ---
@@ -697,7 +721,9 @@ Verified on Maya 2025; not bugs to work around blindly.
   `rig.examples`' folder when the code is pasted into the Script Editor.
 - `List` reads come back as NumPy arrays (`controls.ty.get()` is
   `[ 0.  5. 10. 15.]`), and so does a compound on a single node
-  (`rider.t.get()` is `[ 0. 15.  0.]`).
+  (`controls[3].t.get()` is `[ 0. 15.  0.]`). A node an example drives
+  through its `offsetParentMatrix` reads 0 in its channels: read its world
+  transform (`world` in the setup block, `cmds.xform(..., worldSpace=True)`).
 - `set_options(create_containers=False)` before a build leaves the whole
   graph loose in the scene — handy for reading it in the Node Editor, and
   what the `rail_spine` demo's comment invites you to try.

@@ -434,7 +434,9 @@ def create_rail(
 
                 rider_matrix.inputTranslate << local_position
                 rider_matrix_out = rider_matrix.outputMatrix * rail.wim
-                rider << rider_matrix_out  # SRT+shear injection
+                # the rail-space matrix (scale and shear too) drives the rider's
+                # offsetParentMatrix: no decomposeMatrix, its channels stay at 0
+                rider.offsetParentMatrix << rider_matrix_out
 
     return rail
 

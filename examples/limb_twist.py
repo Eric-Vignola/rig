@@ -35,7 +35,7 @@ DSL features showcased here
   * ``to_quaternion`` / ``slerp`` / ``lerp``               -- dispatch verbs: a quatSlerp, a vector lerp
   * ``slerp(a, b, twists.u)``                              -- a List of weights: one quatSlerp per node
   * ``matrix.compose(rotate=quat, translate=point)``       -- a matrix from a quaternion and a point
-  * ``twist << matrix_plug * root.wim``                    -- matrix -> t/r/s decompose
+  * ``twists.offsetParentMatrix << m * root.wim``          -- one matrix per node, no decompose
 
 Run from inside Maya / mayapy::
 
@@ -197,14 +197,14 @@ def create_limb_twist(
         # any of them at any time.
         twists << Float("u", min=0, max=1) << weights
 
-        # ---- 5. Slerp the frames by u, lerp the position, inject. ----
+        # ---- 5. Slerp the frames by u, lerp the position, drive the nodes. ----
         # ``twists.u`` is a List, one u per node, so each call runs once per
         # node: a ``quatSlerp`` each, a lerp each. The matrices they compose
-        # land in root space, and the injection decomposes each into its
-        # node's channels.
+        # land in root space and drive each node's offsetParentMatrix (no
+        # decomposeMatrix: the node's channels stay at 0, free to offset it).
         rotations = slerp(start_frame, end_frame, twists.u)
         positions = lerp(start_point, end_point, twists.u)
-        twists << matrix.compose(rotate=rotations, translate=positions) * root.wim
+        twists.offsetParentMatrix << matrix.compose(rotate=rotations, translate=positions) * root.wim
 
     return LimbTwist(root, twists)
 

@@ -631,7 +631,7 @@ _HOOKS = (
     ('            # Orient driver setup.\n', '            _inj("after_cumsum", locals())\n'),
     ('            # Modulate the u translation: stretch + scale + shift + pivot.\n',
      '            _inj("loop_mid", locals())\n'),
-    ('            rider << rider_matrix_out  # SRT+shear injection\n', '            _inj("loop_end", locals())\n'),
+    ('                rider.offsetParentMatrix << rider_matrix_out\n', '                _inj("loop_end", locals())\n'),
     ('    return rail\n', '        _inj("end", locals())\n\n'),
 )
 
@@ -761,11 +761,15 @@ def _injections():
 
     @at("loop_end", 1)
     def srt_mid(loc):
+        # an SRT injection (the matrix-to-transform shorthand) that fails midway: ry is locked
+        # (rail_spine drives its riders through offsetParentMatrix, so the hook makes it)
         cmds.setAttr(str(loc["rider"]) + ".ry", lock=True)
+        loc["rider"] << loc["rider_matrix_out"]
 
     @at("loop_end", 2)
     def last_statement(loc):
-        cmds.setAttr(str(loc["rider"]) + ".sy", lock=True)
+        # the build's last statement, the last rider's drive, fails: its offsetParentMatrix is locked
+        cmds.setAttr(str(loc["rider"]) + ".offsetParentMatrix", lock=True)
 
     @at("end")
     def end_typo(loc):

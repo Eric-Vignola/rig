@@ -50,7 +50,7 @@ DSL features showcased here
   * ``matrix.multiply(vec, m, local=True)``   -- vec x matrix (rotation only)
   * ``normalize / functions.condition``       -- dispatch verb + ternary
   * ``lerp``                                  -- top-level interpolation verb
-  * ``rider << matrix_plug``                  -- matrix -> t/r/s decompose
+  * ``rider.offsetParentMatrix << matrix``    -- the matrix drives the rider, no decompose
 
 Run from inside Maya / mayapy::
 
@@ -229,7 +229,7 @@ def create_simple_rail(
             mp.worldUpVector << matrix.multiply(first_up, twist, local=True)
             mp.uValue        << u_value
 
-            # ---- 8. Compose translate+rotate, demote to local, inject. ----
+            # ---- 8. Compose translate+rotate, demote to local, drive the rider. ----
             # Translation: motionPath sample inside [0, 1]; linear
             # extrapolation along the end tangents outside that range.
             local_position = mp.allCoordinates
@@ -248,8 +248,10 @@ def create_simple_rail(
             rider_matrix.inputTranslate << local_position
             rider_matrix.inputRotate    << mp.rotate
 
-            # Matrix -> Node injection auto-decomposes into t/r/s (+shear).
-            rider << rider_matrix.outputMatrix * rail.wim
+            # The rail-space matrix drives the rider's offsetParentMatrix: no
+            # decomposeMatrix, and the rider's channels stay at 0, free to
+            # offset it.
+            rider.offsetParentMatrix << rider_matrix.outputMatrix * rail.wim
 
     return rail
 
