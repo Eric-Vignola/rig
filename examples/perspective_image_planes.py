@@ -217,13 +217,10 @@ def create_setup(
             output.planes.append(transform)
             output.shapes.append(shape)
 
-        # Plug the system back into the camera's aspect ratio.
-        if count > 1:
-            camera_shape.hfa << rf.max(horizontal_list)
-            camera_shape.vfa << rf.max(vertical_list)
-        else:
-            camera_shape.hfa << horizontal_list
-            camera_shape.vfa << vertical_list
+        # Plug the system back into the camera's aspect ratio: the largest of
+        # the planes' (one plane's own, when there is one).
+        camera_shape.hfa << rf.max(horizontal_list)
+        camera_shape.vfa << rf.max(vertical_list)
 
         return output
 

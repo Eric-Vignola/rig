@@ -2258,8 +2258,8 @@ print(f.sqrt(16), f.pow(2, 8), f.log(100, base=10))           # 4.0 256 2.0 -- l
 ## 19. `functions` — lists: reduce, pick, search
 
 The reducers take **one list** as their argument, not `*args`; a
-generator is read into a list, so `f.sum(c.tx for c in ctrls)` works. `max`
-and `min` want at least two entries.
+generator is read into a list, so `f.sum(c.tx for c in ctrls)` works. The
+`max` or `min` of one entry is that entry, as it is (no node).
 
 ```python
 p = Node.create("transform", name="p")

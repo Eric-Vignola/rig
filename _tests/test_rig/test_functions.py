@@ -158,10 +158,10 @@ class TestMax(MayaTestCase):
         result = f.max([a.tx, b.tx])
         self.assertIsInstance(result, Plug)
 
-    def test_max_too_few_args_raises(self):
-        a = Node.create("transform", name="a")
-        with self.assertRaises(ValueError):
-            f.max([a.tx])
+    def test_max_of_one_is_that_value(self):
+        # the max of one value is that value, as it is, with no node (user, 2026-11-17: it
+        # raised, unlike sum and avg); an empty list still raises
+        _assert_one_is_itself(self, f.max)
 
 
 class TestMin(MayaTestCase):
@@ -175,6 +175,23 @@ class TestMin(MayaTestCase):
         b      = Node.create("transform", name="b")
         result = f.min([a.tx, b.tx])
         self.assertIsInstance(result, Plug)
+
+    def test_min_of_one_is_that_value(self):
+        _assert_one_is_itself(self, f.min)
+
+
+def _assert_one_is_itself(case, reduce):
+    a      = Node.create("transform", name="a")
+    before = set(cmds.ls())
+    for value, name in ((a.tx, "a.translateX"), (a.t, "a.translate")):
+        for given in ([value], (value,), List([value])):
+            out = reduce(given)
+            case.assertIsInstance(out, Plug)
+            case.assertEqual(str(out), name)
+    case.assertEqual(reduce([5.0]), 5.0)
+    case.assertEqual(set(cmds.ls()) - before, set())
+    with case.assertRaises(ValueError):
+        reduce([])
 
 
 class TestExp(MayaTestCase):

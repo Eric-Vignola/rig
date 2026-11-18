@@ -443,12 +443,15 @@ def _clamp_by_literals(tokens: Sequence[Any], *, largest: bool, name: str) -> An
 def max(tokens: Sequence[Any]) -> Any:
     """``max([t0, t1, ...])`` -- Maya 2024+ uses the ``max`` node, and a
     ``clampRange`` when an operand is a literal (:func:`_clamp_by_literals`);
-    older Maya folds via nested ``condition``."""
+    older Maya folds via nested ``condition``. The max of one value is that
+    value, as it is: no node (``max([a.tx])`` is ``a.tx``)."""
     # Only short-circuit when EVERY input is a plain Python number.
     if ContainerOptions.constant_folding and builtins.all(_is_real(x) for x in tokens):
         return builtins.max(tokens)
-    if len(tokens) < 2:
-        raise ValueError(f"max() requires >= 2 inputs; got {len(tokens)}")
+    if len(tokens) == 1:
+        return tokens[0]
+    if not tokens:
+        raise ValueError("max() requires >= 1 input; got 0")
 
     if is_at_least(2024) and not builtins.any(_is_compound(x) for x in tokens):
         if builtins.any(_is_real(x) for x in tokens):
@@ -475,12 +478,15 @@ def max(tokens: Sequence[Any]) -> Any:
 def min(tokens: Sequence[Any]) -> Any:
     """``min([t0, t1, ...])`` -- Maya 2024+ uses the ``min`` node, and a
     ``clampRange`` when an operand is a literal (:func:`_clamp_by_literals`);
-    older Maya folds via nested ``condition``."""
+    older Maya folds via nested ``condition``. The min of one value is that
+    value, as it is: no node (``min([a.tx])`` is ``a.tx``)."""
     # Only short-circuit when EVERY input is a plain Python number.
     if ContainerOptions.constant_folding and builtins.all(_is_real(x) for x in tokens):
         return builtins.min(tokens)
-    if len(tokens) < 2:
-        raise ValueError(f"min() requires >= 2 inputs; got {len(tokens)}")
+    if len(tokens) == 1:
+        return tokens[0]
+    if not tokens:
+        raise ValueError("min() requires >= 1 input; got 0")
 
     if is_at_least(2024) and not builtins.any(_is_compound(x) for x in tokens):
         if builtins.any(_is_real(x) for x in tokens):

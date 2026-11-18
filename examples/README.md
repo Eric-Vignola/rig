@@ -472,8 +472,8 @@ builds a camera and `count` poly planes parented under it, one every
 | `opacity` | `Float` 0..1 | a global fade |
 
 `tx`, `ty`, `r`, `s` and `v` on each plane are locked and hidden — only
-`tz` is yours. When `count > 1`, `rf.max` over the planes' aspect ratios
-drives the camera's `hfa` / `vfa`; an orthographic camera is handled by
+`tz` is yours. `rf.max` over the planes' aspect ratios (one plane's own,
+when there is one) drives the camera's `hfa` / `vfa`; an orthographic camera is handled by
 `condition(camera_shape.orthographic, ...)`.
 
 It returns `(camera, planes, shapes)`: the camera's `Transform`, a
