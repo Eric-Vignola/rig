@@ -4533,8 +4533,10 @@ rig's own multi-node functions fuse inside: `sequence` runs its own body on
 the fused values, its `searchsorted`, its `choice`s and its `method` (yours
 too) all in the node. A `List` fuses row by row, as rig broadcasts it: an
 operator on Lists (`lefts.t + rights.t`) or a function given one
-(`V.normalize(points)`, `F.clamp(lst.tx, 0, 1)`) is every row in the block's
-node, and a row that does not fuse leaves every row to rig's nodes.
+(`V.normalize(points)`, `F.clamp(lst.tx, 0, 1)`, `rig.blend(a.wm, b.wm,
+mids.weight)`) is every row in the block's node, and so are rows in a plain
+list (`rig.blend(a.wm, b.wm, [0.25, 0.5, 0.75])`); a row that does not fuse
+leaves every row to rig's nodes.
 
 Matrices, quaternions and eulers fuse too: their operators (a matrix's `*` /
 `+` / `-` / `**` and a vector times a matrix, a quaternion's `*` / `+` / `-` /

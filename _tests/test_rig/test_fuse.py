@@ -5,6 +5,7 @@ build in ``rig/plugins/<Maya version>``); without it, every test here is skipped
 fallback and lookup ones.
 Values are checked against numpy, which the fused node follows.
 """
+import contextlib
 import os
 import sys
 import tempfile
@@ -454,6 +455,159 @@ class TestLists(_Case):
             lambda: self.targets.s << rig.matrix.decompose(self.l0.worldMatrix).outputScale, read="s")
         self.assertEqual(fused, ["rigExpression"])
         np.testing.assert_allclose(got, expected, atol=1e-9)
+
+
+class TestVerbRows(_Case):
+    """the dispatch verbs (``rig.blend``, ``rig.inverse`` ...) given rows, in a List or in a
+    plain sequence, fuse row by row as the function they pick does: one node, with rig's
+    network's values"""
+
+    def setUp(self):
+        super().setUp()
+        set_options(fuse=False, create_containers=False)   # the reference is rig's network
+
+    def inputs(self):
+        super().inputs()
+        cmds.setAttr("a.r", 30.0, -50.0, 110.0)
+        cmds.setAttr("b.r", -70.0, 15.0, 40.0)
+        cmds.setAttr("b.s", 0.7, 1.4, 1.1)
+        cmds.loadPlugin("matrixNodes", quiet=True)
+        self.ps = List(Node.create("transform", name=f"p{i}") for i in range(3))
+        self.ps.t << [(1, 0.5, 2), (3, 1, 1), (0.5, 2, 4)]
+        self.ps.r << [(5, 0, 0), (0, 45, 10), (30, -20, 60)]
+        self.ps.s << [(1, 1, 1), (1.5, 0.5, 1), (2, 2, 0.5)]
+        for i, p in enumerate(self.ps):
+            cmds.addAttr(str(p), longName="w", attributeType="double", keyable=True)
+            cmds.setAttr(f"{p}.w", (0.2, 0.5, 0.8)[i])
+        for name, source in [(f"q{i}", f"p{i}") for i in range(3)] + [("qa", "a"), ("qb", "b")]:
+            cmds.createNode("decomposeMatrix", name=name)            # quaternion plugs
+            cmds.connectAttr(f"{source}.worldMatrix[0]", f"{name}.inputMatrix")
+        self.qs = List(Node(f"q{i}").outputQuat for i in range(3))
+
+    def built(self, build):
+        """(rig's network's values, the fused ones, the node types the fused build made),
+        a value per row, each build in a new scene (a new scene clears memoize)"""
+        out = []
+        for fused in (False, True):
+            cmds.file(new=True, force=True)
+            self.inputs()
+            before = set(cmds.ls())
+            with rig.fuse() if fused else contextlib.nullcontext():
+                result = build()
+                rows = list(result) if isinstance(result, List) else [result]
+                names = [str(row) for row in rows]     # (a fused value made a plug in its block)
+            made = sorted({cmds.nodeType(n) for n in set(cmds.ls()) - before})
+            out.append([np.ravel(np.asarray(cmds.getAttr(name), dtype=float)) for name in names])
+        return out[0], out[1], made
+
+    def check(self, cases, rows=3):
+        for name, build in cases.items():
+            with self.subTest(name):
+                expected, got, made = self.built(build)
+                self.assertEqual(made, ["rigExpression"])
+                self.assertEqual((len(got), len(expected)), (rows, rows))
+                for g, e in zip(got, expected):
+                    np.testing.assert_allclose(g, e, atol=1e-5)
+
+    def test_the_verbs_are_rigs_dispatch_verbs(self):
+        verbs = {f"rig._dispatch.{name}" for name in rig._dispatch.__all__}
+        self.assertEqual(_fuse.VERBS, verbs)
+        self.assertLessEqual(verbs, _fuse.TRACE)
+        self.assertLessEqual(verbs, _fuse.ELEMENTWISE)
+
+    def test_a_verb_given_a_list(self):
+        qa, qb = (lambda: Node("qa").outputQuat), (lambda: Node("qb").outputQuat)
+        self.check({
+            "dist, vectors": lambda: rig.dist(self.ps.t, self.b.t),
+            "dist, matrices": lambda: rig.dist(self.ps.wm, self.b.wm),
+            "lerp, vectors": lambda: rig.lerp(self.a.t, self.b.t, self.ps.w),
+            "lerp, matrices": lambda: rig.lerp(self.a.wm, self.b.wm, self.ps.w),
+            "slerp, vectors": lambda: rig.slerp(self.a.t, self.b.t, self.ps.w),
+            "slerp, quaternions": lambda: rig.slerp(qa(), qb(), self.ps.w),
+            "slerp, eulers": lambda: rig.slerp(self.a.r, self.b.r, self.ps.w),
+            "slerp, matrices": lambda: rig.slerp(self.a.wm, self.b.wm, self.ps.w),
+            "blend": lambda: rig.blend(self.a.wm, self.b.wm, self.ps.w),
+            "elerp": lambda: rig.elerp(self.ps.t, self.b.s, 0.25),
+            "angle, vectors": lambda: rig.angle(self.ps.t, self.b.t),
+            "angle, quaternions": lambda: rig.angle(self.qs, qb()),
+            "angle_degrees": lambda: rig.angle_degrees(self.ps.t, self.b.t),
+            "normalize, vectors": lambda: rig.normalize(self.ps.t),
+            "normalize, quaternions": lambda: rig.normalize(self.qs),
+            "normalize, matrices": lambda: rig.normalize(self.ps.wm),
+            "inverse, matrices": lambda: rig.inverse(self.ps.wm),
+            "inverse, quaternions": lambda: rig.inverse(self.qs),
+            "to_euler, matrices": lambda: rig.to_euler(self.ps.wm),
+            "to_euler, quaternions": lambda: rig.to_euler(self.qs),
+            "to_euler, a rotate order": lambda: rig.to_euler(self.qs, rotate_order="zxy"),
+            "to_euler, an order per row": lambda: rig.to_euler(self.ps.wm, rotate_order=[0, 3, 5]),
+            "to_quaternion, eulers": lambda: rig.to_quaternion(self.ps.r),
+            "to_quaternion, matrices": lambda: rig.to_quaternion(self.ps.wm),
+            "to_matrix, eulers": lambda: rig.to_matrix(self.ps.r),
+            "to_matrix, quaternions": lambda: rig.to_matrix(self.qs),
+        })
+
+    def test_a_verb_given_rows_in_a_plain_sequence(self):
+        # rows the function the verb picks reads by its layout, as rig's network does
+        weights = [0.2, 0.5, 0.8]
+        self.check({
+            "dist": lambda: rig.dist([p.t for p in self.ps], self.b.t),
+            "lerp, vectors": lambda: rig.lerp(self.a.t, self.b.t, weights),
+            "lerp, matrices": lambda: rig.lerp(self.a.wm, self.b.wm, weights),
+            "slerp, quaternions": lambda: rig.slerp(Node("qa").outputQuat, Node("qb").outputQuat, weights),
+            "slerp, matrices": lambda: rig.slerp(self.a.wm, self.b.wm, weights),
+            "blend": lambda: rig.blend(self.a.wm, self.b.wm, weights),
+            "blend, a tuple": lambda: rig.blend(self.a.wm, self.b.wm, tuple(weights)),
+            "blend, an array": lambda: rig.blend(self.a.wm, self.b.wm, np.array(weights)),
+            "blend, weight plugs": lambda: rig.blend(self.a.wm, self.b.wm, [p.w for p in self.ps]),
+            "lerp, a List and a list": lambda: rig.lerp(self.ps.t, self.b.t, weights),
+            "normalize": lambda: rig.normalize([p.t for p in self.ps]),
+            "inverse": lambda: rig.inverse([p.wm for p in self.ps]),
+            "to_euler": lambda: rig.to_euler([p.wm for p in self.ps]),
+        })
+
+    def test_a_vector_literal_is_one_value(self):
+        with rig.fuse():
+            value = rig.lerp(self.a.t, [0, 1, 0], self.a.w)
+            self.assertIs(type(value), _fuse.Fused)
+        self.check({"lerp to a literal": lambda: rig.lerp(self.a.t, [0, 1, 0], self.a.w)}, rows=1)
+
+    def test_rows_of_a_type_the_verb_refuses_raise_as_rigs_network(self):
+        messages = []
+        for fused in (False, True):
+            set_options(fuse=fused)
+            with self.assertRaises(TypeError) as caught:
+                rig.blend([self.a.t, self.b.t], self.b.t, 0.5)
+            set_options(fuse=False)
+            messages.append(str(caught.exception))
+        self.assertEqual(messages[1], messages[0])
+        self.assertIn("blend() does not support vector operands", messages[0])
+
+    def test_the_in_betweens_example_is_one_node(self):
+        from rig.examples.in_betweens import create_in_betweens
+        _fuse.ONE_OP_RULE = True             # three blends: rig's network is three nodes
+        set_options(create_containers=True)
+        states = []
+        for fused in (False, True):
+            cmds.file(new=True, force=True)
+            start, end = Node.create("transform", name="start"), Node.create("transform", name="end")
+            end.t << (10, 4, 0)
+            end.r << (0, 90, 0)
+            end.s << (2, 2, 2)
+            if fused:
+                with rig.fuse("ib"):
+                    mids = create_in_betweens(start.wm, end.wm, count=3)
+                self.assertEqual(self.fused_nodes(), ["ib_fused1"])
+                self.assertEqual(cmds.ls(type="blendMatrix"), [])
+            else:
+                mids = create_in_betweens(start.wm, end.wm, count=3)
+                self.assertEqual(len(cmds.ls(type="blendMatrix")), 3)
+            state = []
+            for attr, value in ((None, None), ("end.ry", -45.0), (f"{mids[1]}.weight", 0.9)):
+                if attr:
+                    cmds.setAttr(attr, value)
+                state.append([cmds.xform(str(m), query=True, worldSpace=True, matrix=True) for m in mids])
+            states.append(np.array(state))
+        np.testing.assert_allclose(states[1], states[0], atol=1e-9)
 
 
 class _MatrixCase(_Case):

@@ -40,7 +40,9 @@ Materializing compiles the value into a ``rigExpression`` node (rig's plug-in,
 A List's operator (``list0.tx + list1.tx``) and a vectorized function given a List
 (`VECTORIZED`, or `ELEMENTWISE`) fuse row by row, as rig broadcasts them, and every
 row's value is materialized together: in the block's node. A row that does not fuse
-leaves every row to rig's nodes.
+leaves every row to rig's nodes. A dispatch verb (`VERBS`: ``rig.blend``, ``rig.lerp``
+...) given rows in a plain sequence gives them to the function it picks, which reads
+them by its layout (`call`).
 
 The semantics are numpy's, in doubles: ``%`` is floor modulo, ``round`` is half to
 even, a division by zero is inf or nan, a test is true when it is not 0. They may
@@ -1643,12 +1645,20 @@ def listed(args: tuple, kwargs: dict) -> tuple:
 def call(key: str, args: tuple, kwargs: dict):
     """the fused result of the public function ``key`` (``module.qualname``), or
     NotImplemented when it does not fuse or its operands do not. A vectorized function
-    given a List fuses row by row (`_broadcast`)."""
+    given a List fuses row by row (`_broadcast`), and so does a dispatch verb given rows,
+    in a List or a plain sequence."""
     form = FORMS.get(key)
     traced = RAW.get(key) if form is None else None
     if form is None and traced is None:
         return NotImplemented
     values = (*args, *kwargs.values())
+    if (traced is not None and key in VERBS and any(_live(v) for v in values)
+            and any(type(v) in (list, tuple) or isinstance(v, np.ndarray) for v in values)):
+        # a plain sequence: rows (``rig.blend(a, b, [0.25, 0.5])``), or one value (a vector
+        # literal). The verb cannot tell: its body picks the function of its operand's type,
+        # whose layout reads the sequence, as when user code calls that function (rows fused
+        # together, else rig's network). Traced, the rows could not become plugs (`_trace`)
+        return traced[0](*args, **kwargs)
     if any(isinstance(v, _bind()[3]) for v in values):
         if key in VECTORIZED:
             return _broadcast(form, traced, args, kwargs, LAYOUTS.get(key))
@@ -1657,13 +1667,21 @@ def call(key: str, args: tuple, kwargs: dict):
     return _call_one(form, traced, args, kwargs, vectorized=bool(traced and traced[1]))
 
 
+# the dispatch verbs (``rig.blend``, ``rig.lerp`` ...): each body picks the function of
+# its operand's math type and calls it, and does nothing else. They are traced (`TRACE`),
+# fuse a List row by row (`ELEMENTWISE`), and give rows in a plain sequence to the
+# function they pick (`call`). They are the names of `rig._dispatch.__all__`
+# (test_fuse.TestVerbRows checks it).
+VERBS = frozenset(f"rig._dispatch.{name}" for name in (
+    "dist", "lerp", "slerp", "blend", "elerp", "normalize", "inverse", "angle", "angle_degrees", "to_euler",
+    "to_quaternion", "to_matrix"))
+
 # not vectorized, but element by element on a List all the same: their bodies give it to
 # vectorized functions (the dispatch verbs) or to List operators (``clamp``, the
 # comparisons, ``logical_*``). Given a List, and no other sequence (a vector literal is
 # paired otherwise by an operator than by @vectorize), they fuse row by row.
-ELEMENTWISE = frozenset({
-    "rig._dispatch.dist", "rig._dispatch.lerp", "rig._dispatch.normalize", "rig._dispatch.angle",
-    "rig._dispatch.angle_degrees", "rig._dispatch.elerp", "rig._dispatch.slerp", "rig.functions.clamp",
+ELEMENTWISE = VERBS | frozenset({
+    "rig.functions.clamp",
     "rig.functions.greater_or_equal", "rig.functions.greater_than", "rig.functions.less_or_equal",
     "rig.functions.less_than", "rig.functions.not_equal", "rig.functions.logical_and", "rig.functions.logical_or",
     "rig.functions.logical_xor", "rig.functions.logical_not",
@@ -1761,15 +1779,11 @@ def list_operator(dunder: str, items, others: tuple):
 # rig's own functions that fuse inside: their bodies are rig's operators and functions
 # (each fusing, or traced too), containers and published plugs, and nothing else (no
 # node made by hand, no scene edit). A function added here must stay so.
-TRACE = frozenset({
+TRACE = VERBS | frozenset({      # (the dispatch verbs: their bodies pick a function)
     "rig.interpolate.sequence", "rig.interpolate.interp", "rig.interpolate.smootherstep",
     "rig.vector.elerp", "rig.vector.angle", "rig.vector.angle_degrees",
     "rig.functions.searchsorted", "rig.functions.all", "rig.functions.any",
     "rig.functions.argmin", "rig.functions.argmax",
-    # the dispatch verbs: their bodies pick the function of their operand's math type
-    "rig._dispatch.dist", "rig._dispatch.lerp", "rig._dispatch.slerp", "rig._dispatch.blend",
-    "rig._dispatch.elerp", "rig._dispatch.angle", "rig._dispatch.angle_degrees", "rig._dispatch.normalize",
-    "rig._dispatch.inverse", "rig._dispatch.to_euler", "rig._dispatch.to_quaternion", "rig._dispatch.to_matrix",
 })
 TRACE_MODULES = ("rig.tween.",)      # every easing curve
 
