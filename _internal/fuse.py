@@ -35,7 +35,10 @@ Materializing compiles the value into a ``rigExpression`` node (rig's plug-in,
   by every pass) gets a node of its own;
 * a value another node already outputs is read from that output, and a node's output
   read again in the blocks is the value it computes (`FUSE.outputs`): what is built on
-  it can join that node.
+  it can join that node. Not where it goes leads back to that node (`_refusing`): Maya
+  takes every input of a node to affect every output, so reading it there would close a
+  ring through the node's other inputs. The value computes that part from its plugs
+  (``d.tx << x`` or ``d.tx << x * 3``, when x's node reads ``d.tx``).
 
 A List's operator (``list0.tx + list1.tx``) and a vectorized function given a List
 (`VECTORIZED`, or `ELEMENTWISE`) fuse row by row, as rig broadcasts them, and every
@@ -2078,22 +2081,36 @@ def materialize_all(values: list, into=None) -> list:
     already has for it, or a new output of one node for all the others (`_place`
     decides which node, knowing the plugs ``into`` they are about to drive, if given). A
     leaf is its plug, a number itself. Inside a trace a value is never made a plug: the
-    trace is dropped (`_trace`)."""
+    trace is dropped (`_trace`).
+
+    In a block (or with the option), a value a node already outputs, about to drive
+    ``into`` that leads back to that node, is computed again in a loop node instead
+    (`_refusing`, `_loop_copy`): driving it from the node would close a ring through the
+    node's other inputs."""
     if FUSE.tracing:
         raise _Untraceable("a fused value is made a plug")
     if len(_KEYS) > 1000000:
         _KEYS.clear()            # (the option: an endless block; ints are never reused)
     out: list = [None] * len(values)
-    pending, seen = [], set()
+    pending, seen, owned = [], set(), []
     for i, v in enumerate(values):
         if v.op.startswith("in_") or _constant_only(v):
             out[i] = v.extra if v.op in ("const_s",) or v.op.startswith("in_") else list(v.extra)
             continue
-        if _owner(v) is None and v.key not in seen:
-            seen.add(v.key)
-            pending.append(v)
+        if _owner(v) is None:
+            if v.key not in seen:
+                seen.add(v.key)
+                pending.append(v)
+        elif into is not None and (FUSE.blocks or FUSE.option):
+            owned.append(i)
     if pending:
         _place(pending, into)
+    if owned:
+        refuses = _refusing(_destinations(into))
+        if refuses is not None:
+            for i in owned:
+                if refuses(_owner(values[i])[0]):
+                    out[i] = _loop_copy(values[i])
     for i, v in enumerate(values):
         if out[i] is None:
             record, attr, index = _owner(v)
@@ -2192,12 +2209,14 @@ class _Compiled:
                  "inlined", "size")
 
 
-def _compile(record: _Record, new: dict, inline: bool = False) -> _Compiled:
+def _compile(record: _Record, new: dict, inline: bool = False, refuses=None) -> _Compiled:
     """What ``record``'s program needs to compute the outputs ``new`` ({kind: values})
     too: only what it does not compute yet (a merge costs its new instructions, not the
     node's). The inputs it has keep their indices, new ones are appended; a
     sub-expression another node of the block outputs is read from that output, unless
-    ``inline`` (a loop copy, `rerouted`: every part computed from the plugs)."""
+    ``inline`` (a loop copy, `rerouted`: every part computed from the plugs), or the
+    values' destinations lead back to that node (``refuses``, `_refusing`): that part is
+    computed from its plugs."""
     reg0, reg = record.reg, {}
     body: list = []
     consts: list = []
@@ -2253,7 +2272,7 @@ def _compile(record: _Record, new: dict, inline: bool = False) -> _Compiled:
         if not expanded:
             if e.args:
                 owner = None if inline else _owner(e)
-                if owner is not None and owner[0] is not record:
+                if owner is not None and owner[0] is not record and not (refuses and refuses(owner[0])):
                     # read from the other node's output, through the input of its kind
                     other, attr, index = owner
                     slot = e.kind
@@ -2337,11 +2356,11 @@ def _compile(record: _Record, new: dict, inline: bool = False) -> _Compiled:
 _PAD = [(0,) * (5 - n) for n in range(6)]
 
 
-def _with_outputs(record: _Record, pending: list) -> _Compiled:
+def _with_outputs(record: _Record, pending: list, refuses=None) -> _Compiled:
     new: dict = {}
     for v in pending:
         new.setdefault(v.kind, []).append(v)
-    return _compile(record, new)
+    return _compile(record, new, refuses=refuses)
 
 
 def _node_of(plug) -> om.MObject:
@@ -2598,8 +2617,9 @@ def _destinations(into) -> list:
     return [(node, h, frozenset(names)) for h, (node, names) in found.items()]
 
 
-def _reads(pending: list) -> list:
-    """the plugs ``pending`` reads: its leaves, and the outputs of other nodes it loads"""
+def _reads(pending: list, refuses=None) -> list:
+    """the plugs ``pending`` reads: its leaves, and the outputs of other nodes it loads
+    (not those of the nodes ``refuses``, whose part it computes from its plugs)"""
     out, seen, stack = [], set(), list(pending)
     while stack:
         e = stack.pop()
@@ -2610,19 +2630,19 @@ def _reads(pending: list) -> list:
             out.append(e.extra)
         elif e.args:
             owner = _owner(e)
-            if owner is not None:
+            if owner is not None and not (refuses and refuses(owner[0])):
                 out.append(owner[0].output(owner[1], owner[2]))
             else:
                 stack.extend(e.args)
     return out
 
 
-def _rings_itself(pending: list, dests: list) -> bool:
+def _rings_itself(pending: list, dests: list, refuses=None) -> bool:
     """True if what ``pending`` reads is downstream of its destinations, through links
     that can change: a ring whichever node holds it"""
     live = {h: _prospective(node, h, attrs) for node, h, attrs in dests}
     up_seen, up_todo = set(), []
-    for node, h, name in _resolved(_reads(pending)):
+    for node, h, name in _resolved(_reads(pending, refuses)):
         if name not in (live[h] if h in live else _driven(node, h)):
             continue                      # a setting: no link from it
         if h in live:
@@ -2663,6 +2683,27 @@ def _feeds_back(record: _Record, dests: list) -> bool:
     return _meet(down_todo, down_seen, [record.handle], {sh})
 
 
+def _refusing(dests: list):
+    """For values about to drive ``dests``: ``refuses(owner)``, True for a node whose
+    output they must not read, because a destination leads back to it (`_feeds_back`).
+    Maya takes every input of a node to affect every output, so reading that node would
+    close a ring through its other inputs, even ones the value does not use: the value
+    computes that part from its plugs instead, as a loop copy does (`rerouted`). A loop
+    node is never refused (its values ring whichever node holds them). None: no
+    destination, nothing refused."""
+    if not dests:
+        return None
+    known: dict = {}
+
+    def refuses(owner) -> bool:
+        k = owner.serial
+        r = known.get(k)
+        if r is None:
+            r = known[k] = not owner.looped and _feeds_back(owner, dests)
+        return r
+    return refuses
+
+
 def rerouted(plug, dest):
     """``dest << plug``: ``plug`` itself, or, when ``plug`` is the output of a node of
     the open blocks that driving ``dest`` would make part of a ring (``dest`` leads back
@@ -2683,11 +2724,20 @@ def rerouted(plug, dest):
 
 def _loop_copy(value: Fused):
     """the plug of ``value`` computed from its plugs in a loop node of the innermost
-    block (one taking it, or a new one); its owner keeps computing it for the rest"""
-    _check_inputs([value])
-    block, scope = FUSE.blocks[-1], _scope()
+    block (one taking it, or a new one); its owner keeps computing it for the rest. With
+    the option and no block, in a node of its own (values still merge where they did)"""
+    _check_inputs([value], refuses=lambda owner: True)     # (every part read from its plugs)
+    scope = _scope()
     new = {value.kind: [value]}
     attr = OUT_ATTR[value.kind]
+    if not FUSE.blocks:
+        last = FUSE.last
+        record = _Record(scope)
+        record.looped = True
+        _commit(record, _compile(record, new, inline=True), own=False)
+        FUSE.last = last
+        return record.output(attr, 0)
+    block = FUSE.blocks[-1]
     for record in block:
         if record.looped and record.size < MAX_INSTRUCTIONS and record.scope is scope and record.alive():
             outs = record.outs[value.kind]
@@ -2868,11 +2918,12 @@ def _shared(pending: list) -> list:
     return out
 
 
-def _check_inputs(pending: list) -> None:
+def _check_inputs(pending: list, refuses=None) -> None:
     """Every plug the pending values read is alive: rig's ``"... already deleted!"``
     otherwise, before anything is built. A fused value is built when it is used, so a
     plug it reads can be deleted in between (a node or an attribute deleted to the
-    undo queue too: no connection can come from it)."""
+    undo queue too: no connection can come from it). A part a node ``refuses`` computes
+    is read from its plugs, so they are checked too."""
     from rig.nodetypes._base import _deleted_error, _ensure_owner_alive
     seen: set = set()
     stack = list(pending)
@@ -2897,8 +2948,10 @@ def _check_inputs(pending: list) -> None:
                 name = om.MFnAttribute(attr).name
                 if not fn.hasAttribute(name) or not (fn.attribute(name) == attr):
                     raise _deleted_error(str.__str__(plug))
-        elif e.args and _owner(e) is None:
-            stack.extend(e.args)
+        elif e.args:
+            owner = _owner(e)
+            if owner is None or (refuses and refuses(owner[0])):
+                stack.extend(e.args)
 
 
 def _place(pending: list, into=None) -> None:
@@ -2914,25 +2967,30 @@ def _place(pending: list, into=None) -> None:
     build on each other, written one after the other, share a node. A part of them
     another node already computes inside its program (a value made once, before a loop,
     and used by every pass) first gets a node of its own, which every later use reads:
-    it is computed twice, not once per use."""
-    _check_inputs(pending)
+    it is computed twice, not once per use.
+
+    Either way, a part another node outputs is read from that output, and values join a
+    node, unless where they go leads back to that node (`_refusing`): they compute that
+    part from its plugs, in another node."""
+    dests = _destinations(into) if into is not None else []
+    refuses = _refusing(dests)
+    _check_inputs(pending, refuses)
     if FUSE.blocks:
         block = FUSE.blocks[-1]
         scope = _scope()
-        dests = _destinations(into) if into is not None else []
-        looped = bool(dests) and _rings_itself(pending, dests)
+        looped = bool(dests) and _rings_itself(pending, dests, refuses)
         for record in block:
             if record.looped is not looped:
                 continue
             if record.size < MAX_INSTRUCTIONS and record.scope is scope and record.alive():
-                compiled = _with_outputs(record, pending)
+                compiled = _with_outputs(record, pending, refuses)
                 if (compiled.size <= MAX_INSTRUCTIONS and _no_cycle(record, compiled)
-                        and (looped or not dests or not _feeds_back(record, dests))):
+                        and (looped or not dests or not refuses(record))):
                     _commit(record, compiled)
                     return
         record = _Record(scope)
         record.looped = looped
-        _commit(record, _with_outputs(record, pending))
+        _commit(record, _with_outputs(record, pending, refuses))
         block.append(record)
         return
     shared = _shared(pending)
@@ -2945,13 +3003,14 @@ def _place(pending: list, into=None) -> None:
         if not pending:
             return
     record = FUSE.last
-    if record is not None and record.alive() and record.scope is _scope() and _uses(pending, record):
-        compiled = _with_outputs(record, pending)
+    if (record is not None and record.alive() and record.scope is _scope() and _uses(pending, record)
+            and not (refuses and refuses(record))):
+        compiled = _with_outputs(record, pending, refuses)
         if compiled.size <= MAX_INSTRUCTIONS and _no_cycle(record, compiled):
             _commit(record, compiled)
             return
     record = _Record(_scope())
-    _commit(record, _with_outputs(record, pending))
+    _commit(record, _with_outputs(record, pending, refuses))
 
 
 def _node_name() -> str:

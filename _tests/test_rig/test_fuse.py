@@ -287,6 +287,66 @@ class TestNodes(_Case):
         self.assertEqual(cmds.getAttr("out.tx"), 4.0)
         self.assertFalse(cmds.cycleCheck(all=True, list=True) or [])
 
+    def test_a_value_connected_back_into_what_its_node_reads_is_computed_again(self):
+        # blk reads d.tx (for out.ty); x, one of blk's outputs, into d.tx would make the
+        # ring d.tx -> blk -> d.tx (Maya takes every input to affect every output): d.tx
+        # reads x computed again from a.tx, and blk keeps computing it for out.tx
+        d = Node.create("transform", name="d")
+        with rig.fuse("blk"):
+            x = self.a.tx * 2
+            self.out.tx << x
+            self.out.ty << d.tx + 1
+            d.tx << x
+        self.assertEqual(sorted(self.fused_nodes()), ["blk", "blk1"])
+        self.assertEqual(self.source("d.tx"), "blk1")
+        self.assertEqual(cmds.listConnections("blk1.scalarIn", source=True, plugs=True), ["a.translateX"])
+        self.assertEqual((cmds.getAttr("d.tx"), cmds.getAttr("out.ty")), (3.0, 4.0))
+        self.assertFalse(cmds.cycleCheck(all=True, list=True) or [])
+
+    def test_a_value_built_on_one_and_connected_back_computes_it_again(self):
+        # x * 3 into d.tx cannot join blk (it reads d.tx), and its own node does not read
+        # x off blk either: d.tx -> blk -> blk1 -> d.tx. It computes a.tx * 2 * 3
+        d = Node.create("transform", name="d")
+        with rig.fuse("blk"):
+            x = self.a.tx * 2
+            self.out.tx << x
+            self.out.ty << d.tx + 1
+            d.tx << x * 3
+            self.out.tz << x * 3 + self.b.tz       # leads nowhere back: joins blk
+        self.assertEqual(self.source("d.tx"), "blk1")
+        self.assertEqual(self.source("out.tz"), "blk")
+        self.assertEqual(cmds.listConnections("blk1.scalarIn", source=True, plugs=True), ["a.translateX"])
+        self.assertEqual((cmds.getAttr("d.tx"), cmds.getAttr("out.ty")), (9.0, 10.0))
+        self.assertEqual(cmds.getAttr("out.tz"), 9.0 - 1.0)
+        self.assertFalse(cmds.cycleCheck(all=True, list=True) or [])
+
+    def test_with_the_option_a_value_never_drives_what_its_node_reads(self):
+        # no block: a value joins the node made last when it uses it, not when where it
+        # goes leads back to that node; x, one of its outputs, is computed again
+        d = Node.create("transform", name="d")
+        set_options(fuse=True)
+        x = self.a.tx * 2
+        self.out.tz << x
+        self.out.tx << x + d.tx                # joins x's node, which now reads d.tx
+        d.tx << x
+        set_options(fuse=False)
+        self.assertEqual(len(self.fused_nodes()), 2)
+        self.assertNotEqual(self.source("d.tx"), self.source("out.tx"))
+        self.assertEqual((cmds.getAttr("d.tx"), cmds.getAttr("out.tx")), (3.0, 6.0))
+        self.assertFalse(cmds.cycleCheck(all=True, list=True) or [])
+
+    def test_with_the_option_a_value_built_on_one_never_drives_what_its_node_reads(self):
+        d = Node.create("transform", name="d")
+        set_options(fuse=True)
+        x = self.a.tx * 2
+        self.out.tx << x + d.tx                # one node, computing x inside, reading d.tx
+        d.tx << x * 3                          # a node of its own, computing a.tx * 2 * 3
+        set_options(fuse=False)
+        self.assertEqual(len(self.fused_nodes()), 2)
+        self.assertNotEqual(self.source("d.tx"), self.source("out.tx"))
+        self.assertEqual((cmds.getAttr("d.tx"), cmds.getAttr("out.tx")), (9.0, 12.0))
+        self.assertFalse(cmds.cycleCheck(all=True, list=True) or [])
+
     def test_a_block_per_pass_is_a_node_per_pass(self):
         shared = None
         with rig.fuse():

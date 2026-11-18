@@ -4506,7 +4506,12 @@ block goes into the block's first node that can take it:
   computed in a small node of its own, so the loop the evaluation manager
   evaluates serially holds only that node, not the block's;
 * a node holds up to 10,000 instructions: a bigger block gets one more node;
-* a value another node already outputs is read from that output.
+* a value another node already outputs is read from that output, unless the
+  value goes where that leads back to the node. Maya takes every input of a
+  node to affect all its outputs, so that would close a ring through an
+  input the value does not even use: `x` computed in a node that also
+  reads `d.tx` (for another value), then `d.tx << x` or `d.tx << x * 3`.
+  The value computes that part again from its plugs, in a node of its own.
 
 So the block decides how many nodes: `examples/rail_spine.py` inside one
 `with rig.fuse():` builds 6 `rigExpression` nodes for its 20 riders (its
@@ -4518,7 +4523,8 @@ riders runs on one thread: a block around
 each rider instead gives a node or two per rider, which play back in
 parallel. With `set_options(fuse=True)` and no block, a value joins the node
 made just before it when it uses what that node computes, else it gets a new
-node.
+node; and the rule above holds there too: a value going where that leads
+back to the node gets a node of its own.
 
 What fuses: the operators (`+ - * / // % **`, unary `-`, `< <= > >= == !=`,
 `& | ^ ~`), `.x` / `.y` / `.z` of a vector, a `[a, b, c]` vector, and
