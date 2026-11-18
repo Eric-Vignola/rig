@@ -625,8 +625,27 @@ def _matrix_add_impl(*tokens: Any, weights: Optional[Any] = None) -> Any:
     return node.matrixSum
 
 
+def _check_add_weights(count: int, weights: Any) -> None:
+    """``matrix.add``'s weights: one for all the matrices, or one each, as rig's
+    broadcasts pair (user decision 3A); any other count is a ValueError raised
+    before a node is built (a shorter list held its last weight, and a longer one
+    added the last matrix again with each weight left over)"""
+    if isinstance(weights, numbers.Real) or _is_node(weights) or _is_plug(weights):
+        return
+    if not (isinstance(weights, (set, tuple, list, dict)) or _is_sequence(weights)):
+        return
+    n = len(weights)
+    if n not in (1, count):
+        raise ValueError(
+            f"rig.matrix.add(): {count} matri{'ces' if count != 1 else 'x'} and {n} "
+            f"weight{'s' if n != 1 else ''}; give 1 weight for all of them, or {count}, one each"
+        )
+
+
 @memoize
 def _matrix_add(*tokens: Any, weights: Optional[Any] = None) -> Any:
+    if weights is not None:
+        _check_add_weights(len(tokens), weights)
     return _matrix_add_op(*tokens, weights=weights)
 
 

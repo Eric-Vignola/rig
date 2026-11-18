@@ -248,7 +248,8 @@ def multiply(*tokens: Any, **kwargs: Any) -> Any:
 @memoize
 def add(*tokens: Any, **kwargs: Any) -> Any:
     """``add(m0, m1, ..., weights=[w0, w1, ...])`` -- ``addMatrix`` or
-    ``wtAddMatrix`` if weights are provided."""
+    ``wtAddMatrix`` if weights are provided: one weight for all the matrices,
+    or one each (any other count is a ValueError, before a node is built)."""
     return _matrix_add(*tokens, **kwargs)
 
 

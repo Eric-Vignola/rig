@@ -217,6 +217,30 @@ class TestAdd(MayaTestCase):
         result = m.add(a.matrix, b.matrix, weights=[0.5, 0.5])
         self.assertEqual(cmds.nodeType(str(result).split(".")[0]), "wtAddMatrix")
 
+    def test_add_weights_are_one_for_all_or_one_each(self):
+        # rig's one broadcast rule (decision 3A): a shorter list held its last weight,
+        # and a longer one added the last matrix again with each weight left over
+        import rig
+
+        a, b, c = (Node.create("transform", name=n) for n in "abc")
+        before  = set(cmds.ls())
+        for weights in ([0.5, 0.5], [0.1, 0.2, 0.3, 0.4]):
+            with self.subTest(weights=weights):
+                with self.assertRaisesRegex(ValueError, rf"^rig\.matrix\.add\(\): 3 matrices and {len(weights)} "
+                                                        rf"weights; give 1 weight for all of them, or 3, one each$"):
+                    m.add(a.matrix, b.matrix, c.matrix, weights=weights)
+                with rig.fuse():
+                    with self.assertRaisesRegex(ValueError, r"3 matrices and \d weights"):
+                        m.add(a.matrix, b.matrix, c.matrix, weights=weights)
+        self.assertEqual(set(cmds.ls()) - before, set())
+        for weights, expected in (([0.2, 0.3, 0.5], [0.2, 0.3, 0.5]), ([0.25], [0.25] * 3), (0.75, [0.75] * 3)):
+            with self.subTest(weights=weights):
+                node = str(m.add(a.matrix, b.matrix, c.matrix, weights=weights)).split(".")[0]
+                self.assertEqual(cmds.nodeType(node), "wtAddMatrix")
+                self.assertEqual(cmds.getAttr(f"{node}.wtMatrix", multiIndices=True), [0, 1, 2])
+                self.assertEqual([round(cmds.getAttr(f"{node}.wtMatrix[{i}].weightIn"), 4) for i in range(3)],
+                                 expected)
+
 
 class TestLerp(MayaTestCase):
     TEST_START_NEW_SCENE = True
