@@ -4477,13 +4477,13 @@ b.t << [0.5, 4, -1]
 with rig.fuse("demo"):
     u = (a.tx * 2 + b.ty) * F.rev(a.sx * 0.5)   # a Fused value: no node yet
     print(repr(u))           # Fused(scalar: (((a.translateX * 2) + b.translateY) * rev((a.scaleX * 0.5))))
-    out.tx << u                                   # one node now: demo_fused1
-    out.ty << condition(u > 3, a.ty, u)           # uses u: joins demo_fused1
+    out.tx << u                                   # one node now: demo
+    out.ty << condition(u > 3, a.ty, u)           # uses u: joins demo
     far.t << V.normalize(a.t - b.t) * F.clamp(u, 0, 5)   # joins it too
 
-print(cmds.ls(type="rigExpression"))              # ['demo_fused1']
+print(cmds.ls(type="rigExpression"))              # ['demo']
 print(cmds.getAttr("out.ty"), cmds.getAttr("far.ty"))   # -2.0 -2.830031906222678
-print(cmds.getAttr("demo_fused1.notes").splitlines()[-1])
+print(cmds.getAttr("demo.notes").splitlines()[-1])
 # - `vectorOut[0] = (normalize((a.translate - b.translate)) * clamp(scalarOut[0], 0, 5))`
 ```
 
@@ -4569,7 +4569,7 @@ lefts.tx << [0, 1, 2]
 rights.tx << [4, 5, 6]
 with rig.fuse("mid"):
     mids.t << (lefts.t + rights.t) * 0.5          # 3 rows, one node
-print(cmds.ls("mid_*"), [cmds.getAttr(f"mid{i}.tx") for i in range(3)])   # ['mid_fused1'] [2.0, 3.0, 4.0]
+print(cmds.ls("mid*", type="rigExpression"), [cmds.getAttr(f"mid{i}.tx") for i in range(3)])   # ['mid'] [2.0, 3.0, 4.0]
 ```
 
 ```python
@@ -4580,7 +4580,7 @@ with rig.fuse("ease"):
     w = tween.in_out_sine(F.clamp(a.tx / 4, 0, 1))    # the curve's own math, fused
     eased.t << interpolate.sequence(w, [0, 0.5, 1], [a.t, b.t, a.t * 2])
 
-print(cmds.ls("ease_*"), cmds.ls(type="container"))   # ['ease_fused1'] []
+print(cmds.ls("ease*", type="rigExpression"), cmds.ls(type="container"))   # ['ease'] []
 print([round(v, 4) for v in cmds.getAttr("eased.t")[0]])   # [0.8827, 1.7039, 0.6264]
 ```
 
@@ -4595,7 +4595,7 @@ with rig.fuse("rider"):
     half = quaternion.pow(matrix.to_quaternion(m), 0.5)   # half the rotation
     rider << matrix.compose(rotate=half, translate=matrix.translation(m))
 
-print(cmds.ls("rider_*"), cmds.ls(type="decomposeMatrix"), cmds.ls(type="unitConversion"))   # ['rider_fused1'] [] []
+print(cmds.ls("rider*", type="rigExpression"), cmds.ls(type="decomposeMatrix"), cmds.ls(type="unitConversion"))   # ['rider1'] [] []
 print([round(v, 4) for v in cmds.getAttr("rider.r")[0]])   # [13.7581, 22.4675, -3.2468] (rig's network's)
 ```
 
@@ -4655,8 +4655,10 @@ A fused value is built when it is used, not when it is written, so:
   first). For the modulo of the plug of that name, write
   `Plug("node.attr") % value`.
 
-* The block is one undo step. `rig.fuse("arm")` names its nodes
-  `arm_fused1`, ...
+* The block is one undo step. `rig.fuse("arm")` names its node `arm`:
+  `arm1`, `arm2` ... when a node has the name (above, the block's node
+  is `rider1`: the transform is `rider`), and for the block's next
+  nodes. A block with no name makes `fused1`, `fused2` ...
 * As the block ends, a node of it whose network rig makes in one node
   becomes that node (the one-op rule): `dst.tx << a.tx + b.tx` alone in a
   block leaves a `sum`, `node << matrix` one `decomposeMatrix`. A node rig's
@@ -4717,13 +4719,13 @@ src.t << [1, 2, 3]
 dst = Node.create("transform", name="dst")
 with rig.fuse("calc"):
     dst.t << rig.vector.normalize(src.t) * 2 + rig.matrix.translation(src.worldMatrix[0])
-print(cmds.ls("calc_*"))                           # ['calc_fused1']
-made = rig.unfuse("calc_fused1")
+print(cmds.ls("calc*", type="rigExpression"))     # ['calc']
+made = rig.unfuse("calc")
 print(sorted(cmds.nodeType(str(n)) for n in made))  # ['multiplyDivide', 'normalize', 'plusMinusAverage', 'translationFromMatrix']
 print([round(v, 4) for v in cmds.getAttr("dst.t")[0]])   # [1.5345, 3.069, 4.6036] (as fused)
 ```
 
-* `rig.unfuse("calc_fused1", ...)` unfuses the nodes given; no argument,
+* `rig.unfuse("calc", ...)` unfuses the nodes given; no argument,
   every one in the scene. It returns a List of the nodes it made, and is one
   undo step. A node in a container has its network made in it; a locked
   destination is connected and stays locked.

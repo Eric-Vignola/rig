@@ -153,8 +153,28 @@ class TestNodes(_Case):
             self.out.tx << u
             self.out.ty << condition(u > 0, self.a.ty, u * 3)
             self.out.t << [u, u + 1, self.a.tz]       # a list of fused values: one node
-        self.assertEqual(self.fused_nodes(), ["demo_fused1"])
+        self.assertEqual(self.fused_nodes(), ["demo"])
         self.assertEqual(cmds.getAttr("out.t")[0], (7.0, 8.0, 3.25))
+
+    def test_a_block_names_its_node(self):
+        from unittest import mock
+        with rig.fuse("calc"):
+            self.out.tx << self.a.tx * 2 + 1
+        self.assertEqual(self.fused_nodes(), ["calc"])
+        Node.create("transform", name="calc1")
+        with rig.fuse("calc"):                       # calc and calc1 are taken: Maya numbers it
+            self.out.ty << self.a.ty * 2 + 1
+        with rig.fuse("outer"):
+            with rig.fuse("inner"):                  # the innermost name
+                self.out.tz << self.a.tz * 2 + 1
+        with rig.fuse():
+            self.out.sx << self.a.sx * 2 + 1
+        self.assertEqual(sorted(self.fused_nodes()), ["calc", "calc2", "fused1", "inner"])
+        with mock.patch.object(_fuse, "MAX_INSTRUCTIONS", 1):    # a node a value: two nodes
+            with rig.fuse("arm"):
+                self.out.rx << self.a.tx * 3 + 2
+                self.out.ry << self.a.ty * 3 + 2
+        self.assertEqual(sorted(n for n in self.fused_nodes() if n.startswith("arm")), ["arm", "arm1"])
 
     def test_a_block_is_one_node(self):
         with rig.fuse():
@@ -596,7 +616,7 @@ class TestVerbRows(_Case):
             if fused:
                 with rig.fuse("ib"):
                     mids = create_in_betweens(start.wm, end.wm, count=3)
-                self.assertEqual(self.fused_nodes(), ["ib_fused1"])
+                self.assertEqual(self.fused_nodes(), ["ib"])
                 self.assertEqual(cmds.ls(type="blendMatrix"), [])
             else:
                 mids = create_in_betweens(start.wm, end.wm, count=3)
@@ -1164,7 +1184,7 @@ class TestEveryFunction(_MatrixCase):
             self.out.ry << ab.angle + F.frame()
             self.out.rz << rig.quaternion.to_euler(rig.quaternion.from_axis_angle(ab.axis, ab.angle)).z
         before = [self.read("out.t"), self.read("out.r")]
-        made = rig.unfuse("calc_fused1")
+        made = rig.unfuse("calc")
         self.assertEqual(self.fused_nodes(), [])
         types = {cmds.nodeType(str(n)) for n in made}
         self.assertIn("angleBetween", types)
@@ -1278,7 +1298,7 @@ class TestRandom(_Case):
         from rig import random as R
         with rig.fuse("dice"):
             self.out.tx << R.uniform(0, 6, seed=3)
-        made = rig.unfuse("dice_fused1")
+        made = rig.unfuse("dice")
         self.assertEqual(self.fused_nodes(), [])
         self.assertTrue(any("CYCLE_SAFE_RANDOM_GENERATOR" in str(n) for n in made), [str(n) for n in made])
         for f in (1, 2, 3):
@@ -1418,10 +1438,10 @@ class TestUnfuse(_MatrixCase):
             self.out.tx << x
         with rig.fuse("two"):
             self.out.ty << x + self.b.ty                     # reads one's output
-        self.assertEqual(sorted(self.fused_nodes()), ["one_fused1", "two_fused1"])
+        self.assertEqual(sorted(self.fused_nodes()), ["one", "two"])
         expected = cmds.getAttr("out.tx"), cmds.getAttr("out.ty")
-        rig.unfuse("one_fused1")
-        self.assertEqual(self.fused_nodes(), ["two_fused1"])
+        rig.unfuse("one")
+        self.assertEqual(self.fused_nodes(), ["two"])
         self.assertEqual((cmds.getAttr("out.tx"), cmds.getAttr("out.ty")), expected)
         cmds.setAttr("a.tx", 5)
         self.assertEqual((cmds.getAttr("out.tx"), cmds.getAttr("out.ty")), (10.0, 14.0))
@@ -1549,9 +1569,9 @@ class TestUnfuse(_MatrixCase):
 
         with mock.patch.object(unfuse._Rebuild, "plan", refusing):
             with self.assertRaisesRegex(ValueError, "a test"):
-                rig.unfuse()                   # one_fused1 comes first: every node is planned before
+                rig.unfuse()                   # one comes first: every node is planned before
         self.assertEqual(set(cmds.ls()), nodes)
-        self.assertEqual(sorted(self.fused_nodes()), ["one_fused1", "two_fused1"])
+        self.assertEqual(sorted(self.fused_nodes()), ["one", "two"])
 
     def test_a_locked_destination_stays_locked(self):
         cmds.file(new=True, force=True)
