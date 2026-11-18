@@ -816,7 +816,7 @@ def _has_channels(value: Any) -> bool:
 
 
 @operands(skip_when=_picks_in_python)
-@vectorize
+@vectorize("(),(n?),(n?)->(n?)")
 @memoize
 def condition(condition_op: Any, if_true: Any, if_false: Any) -> Any:
     """``cond(<test>, <if_true>, <if_false>)`` -- Maya ``condition`` node.

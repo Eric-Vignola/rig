@@ -532,7 +532,7 @@ def _fits_scalar_core(value: Any) -> bool:
 # --------------------------------------------------------------------------------------- binding
 
 
-_ONE, _ROWS, _PENDING = 0, 1, 2
+_ONE, _ROWS, _PENDING, _VECTOR = 0, 1, 2, 3
 _NOTHING: Tuple[None, Dict[str, int]] = (None, {})     # one value that binds no size (never written to)
 
 
@@ -670,14 +670,21 @@ class Bound:
         rows: Dict[Any, list] = {}
         sizes: Dict[str, Dict[int, Any]] = {}        # named size -> {its value: the argument giving it}
         pending: _TList[Tuple[Any, Any]] = []
+        vectors: _TList[Tuple[Any, Any, Dict[str, int]]] = []   # flat lists of scalars in a (n?)
+        shaped = set()                                # rows given to a parameter with channels
         scalars: _TList[Any] = []                     # what the () parameters were given
         for key, slot, value in self._given(args, kwargs):
             kind, found = self._classify_one(key, slot, value)
             if kind == _PENDING:
                 pending.append((key, value))
                 continue
+            if kind == _VECTOR:
+                vectors.append((key, value, found[1]))
+                continue
             if kind == _ROWS:
                 rows[key] = found[0]
+                if not slot.only_scalar:
+                    shaped.add(key)
             for name, n in found[1].items():
                 sizes.setdefault(name, {}).setdefault(n, key)
             if slot.scalar:
@@ -694,6 +701,20 @@ class Bound:
             for key, value in pending:
                 if len(value) not in channels:
                     rows[key] = _row_items(value)
+        if vectors:
+            # a flat list of scalars in a (n?) or (3?) parameter: one vector, unless another
+            # parameter with channels gives as many rows of scalars, which it then lines up with
+            # row by row (``condition(test, weights.get(), weights)``: numpy's elementwise
+            # pairing). A () parameter's rows never count: lerp's weights are its calls, not
+            # its channels
+            scalar_rows = {len(rows[key]) for key in shaped
+                           if rows[key] and all(not _plain(x) and _leaf_shape(x) == _SCALAR for x in rows[key])}
+            for key, value, bound in vectors:
+                if len(value) in scalar_rows:
+                    rows[key] = _row_items(value)
+                else:
+                    for name, n in bound.items():
+                        sizes.setdefault(name, {}).setdefault(n, key)
         if sizes:
             self._agree(sizes)
         if not rows:
@@ -757,6 +778,10 @@ class Bound:
             for c in alternatives:
                 trial: Dict[str, int] = {}
                 if not c.scalar and _fits(c, value, trial):
+                    if slot.takes_number and len(_literal_shape(value) or ()) == 1:
+                        # a flat list of scalars where a scalar fits too ((n?), (3?)): a vector,
+                        # or rows lined up with other rows of scalars (`classify`)
+                        return _VECTOR, (None, trial)
                     return _ONE, (None, trial)
             items = _row_items(value)
             if items and slot.scalar and all(

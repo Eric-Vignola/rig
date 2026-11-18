@@ -403,6 +403,22 @@ def layout_of(func: Callable[..., Any]) -> Any:
     return None
 
 
+def layout_inner(func: Callable[..., Any]) -> Any:
+    """The function the innermost ``@vectorize("...")`` under ``func`` wraps: the call
+    without its layout's reading, or None"""
+    inner = None
+    while func is not None:
+        if getattr(func, "_rig_layout", None) is not None:
+            inner = getattr(func, "__wrapped__", None)
+        func = getattr(func, "__wrapped__", None)
+    return inner
+
+
+def _has_list(args: tuple, kwargs: dict) -> bool:
+    from rig._internal.list import List
+    return any(isinstance(v, List) for v in args) or any(isinstance(v, List) for v in kwargs.values())
+
+
 def list_alias(value: Any) -> bool:
     """True if ``value`` is ``List[...]``: the type alias subscripting the class makes
     (``list[int]``'s syntax), where ``List([...])`` was meant"""
@@ -566,6 +582,10 @@ def operands(
                     )
                 if _FUSE.alive:
                     args, kwargs = _fuse.materialized_arguments(args, kwargs)
+                if unlayered is not None and not _has_list(args, kwargs):
+                    # it picks in Python (``condition`` of a number) and nothing broadcasts:
+                    # its branches may be any value, so its layout does not read them
+                    return unlayered(*args, **kwargs)
                 return func(*args, **kwargs)
         args, kwargs = _checked(args, kwargs)
         if _FUSE.alive:
@@ -583,6 +603,7 @@ def operands(
     # list of vectors, of weights) are a List from the entry on, so rig.fuse() broadcasts
     # them as rig does
     layout = layout_of(func)
+    unlayered = layout_inner(func) if layout is not None and skip_when is not None else None
 
     # the statement entry (`journal.statement`), where rig.fuse() hooks in: user code
     # fusing gets the fused form of a fusable function, and any other call gets its
@@ -594,12 +615,13 @@ def operands(
         _refuse_list_alias(label, args, kwargs)
         if _FUSE.on:
             args, kwargs = _fuse.listed(args, kwargs)
-            if layout is not None:
+            picks = skip_when is not None and skip_when(*_prepared_arguments(args, kwargs))
+            if layout is not None and not picks:
                 plan = layout.classify(args, kwargs)   # (raises for a shape it refuses)
                 if plan is not None:
                     args, kwargs = plan.listed(args, kwargs)
             if fusable:
-                if skip_when is not None and skip_when(*_prepared_arguments(args, kwargs)):
+                if picks:
                     # rig picks in Python (`condition` of a number): its branches may
                     # be any value, nothing to fuse
                     return run_statement(wrapper, args, kwargs)

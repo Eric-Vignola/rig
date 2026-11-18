@@ -221,6 +221,17 @@ class TestClassify(_Poles):
         self.assertIsNone(self.rows(self.vector, a.t, b.t, a.tx))         # a () takes any one value
         self.assertIsNone(self.rows(self.lerp, a.tx, b.t, 0.5))           # a scalar meets n
 
+    def test_a_flat_list_lines_up_with_rows_of_scalars(self):
+        # in a (n?), a flat list of scalars is one vector, unless as many rows of scalars sit next to it:
+        # then row by row (rail_spine's condition(test, weights.get(), weights))
+        a, b, p, q = self.a, self.b, self.p, self.q
+        self.assertEqual(self.rows(self.lerp, List([a.tx, b.tx, p.tx]), [0, 0, 10], 0.5), (3, ["0", "1"]))
+        self.assertEqual(self.rows(self.lerp, List([a.t, b.t]), [0, 0, 10], 0.5), (2, ["0"]))     # a vector
+        self.assertEqual(self.rows(self.lerp, List([a.tx, b.tx]), [0, 0, 10], 0.5), (2, ["0"]))   # 2 rows, 3 values
+        self.assertIsNone(self.rows(self.lerp, [a.tx, a.ty, a.tz], b.t, 0.5))                    # no rows: a vector
+        condition = _bound("(),(n?),(n?)->(n?)", lambda test, if_true, if_false: None)
+        self.assertEqual(self.rows(condition, a.tx, [0.0, 0.5, 1.0], List([a.tx, b.tx, p.tx])), (3, ["1", "2"]))
+
     def test_n_is_one_size(self):
         a, b = self.a, self.b
         cmds.addAttr("p", ln="uv", at="double2")
@@ -489,6 +500,17 @@ class TestPerChannel(_Poles):
         choice = Node(cmds.createNode("choice", name="pick"))
         choice.input[0] << a.t
         self.assertEqual(_plug_shape(choice.output), (3,))               # "any" data: as math_type reads it
+
+    def test_condition_reads_rows_and_still_picks_in_python(self):
+        F = rig.functions
+        tx = self.scalars((1, 0))
+        np.testing.assert_allclose(_value(F.condition(tx, -1, 1)), [-1, 1], atol=1e-6)   # before: ValueError
+        np.testing.assert_allclose(_value(F.condition(List(tx), -1, 1)), [-1, 1], atol=1e-6)
+        np.testing.assert_allclose(_value(F.condition(tx[0], [0, 0, 1], [1, 0, 0])), [0, 0, 1], atol=1e-6)
+        # a number picks in Python, before any layout: its branches may be anything
+        self.assertEqual(F.condition(1, ["a", "b"], ["c"]), ["a", "b"])
+        self.assertEqual(F.condition(0, [1, 2], [3]), [3])
+        self.assertEqual(F.condition(List([1, 0]), "yes", "no"), ["yes", "no"])
 
     def test_choice_rows_share_their_constants(self):
         # rail_spine's up vectors: the literal tokens become three constants for every row (the
