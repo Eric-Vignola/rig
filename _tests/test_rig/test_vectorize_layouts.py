@@ -490,6 +490,17 @@ class TestPerChannel(_Poles):
         choice.input[0] << a.t
         self.assertEqual(_plug_shape(choice.output), (3,))               # "any" data: as math_type reads it
 
+    def test_choice_rows_share_their_constants(self):
+        # rail_spine's up vectors: the literal tokens become three constants for every row (the
+        # selector is choice's own, not a layout's row: per row they would be made again)
+        F = rig.functions
+        for selector in (List([self.a.ro, self.b.ro, self.p.ro, self.q.ro]), [self.a.ro, self.b.ro]):
+            with self.subTest(selector=type(selector).__name__):
+                before = set(cmds.ls(type="network"))
+                out = F.choice([[1, 0, 0], [0, 1, 0], [0, 0, 1]], selector=selector)
+                self.assertEqual(len(out), len(selector))
+                self.assertEqual(len(set(cmds.ls(type="network")) - before), 3)    # one call: 3, all rows
+
     def test_choice_takes_any_tokens(self):
         F = rig.functions
         out = F.choice([self.a.wm, self.b.wm], 1)                        # a space switch: matrices

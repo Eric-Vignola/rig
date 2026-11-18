@@ -558,7 +558,7 @@ def pow(base: Any, exponent: Any) -> Any:
 
 
 @operands
-@vectorize("[k],()->()")
+@vectorize("[k]->()")
 @memoize
 def choice(tokens: Sequence[Any], selector: Any = None) -> Any:
     """``choice([t0, t1, ...], selector=plug)`` -- wraps a Maya ``choice``
@@ -571,10 +571,14 @@ def choice(tokens: Sequence[Any], selector: Any = None) -> Any:
     auto-wrapped in ``_constant()`` so they connect-as-output rather
     than failing on ``set()`` for the untyped slot. (v3.U fix.)
     """
+    if isinstance(selector, (list, tuple, range)) and not isinstance(selector, List):
+        selector = List(list(selector))       # a plain list of selectors: rows, as a List
     if isinstance(selector, List):
         # one choice per selector: a List selector (``ctrls.upAxis``) used to be
         # cut to its first plug, so every row picked with the first row's selector.
-        # Literal tokens become their constant nodes once, shared by every row.
+        # Literal tokens become their constant nodes once, shared by every row (so
+        # the selector is not in choice's layout: vectorize's rows would make them
+        # once per row).
         tokens = [_sequence_to_node(t) for t in tokens]
         tokens = [t if isinstance(t, Attribute) else _constant(t) for t in tokens]
         return List([choice(tokens, selector=s) for s in selector])
