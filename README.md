@@ -203,8 +203,11 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
   its last value, and a longer one is not cut). A plain list that is one
   value of the elements' shape goes to each of them whole:
   `cubes.t << [0, 5, 0]` puts every cube at (0, 5, 0), as long as the
-  List or not (a `range` counts elements: one value each). An operand is
-  a plug, a number
+  List or not (a `range` counts elements: one value each). A function's
+  layout says what one call takes (`help()` shows it): a plain list of
+  vectors is rows (`v.slerp([a.t, b.t], c.t, 0.5)` is two slerps, a
+  `List` of 2), and `[0, 0, 10]` is one vector. An operand is a plug, a
+  number
   or a sequence of them: a generator is read into a list first
   (`f.sum(c.tx for c in ctrls)`), and a `set`, `frozenset` or `dict` is a
   `TypeError`, since it has no order. `rig.List` is not `typing.List`.

@@ -1882,9 +1882,10 @@ def half(x):
 print(half(8), repr(half(Node("renamed").tx)), half._foldable)   # 4.0 Plug("div1.output") scalar
 ```
 
-`@vectorize` broadcasts a call across `List` arguments with numpy's
-strict rule: every list must be the same length, or length one, or a
-scalar. One row returns the bare result; more return a `List`.
+`@vectorize` with no layout broadcasts a call across its `List`
+arguments with numpy's strict rule: every list must be the same length, or
+length one, or a scalar. One row returns the bare result; more return a
+`List`.
 
 ```python
 from rig import vectorize
@@ -1904,6 +1905,70 @@ try:
     offset(ctrls.tx, [1, 2])
 except ValueError as err:
     print(str(err)[:53])                      # vectorize('offset'): cannot broadcast lengths [2, 3]
+```
+
+`@vectorize("...")` declares what one call of the function takes: a layout
+string, as numpy and numba write them, in rig's dialect. Every library
+function has one (section 17 lists them), and it ends the function's
+docstring, so `help()` shows it. A parameter past the layout is a setting,
+given to every call as it is.
+
+| Core | One value is |
+|---|---|
+| `()` | one value: a number, or a plug a per-channel function computes channel by channel |
+| `(3)`, `(4)` | 3 or 4 channels: a vector, a quaternion |
+| `(4,4)` | a matrix; a 16-number, 9-number or 3x3 literal too |
+| `(n)` | any number of channels; a name used twice must agree (`lerp(a.t, uv, 0.5)` is 3 against 2) |
+| `(n?)`, `(3?)` | a scalar or a vector (of 3): a scalar end meets a vector end |
+| `[k]`, `[k](n?)` | a whole list, a reducer's data: of anything, or of scalars or vectors |
+| `a\|b` | either core: `(3)\|(4,4)` is a vector or a matrix |
+| `*core` | each `*args` argument |
+| `->...` | the results: one, several (`->(3),()`), or `->node` |
+
+A call broadcasts by what its arguments hold:
+
+- a plain list, tuple, range or array is one value when it fits the core
+  whole (`[0, 0, 10]` in a `(3)`), and rows when each of its elements does
+  (`[a.t, b.t]` in a `(3)`, `[0.25, 0.5]` in a `()`); an N x 3 array is N
+  rows, and a `List` is always rows;
+- in a `()` parameter, a flat list of scalars is one vector when it lines
+  up with a vector's channels in another `()` parameter
+  (`f.clamp(p.t, [0, 0, 0], 1)`), and rows otherwise
+  (`f.clamp([p.tx, q.tx], 0, 1)` is two clamps);
+- rows meet single values and rows of one or of the same length, as `<<`
+  and the `List` operators pair (section 6); any other length is a
+  `ValueError`, and a value that fits neither way a `TypeError`, both
+  raised before a node is built, naming the parameter and the layout;
+- a call with rows returns a `List` of its results, even of one or of
+  none; a call without rows returns its one value.
+
+```python
+from rig import vector as v, functions as f
+
+p, q, r = ctrls
+p.t << (10, 0, 0)
+q.t << (0, 10, 0)
+print(v.slerp.__doc__.strip().splitlines()[-1].strip())  # Layout ``(3),(3),()->(3)``: input1 (3), input2 (3), weight ().
+print(len(v.slerp(p.t, q.t, [0.25, 0.5, 0.75])))          # 3  -- three weights, three slerps
+print(type(v.slerp(p.t, q.t, [0.5])).__name__, type(v.slerp(p.t, q.t, 0.5)).__name__)  # List Plug  -- a list in, a List out
+print(len(v.lerp([p.t, q.t], [0, 0, 10], 0.5)))           # 2  -- a list of vectors is rows; [0, 0, 10] is one vector
+print(len(f.clamp([p.tx, q.tx], 0, 1)), type(f.clamp(p.t, [0, 0, 0], 1)).__name__)  # 2 Plug
+try:
+    v.slerp([p.t, q.t], r.t, [0.25, 0.5, 0.75])
+except ValueError as err:
+    print(err)  # rig.vector.slerp(): input1 has 2 rows and weight has 3 rows; each must have 1 row or 3 (layout (3),(3),()->(3))
+
+
+@vectorize("(3),()->(3)")
+def scaled(point, k):
+    return point * k
+
+
+print(len(scaled(ctrls.t, [1, 2, 3])), type(scaled(p.t, 2)).__name__)  # 3 Plug
+try:
+    scaled(p.tx, 2)
+except TypeError as err:
+    print(str(err).split("(): ", 1)[1])  # point takes a 3-channel vector (3), or rows of them (a List or a list of them); got a scalar plug (layout (3),()->(3))
 ```
 
 `prune_memoize_caches()` walks every `@memoize` and `NodeOp` cache and
@@ -2103,11 +2168,26 @@ Seven rules that hold everywhere:
 |---|---|
 | Literals fold | all-number input returns a Python number and builds nothing (`f.clamp(5, 0, 1)` is `1`). `tween` and `random` are the exceptions: they always build |
 | Calls are memoised | the same function with the same arguments returns the same plug, so a value used twice costs one network |
-| `List` broadcasts, a plain list is a value | `f.abs(List([a, b]))` is two networks; `f.abs([a, b])` tries to inject a 2-vector. A weight is the exception: it takes one number, so a plain list, tuple or array there is one call per number, as a `List` is: `v.slerp(a.t, b.t, [0.25, 0.5, 0.75])` is three slerps (`lerp` / `slerp` / `elerp` of `vector`, the `slerp`s of `quaternion`, `euler` and `matrix`, matrix `blend` / `lerp` / `pow`, quaternion `pow`) |
+| A list is one value or rows | each function's layout (section 13, the table below) says what one call takes: a plain list that fits it whole is one value (`v.lerp(a.t, [0, 0, 10], 0.5)`), one whose elements each fit is rows (`v.slerp(a.t, b.t, [0.25, 0.5, 0.75])` is three slerps, `v.slerp([a.t, b.t], c.t, 0.5)` two, `f.abs([a.tx, b.tx])` two absolutes), and a `List` is always rows. Rows pair as `<<` and the `List` operators pair: one for all, or one each, and any other length is a `ValueError` before a node is built. A call with rows returns a `List`, even of one |
 | Maya 2024+ gets native nodes | `absolute`, `clampRange`, `sin`, `dotProduct`, `lerp`, `smoothStep` … Older Maya gets the equivalent legacy network — same value, more nodes. Each section's table says which |
 | `functions` shadows builtins | `abs`, `int`, `round`, `min`, `max`, `sum`, `pow`, `all`, `any` … Always `from rig import functions as f`, never `import *` |
 | A plain string is not an operand | `f.abs("src.tx")` and `v.lerp(a, [1, "src.tx", 0])` raise `TypeError` before any node is built; write `Plug("src.tx")`. Config strings pass through: `side=`, `axis=`, `name=`, `dtype=`. `method=` takes a callable; `rotate_order` takes a name (`"zxy"`, matched like an enum plug's fields, so `"ZXY"` too), a number or a plug, and any other string is a `TypeError` |
 | An operand has an order | a `set`, `frozenset` or `dict` raises `TypeError` before any node is built; a generator or an iterator is read into a list first, so `f.sum(c.tx for c in ctrls)` works |
+
+What one call of each function takes, its layout (section 13); a `()`
+value is a number, or a plug computed channel by channel:
+
+| Module | Layouts |
+|---|---|
+| `functions` | `()->()` abs, ceil, exp, floor, int, logical_not, rev, sign, sqrt, trunc · `(),()->()` greater_than, greater_or_equal, less_than, less_or_equal, not_equal, logical_and, logical_or, logical_xor, log, pow, round · `(),(),()->()` clamp, equal · `[k](n?)->(n?)` sum, avg, max, min · `[k]->()` all, any, argmin, argmax, choice · `[k],()->()` searchsorted; `cumsum` and `diff` take a list and return one |
+| `trigonometry` | `()->()` sin, cos, tan, asin, acos, atan, their degree forms (`sind` ... `atand`), degrees, radians · `(),()->()` atan2, atan2d |
+| `vector` | `(n?),(n?),()->(n?)` lerp, elerp · `(3),(3),()->(3)` slerp, rotate · `(3),(3)->(3)` cross · `(3),(3)->()` dot, angle, angle_degrees · `(3),(3),(3)->()` triple_product · `(3)->(3)` normalize · `(n)\|(4,4)->()` length · `(3)\|(4,4),(3)\|(4,4)->()` dist (`matrix.dist` too) |
+| `matrix` | `(4,4)->(4,4)` inverse, transpose, normalize · `(4,4),(4,4),()->(4,4)` lerp, blend, slerp · `(4,4),()->(4,4)` pow · `*(4,4)->(4,4)` add · `*(4,4)\|(3)->(4,4)\|(3)` multiply · `(4,4)->(3)` translation, rotation, scale_of · `(4,4),()->(3)` axis, to_euler · `(4,4),()->(4)` column · `(4,4),()->(4)\|(3)` row · `(4,4)->(4)` to_quaternion · `(4,4)->()` determinant · `(4,4),()->node` decompose · `(3?),(3)\|(4),(3?),(3?),()->(4,4)` compose · `(3),(3),(3),(3)->(4,4)` aim, fourbyfour · `(3),(4,4)->(3)` transform_point, transform_vector |
+| `quaternion` | `(4)->(4)` conjugate, inverse, negate, normalize · `(4),(4)->(4)` add, subtract, multiply · `(4),(4),()->(4)` slerp · `(4),()->(4)` pow · `(4),(4)->()` angle, angle_degrees · `(3),()->(4)` from_axis_angle · `(4),()->(3)` to_euler · `(4)->(3)` to_vector · `(4)->(3),()` to_axis_angle · `(4)->(4,4)` to_matrix |
+| `euler` | `(3),(3),()->(3)` slerp · `(3),(),()->(3)` reorder · `(3),()->(4)` to_quaternion · `(3),()->(4,4)` to_matrix |
+| `interpolate` | `(),(),()->()` smoothstep, smootherstep, inverse_lerp · `(),[k],[k]->()` sequence; `interp` takes numpy's arguments as they are |
+| `tween` | `()->()` all 42 curves |
+| `random` | `()->()` value · `(),(),()->()` uniform, randint · `()->(3)` value3D · `(3?),(3?),()->(3)` uniform3D, randint3D |
 
 With the default options every composite function's container is
 flattened, so you get the raw node plugs shown here.
@@ -2468,7 +2548,7 @@ Moving a point through a matrix, with and without its translation:
 ```python
 pnt = Node.create("transform", name="pnt")
 pnt.t << (1, 0, 0)
-print(kind(m.transform_point(pnt.t, drv.matrix)),  m.transform_point(pnt.t, drv.matrix) >> None)   # multiplyPointByMatrix  [10.  0. -3.]
+print(kind(m.transform_point(pnt.t, drv.matrix)),  m.transform_point(pnt.t, drv.matrix) >> None)   # multiplyPointByMatrix [10.  0. -3.]
 print(kind(m.transform_vector(pnt.t, drv.matrix)), m.transform_vector(pnt.t, drv.matrix) >> None)  # multiplyVectorByMatrix [ 0.  0. -3.]
 print(kind(m.multiply(pnt.t, drv.matrix)))                                                         # multiplyPointByMatrix -- two args, one a vector: a point transform
 ```
@@ -2953,11 +3033,13 @@ for call in (lambda: lerp(qa, qb), lambda: to_matrix(p0.t), lambda: dist(1.0, 2.
 # blend() does not support vector operands
 ```
 
-A `List` operand is classified by its first element and broadcast:
+A `List` operand, or a plain list of vectors, is classified by its first
+element and broadcast:
 
 ```python
 out = lerp(List([p0.t, p1.t]), List([p1.t, p0.t]), weight=0.5)
 print(repr(out), len(out))     # List([Plug("lerp_out2.value"), Plug("lerp_out3.value")]) 2
+print(len(lerp([p0.t, p1.t], [p1.t, p0.t], weight=0.5)))   # 2  -- the same two rows
 ```
 
 ---
