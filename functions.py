@@ -532,13 +532,28 @@ def sign(token: Any) -> Any:
         return container.publish_output(condition(token < 0, -1, 1), "output")
 
 
+def _power(base: Any, exponent: Any) -> Any:
+    """``base ** exponent`` of two numbers, as the network computes it (Maya's
+    ``power`` node, ``multiplyDivide``'s power, numpy): a negative base to a
+    fractional power is nan, where Python's ``**`` gives a complex number, and
+    0 to a negative power is an infinity, where Python raises
+    ZeroDivisionError (-inf for -0.0 to an odd power)."""
+    try:
+        value = base**exponent
+    except ZeroDivisionError:
+        odd = float(exponent).is_integer() and int(exponent) % 2 == 1
+        return -math.inf if odd and math.copysign(1.0, base) < 0 else math.inf
+    return math.nan if isinstance(value, complex) else value
+
+
 @operands
 @vectorize("()->()")
 @memoize(foldable="scalar")
 def sqrt(token: Any) -> Any:
-    """``sqrt(x)`` -- same as ``x ** 0.5``."""
+    """``sqrt(x)`` -- same as ``x ** 0.5``: a negative number folds to nan, as
+    the network gives it."""
     if ContainerOptions.constant_folding and isinstance(token, numbers.Real):
-        return token**0.5
+        return _power(token, 0.5)
     return _multiply_divide_op(token, 0.5, operation=3, name="sqrt1")
 
 
@@ -546,11 +561,13 @@ def sqrt(token: Any) -> Any:
 @vectorize("(),()->()")
 @memoize(foldable="scalar")
 def pow(base: Any, exponent: Any) -> Any:
-    """``pow(b, e)`` -- same as ``b ** e``."""
+    """``pow(b, e)`` -- same as ``b ** e``. Numbers fold to what the network
+    gives: nan for a negative base to a fractional power, an infinity for 0 to
+    a negative power."""
     if ContainerOptions.constant_folding and builtins.all(
         isinstance(x, numbers.Real) for x in (base, exponent)
     ):
-        return base**exponent
+        return _power(base, exponent)
     return _multiply_divide_op(base, exponent, operation=3, name="pow1")
 
 

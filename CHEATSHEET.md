@@ -2166,7 +2166,7 @@ Seven rules that hold everywhere:
 
 | Rule | What it means |
 |---|---|
-| Literals fold | all-number input returns a Python number and builds nothing (`f.clamp(5, 0, 1)` is `1`). `tween` and `random` are the exceptions: they always build |
+| Literals fold | all-number input returns a Python number and builds nothing (`f.clamp(5, 0, 1)` is `1`). `random` is the exception: it always builds |
 | Calls are memoised | the same function with the same arguments returns the same plug, so a value used twice costs one network |
 | A list is one value or rows | each function's layout (section 13, the table below) says what one call takes: a plain list that fits it whole is one value (`v.lerp(a.t, [0, 0, 10], 0.5)`), one whose elements each fit is rows (`v.slerp(a.t, b.t, [0.25, 0.5, 0.75])` is three slerps, `v.slerp([a.t, b.t], c.t, 0.5)` two, `f.abs([a.tx, b.tx])` two absolutes), and a `List` is always rows. Rows pair as `<<` and the `List` operators pair: one for all, or one each, and any other length is a `ValueError` before a node is built. A call with rows returns a `List`, even of one |
 | Maya 2024+ gets native nodes | `absolute`, `clampRange`, `sin`, `dotProduct`, `lerp`, `smoothStep` … Older Maya gets the equivalent legacy network — same value, more nodes. Each section's table says which |
@@ -2911,14 +2911,14 @@ print({fam: round(built["in_" + fam] >> None, 4) for fam in families})
 
 Nothing is clamped: `t` outside `[0, 1]` extrapolates, which is what
 anticipation and follow-through want from `back` and `elastic`. Clamp
-the input yourself when you want a hold. Tweens are also the one
-library that builds nodes for a literal.
+the input yourself when you want a hold. A number folds, as everywhere
+in rig: the curve's value, and nothing built.
 
 ```python
 tt.tx << 1.2
 print(round(built["in_back"] >> None, 4), built["in_quad"] >> None)  # 2.2181 1.44
 print(tw.in_quad(f.clamp(tt.tx, 0, 1)) >> None)                      # 1.0
-print(repr(tw.in_quad(0.5)))                                         # Plug("pow17.output") -- a node, not 0.25
+print(tw.in_quad(0.5), round(tw.in_back(1.2), 4))                    # 0.25 2.2181 -- numbers in, numbers out
 ```
 
 Every tween is built from `functions` and `trigonometry`, so the node

@@ -31,10 +31,14 @@ Variants:
 ``linear`` / ``quad`` / ``cubic`` / ``quart`` / ``quint`` /
 ``sine`` / ``expo`` / ``circ`` / ``elastic`` / ``back`` / ``bounce``.
 
-All public functions are :func:`vectorize` + :func:`memoize`. Each
-wraps its network in a ``container("...")`` with published ``input``
-and ``output`` attributes (third_party.rig style) for clean grouping
-in the Maya node editor and a uniform module-factory interface.
+All public functions are :func:`vectorize` + :func:`memoize`. A curve
+of more than one node wraps its network in a ``container("...")`` with
+published ``input`` and ``output`` attributes (third_party.rig style)
+for clean grouping in the Maya node editor; a one-node curve
+(``out_linear``, ``in_quad``, ``in_cubic``, ``in_quart``, ``in_quint``)
+builds just its node, and ``in_linear`` returns ``t`` itself. A number
+folds, as rig's math does everywhere: ``in_quad(0.5)`` is ``0.25``, and
+no container or node is made.
 
 References:
     * https://kodi.wiki/view/Tweeners
@@ -43,14 +47,22 @@ References:
 
 from __future__ import annotations
 
+import numbers
 from typing import Any
 
-from rig._internal.container import container
+from rig._internal.container import container, ContainerOptions
 from rig._internal.math_nodes import condition
 from rig._internal.memoize import memoize, vectorize
 from rig._internal.operands import operands
 from rig.functions import pow, sqrt
 from rig.trigonometry import cosd, sind
+
+
+def _block(name: str, t: Any) -> Any:
+    """The curve's container: a real one around its network for a plug, none
+    for a number while literals fold (the curve folds to a number, as rig's
+    math does; under ``force_nodes()`` it builds its network, as before)."""
+    return container(name, enabled=not (ContainerOptions.constant_folding and isinstance(t, numbers.Real)))
 
 
 __all__ = [
@@ -117,22 +129,19 @@ __all__ = [
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_linear(t: Any) -> Any:
-    """Linear ease-in (no easing) -- identity function (returns ``t``)."""
-    with container("in_linear1"):
-        t = container.publish_input(t, "input")
-        return container.publish_output(t, "output")
+    """Linear ease-in (no easing) -- identity function: returns ``t`` itself,
+    no node."""
+    return t
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_linear(t: Any) -> Any:
-    """Linear ease-out (no easing). Mirror of in_linear."""
-    with container("out_linear1"):
-        t = container.publish_input(t, "input")
-        return container.publish_output(in_linear(1 - t), "output")
+    """Linear ease-out (no easing). Mirror of in_linear: ``1 - t``, one node."""
+    return in_linear(1 - t)
 
 
 # --------------------------------------------------------------------- #
@@ -142,30 +151,28 @@ def out_linear(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_quad(t: Any) -> Any:
-    """Quadratic ease-in (t^2). Accelerating from zero velocity."""
-    with container("in_quad1"):
-        t = container.publish_input(t, "input")
-        return container.publish_output(pow(t, 2), "output")
+    """Quadratic ease-in (t^2). Accelerating from zero velocity. One node."""
+    return pow(t, 2)
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_quad(t: Any) -> Any:
     """Quadratic ease-out (-t*(t-2)). Decelerating to zero velocity."""
-    with container("out_quad1"):
+    with _block("out_quad1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(-t * (t - 2), "output")
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_out_quad(t: Any) -> Any:
     """Quadratic ease-in/out -- accel to halfway, then decel."""
-    with container("in_out_quad1"):
+    with _block("in_out_quad1", t):
         t       = container.publish_input(t, "input")
         lesser  = in_quad(t * 2) * 0.5
         greater = out_quad((t - 0.5) * 2) * 0.5 + 0.5
@@ -174,10 +181,10 @@ def in_out_quad(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_in_quad(t: Any) -> Any:
     """Quadratic ease-out/in -- decel to halfway, then accel."""
-    with container("out_in_quad1"):
+    with _block("out_in_quad1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(in_out_quad(1 - t), "output")
 
@@ -189,27 +196,25 @@ def out_in_quad(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_cubic(t: Any) -> Any:
-    """Cubic ease-in (t^3)."""
-    with container("in_cubic1"):
-        t = container.publish_input(t, "input")
-        return container.publish_output(pow(t, 3), "output")
+    """Cubic ease-in (t^3). One node."""
+    return pow(t, 3)
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_cubic(t: Any) -> Any:
     """Cubic ease-out ((t-1)^3 + 1)."""
-    with container("out_cubic1"):
+    with _block("out_cubic1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(pow((t - 1), 3) + 1, "output")
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_out_cubic(t: Any) -> Any:
     """Cubic ease-in/out.
 
@@ -217,7 +222,7 @@ def in_out_cubic(t: Any) -> Any:
     ``out_quart`` here -- assumed to be a copy-paste typo. This v2 port
     uses ``in_cubic`` / ``out_cubic`` for self-consistency.
     """
-    with container("in_out_cubic1"):
+    with _block("in_out_cubic1", t):
         t       = container.publish_input(t, "input")
         lesser  = in_cubic(t * 2) * 0.5
         greater = out_cubic((t - 0.5) * 2) * 0.5 + 0.5
@@ -226,10 +231,10 @@ def in_out_cubic(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_in_cubic(t: Any) -> Any:
     """Cubic ease-out/in."""
-    with container("out_in_cubic1"):
+    with _block("out_in_cubic1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(in_out_cubic(1 - t), "output")
 
@@ -241,30 +246,28 @@ def out_in_cubic(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_quart(t: Any) -> Any:
-    """Quartic ease-in (t^4)."""
-    with container("in_quart1"):
-        t = container.publish_input(t, "input")
-        return container.publish_output(pow(t, 4), "output")
+    """Quartic ease-in (t^4). One node."""
+    return pow(t, 4)
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_quart(t: Any) -> Any:
     """Quartic ease-out (1 - (t-1)^4)."""
-    with container("out_quart1"):
+    with _block("out_quart1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(-1 * (pow((t - 1), 4) - 1), "output")
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_out_quart(t: Any) -> Any:
     """Quartic ease-in/out."""
-    with container("in_out_quart1"):
+    with _block("in_out_quart1", t):
         t       = container.publish_input(t, "input")
         lesser  = in_quart(t * 2) * 0.5
         greater = out_quart((t - 0.5) * 2) * 0.5 + 0.5
@@ -273,10 +276,10 @@ def in_out_quart(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_in_quart(t: Any) -> Any:
     """Quartic ease-out/in."""
-    with container("out_in_quart1"):
+    with _block("out_in_quart1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(in_out_quart(1 - t), "output")
 
@@ -288,30 +291,28 @@ def out_in_quart(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_quint(t: Any) -> Any:
-    """Quintic ease-in (t^5)."""
-    with container("in_quint1"):
-        t = container.publish_input(t, "input")
-        return container.publish_output(pow(t, 5), "output")
+    """Quintic ease-in (t^5). One node."""
+    return pow(t, 5)
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_quint(t: Any) -> Any:
     """Quintic ease-out ((t-1)^5 + 1)."""
-    with container("out_quint1"):
+    with _block("out_quint1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(pow((t - 1), 5) + 1, "output")
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_out_quint(t: Any) -> Any:
     """Quintic ease-in/out."""
-    with container("in_out_quint1"):
+    with _block("in_out_quint1", t):
         t       = container.publish_input(t, "input")
         lesser  = in_quint(t * 2) * 0.5
         greater = out_quint((t - 0.5) * 2) * 0.5 + 0.5
@@ -320,10 +321,10 @@ def in_out_quint(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_in_quint(t: Any) -> Any:
     """Quintic ease-out/in."""
-    with container("out_in_quint1"):
+    with _block("out_in_quint1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(in_out_quint(1 - t), "output")
 
@@ -335,40 +336,40 @@ def out_in_quint(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_sine(t: Any) -> Any:
     """Sine ease-in (1 - cos(t*90deg))."""
-    with container("in_sine1"):
+    with _block("in_sine1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(-1 * cosd(t * 90) + 1, "output")
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_sine(t: Any) -> Any:
     """Sine ease-out (sin(t*90deg))."""
-    with container("out_sine1"):
+    with _block("out_sine1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(sind(t * 90), "output")
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_out_sine(t: Any) -> Any:
     """Sine ease-in/out (-0.5 * (cos(180deg*t) - 1))."""
-    with container("in_out_sine1"):
+    with _block("in_out_sine1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(-0.5 * (cosd(180 * t) - 1), "output")
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_in_sine(t: Any) -> Any:
     """Sine ease-out/in."""
-    with container("out_in_sine1"):
+    with _block("out_in_sine1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(in_out_sine(1 - t), "output")
 
@@ -380,27 +381,27 @@ def out_in_sine(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_expo(t: Any) -> Any:
     """Exponential ease-in (2^(10*(t-1)))."""
-    with container("in_expo1"):
+    with _block("in_expo1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(pow(2, 10 * (t - 1)), "output")
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_expo(t: Any) -> Any:
     """Exponential ease-out (1 - 2^(-10*t))."""
-    with container("out_expo1"):
+    with _block("out_expo1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(-1 * pow(2, (-10 * t)) + 1, "output")
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_out_expo(t: Any) -> Any:
     """Exponential ease-in/out.
 
@@ -408,7 +409,7 @@ def in_out_expo(t: Any) -> Any:
     ``out_quint`` here -- assumed to be a copy-paste typo. This v2 port
     uses ``in_expo`` / ``out_expo`` for self-consistency.
     """
-    with container("in_out_expo1"):
+    with _block("in_out_expo1", t):
         t       = container.publish_input(t, "input")
         lesser  = in_expo(t * 2) * 0.5
         greater = out_expo((t - 0.5) * 2) * 0.5 + 0.5
@@ -417,10 +418,10 @@ def in_out_expo(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_in_expo(t: Any) -> Any:
     """Exponential ease-out/in."""
-    with container("out_in_expo1"):
+    with _block("out_in_expo1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(in_out_expo(1 - t), "output")
 
@@ -432,30 +433,30 @@ def out_in_expo(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_circ(t: Any) -> Any:
     """Circular ease-in (1 - sqrt(1 - t^2))."""
-    with container("in_circ1"):
+    with _block("in_circ1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(-1 * sqrt(1 - (t * t)) + 1, "output")
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_circ(t: Any) -> Any:
     """Circular ease-out (sqrt(1 - (t-1)^2))."""
-    with container("out_circ1"):
+    with _block("out_circ1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(sqrt(1 - pow((t - 1), 2)), "output")
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_out_circ(t: Any) -> Any:
     """Circular ease-in/out."""
-    with container("in_out_circ1"):
+    with _block("in_out_circ1", t):
         t       = container.publish_input(t, "input")
         lesser  = in_circ(t * 2) * 0.5
         greater = out_circ((t - 0.5) * 2) * 0.5 + 0.5
@@ -464,10 +465,10 @@ def in_out_circ(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_in_circ(t: Any) -> Any:
     """Circular ease-out/in."""
-    with container("out_in_circ1"):
+    with _block("out_in_circ1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(in_out_circ(1 - t), "output")
 
@@ -483,10 +484,10 @@ _ELASTIC_S      = (_ELASTIC_PERIOD / 360) * 90
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_elastic(t: Any) -> Any:
     """Elastic ease-in (exponentially decaying sine wave)."""
-    with container("in_elastic1"):
+    with _block("in_elastic1", t):
         t = container.publish_input(t, "input")
         u = t - 1
         return container.publish_output(
@@ -497,10 +498,10 @@ def in_elastic(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_elastic(t: Any) -> Any:
     """Elastic ease-out (exponentially decaying sine wave)."""
-    with container("out_elastic1"):
+    with _block("out_elastic1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(
             pow(2, (-10 * t)) * sind((t - _ELASTIC_S) * 360 / _ELASTIC_PERIOD) + 1,
@@ -510,10 +511,10 @@ def out_elastic(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_out_elastic(t: Any) -> Any:
     """Elastic ease-in/out."""
-    with container("in_out_elastic1"):
+    with _block("in_out_elastic1", t):
         t       = container.publish_input(t, "input")
         lesser  = in_elastic(t * 2) * 0.5
         greater = out_elastic((t - 0.5) * 2) * 0.5 + 0.5
@@ -522,10 +523,10 @@ def in_out_elastic(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_in_elastic(t: Any) -> Any:
     """Elastic ease-out/in."""
-    with container("out_in_elastic1"):
+    with _block("out_in_elastic1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(in_out_elastic(1 - t), "output")
 
@@ -540,28 +541,28 @@ _BACK_S = 1.70158
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_back(t: Any) -> Any:
     """Back ease-in (overshooting cubic: t^2*((s+1)*t - s)).
 
     Designed to overshoot -- the formula naturally extrapolates outside
     ``[0, 1]`` for anticipation / follow-through animation.
     """
-    with container("in_back1"):
+    with _block("in_back1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(t * t * ((_BACK_S + 1) * t - _BACK_S), "output")
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_back(t: Any) -> Any:
     """Back ease-out.
 
     Designed to overshoot -- the formula naturally extrapolates outside
     ``[0, 1]`` for anticipation / follow-through animation.
     """
-    with container("out_back1"):
+    with _block("out_back1", t):
         t = container.publish_input(t, "input")
         u = t - 1
         return container.publish_output(
@@ -571,10 +572,10 @@ def out_back(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_out_back(t: Any) -> Any:
     """Back ease-in/out."""
-    with container("in_out_back1"):
+    with _block("in_out_back1", t):
         t       = container.publish_input(t, "input")
         lesser  = in_back(t * 2) * 0.5
         greater = out_back((t - 0.5) * 2) * 0.5 + 0.5
@@ -583,10 +584,10 @@ def in_out_back(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_in_back(t: Any) -> Any:
     """Back ease-out/in."""
-    with container("out_in_back1"):
+    with _block("out_in_back1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(in_out_back(1 - t), "output")
 
@@ -598,11 +599,11 @@ def out_in_back(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_bounce(t: Any) -> Any:
     """Bounce ease-out (exponentially decaying parabolic). Defined
     first because the in/in_out/out_in variants compose from this."""
-    with container("out_bounce1"):
+    with _block("out_bounce1", t):
         t  = container.publish_input(t, "input")
         b1 = 7.5625 * t * t
         b2 = t - (1.5 / 2.75)
@@ -619,20 +620,20 @@ def out_bounce(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_bounce(t: Any) -> Any:
     """Bounce ease-in (1 - out_bounce(1-t))."""
-    with container("in_bounce1"):
+    with _block("in_bounce1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(1 - out_bounce(1 - t), "output")
 
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def in_out_bounce(t: Any) -> Any:
     """Bounce ease-in/out."""
-    with container("in_out_bounce1"):
+    with _block("in_out_bounce1", t):
         t       = container.publish_input(t, "input")
         lesser  = in_bounce(t * 2) * 0.5
         greater = out_bounce((t - 0.5) * 2) * 0.5 + 0.5
@@ -641,9 +642,9 @@ def in_out_bounce(t: Any) -> Any:
 
 @operands
 @vectorize("()->()")
-@memoize
+@memoize(foldable="scalar")
 def out_in_bounce(t: Any) -> Any:
     """Bounce ease-out/in."""
-    with container("out_in_bounce1"):
+    with _block("out_in_bounce1", t):
         t = container.publish_input(t, "input")
         return container.publish_output(in_out_bounce(1 - t), "output")

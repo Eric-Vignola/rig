@@ -257,6 +257,26 @@ class TestPow(MayaTestCase):
             {"multiplyDivide", "power"},
         )
 
+    def test_numbers_fold_as_the_network_computes(self):
+        # Python's ** gives a complex number for a negative base to a fractional power,
+        # and raises for 0 to a negative power; the network gives nan and an infinity,
+        # and so does the fold (numpy's power gives the same)
+        import math
+
+        self.assertTrue(math.isnan(f.sqrt(-0.69)))
+        self.assertTrue(math.isnan(f.pow(-8.0, 1 / 3)))
+        self.assertEqual(f.pow(0.0, -1.0), math.inf)
+        self.assertEqual(f.pow(0, -2), math.inf)
+        self.assertEqual(f.pow(-0.0, -1.0), -math.inf)
+        self.assertEqual(f.pow(-2.0, 2.0), 4.0)
+        self.assertEqual(f.pow(-2.0, -1.0), -0.5)
+        self.assertEqual(f.pow(2, 3), 8)
+        a = Node.create("transform", name="a")
+        a.tx << -0.69
+        self.assertTrue(math.isnan(cmds.getAttr(str(f.sqrt(a.tx)))))
+        a.ty << 0
+        self.assertEqual(cmds.getAttr(str(f.pow(a.ty, -1.0))), math.inf)
+
 
 class TestChoice(MayaTestCase):
     TEST_START_NEW_SCENE = True

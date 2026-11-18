@@ -104,24 +104,23 @@ class TestTweenSpotChecks(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
     def test_in_linear_endpoints(self):
-        # in_linear is just clamp(t, 0, 1).
-        # (re-pinned, user decision 7A, 2026-10-17: each result is a plug, and
-        # plug == value has no truth value; these compared nothing: read .get())
-        self.assertAlmostEqual(tw.in_linear(0.0).get(), 0.0)
-        self.assertAlmostEqual(tw.in_linear(1.0).get(), 1.0)
-        self.assertAlmostEqual(tw.in_linear(0.5).get(), 0.5)
+        # in_linear is the identity. A number folds to a number (user, 2026-11-18:
+        # every tween given a number returns a number, as rig's math does)
+        self.assertEqual(tw.in_linear(0.0), 0.0)
+        self.assertEqual(tw.in_linear(1.0), 1.0)
+        self.assertEqual(tw.in_linear(0.5), 0.5)
 
     def test_in_quad_t_squared(self):
-        self.assertAlmostEqual(tw.in_quad(0.5).get(), 0.25)  # (re-pinned, user decision 7A: .get())
+        self.assertAlmostEqual(tw.in_quad(0.5), 0.25)
 
     def test_in_cubic_t_cubed(self):
-        self.assertAlmostEqual(tw.in_cubic(0.5).get(), 0.125)  # (re-pinned, user decision 7A: .get())
+        self.assertAlmostEqual(tw.in_cubic(0.5), 0.125)
 
     def test_in_quart_t_to_4(self):
-        self.assertAlmostEqual(tw.in_quart(0.5).get(), 0.0625)  # (re-pinned, user decision 7A: .get())
+        self.assertAlmostEqual(tw.in_quart(0.5), 0.0625)
 
     def test_in_quint_t_to_5(self):
-        self.assertAlmostEqual(tw.in_quint(0.5).get(), 0.03125)  # (re-pinned, user decision 7A: .get())
+        self.assertAlmostEqual(tw.in_quint(0.5), 0.03125)
 
 
 # --------------------------------------------------------------------- #
@@ -332,11 +331,12 @@ from rig import set_options
 
 
 class TestTweenPublishedInterface(MayaTestCase):
-    """Verify each composite easing function creates a container with a
-    published ``input`` and ``output`` attribute when
+    """Verify each composite easing function (more than one node) creates a
+    container with a published ``input`` and ``output`` attribute when
     ``flatten_containers=False``. Spot-checks one easing per family
     rather than enumerating all 42 variants -- the wrap pattern is
-    uniform, so a representative sample suffices.
+    uniform, so a representative sample suffices. A one-node curve builds
+    just its node, and ``in_linear`` none (`test_one_node_curves`).
 
     Naming convention: container = ``<funcname>1``, input = ``input``,
     output = ``output`` -- mirroring third_party.rig.
@@ -372,17 +372,20 @@ class TestTweenPublishedInterface(MayaTestCase):
                 f"{target}.{attr} should be published",
             )
 
-    def test_in_linear_publishes(self):
-        self._assert_published(tw.in_linear, "in_linear1")
-
-    def test_in_quad_publishes(self):
-        self._assert_published(tw.in_quad, "in_quad1")
+    def test_one_node_curves(self):
+        # one node and no container of its own, even with flatten_containers=False;
+        # in_linear is its input itself
+        n = Node.create("transform", name="src")
+        n.tx << 0.5
+        before = set(cmds.ls())
+        self.assertEqual(str(tw.in_linear(n.tx)), str(n.tx))
+        self.assertEqual(set(cmds.ls()) - before, set())
+        for name in ("in_quad", "in_cubic", "in_quart", "in_quint"):
+            self.assert_one_node(lambda: getattr(tw, name)(n.tx), ("power", "multiplyDivide"))
+        self.assert_one_node(lambda: tw.out_linear(n.tx), ("subtract", "plusMinusAverage"))
 
     def test_in_out_quad_publishes(self):
         self._assert_published(tw.in_out_quad, "in_out_quad1")
-
-    def test_in_cubic_publishes(self):
-        self._assert_published(tw.in_cubic, "in_cubic1")
 
     def test_in_sine_publishes(self):
         self._assert_published(tw.in_sine, "in_sine1")
@@ -401,3 +404,41 @@ class TestTweenPublishedInterface(MayaTestCase):
 
     def test_out_bounce_publishes(self):
         self._assert_published(tw.out_bounce, "out_bounce1")
+
+
+class TestTweenNumbersFold(MayaTestCase):
+    """A tween curve given a number returns a number and builds nothing, at the
+    top level as inside a block (user, 2026-11-18): the value its network gives
+    for a plug holding that number, nan included (``in_circ`` past 1 takes the
+    square root of a negative number). Under ``force_nodes()`` it builds."""
+
+    TEST_START_NEW_SCENE = True
+
+    def test_every_curve_folds_to_its_network_value(self):
+        import math
+        import numbers
+
+        src = Node.create("transform", name="src")
+        for name in _EASING_FUNCTIONS:
+            fn = getattr(tw, name)
+            for t in (-0.25, 0.0, 0.3, 0.5, 0.75, 1.0, 1.3):
+                with self.subTest(curve=name, t=t):
+                    before = set(cmds.ls())
+                    folded = fn(t)
+                    self.assertEqual(set(cmds.ls()) - before, set())
+                    self.assertIsInstance(folded, numbers.Real)
+                    src.tx << t
+                    live = cmds.getAttr(str(fn(src.tx)))
+                    if math.isnan(live):
+                        self.assertTrue(math.isnan(folded), f"{name}({t}) is {folded}, its network nan")
+                    else:
+                        self.assertAlmostEqual(folded, live, places=5)
+
+    def test_force_nodes_builds(self):
+        from rig import force_nodes
+
+        with force_nodes():
+            out = tw.in_out_quad(0.25)
+        self.assertIsInstance(out, Plug)
+        self.assertAlmostEqual(out.get(), 0.125, places=5)
+        self.assertTrue(cmds.ls(type="container"))
