@@ -551,6 +551,32 @@ class TestPerChannel(_Poles):
         np.testing.assert_allclose(_value(out), _value(rig.slerp(self.a.wm, self.b.wm, 0.5)), atol=1e-4)
 
 
+class TestTheInBetweensExample(_Poles):
+    """examples/in_betweens.py: N nodes between two matrices, one blendMatrix per weight"""
+
+    def test_three_nodes_between_the_poles(self):
+        from rig.examples import in_betweens
+        mids = in_betweens.create_in_betweens(self.a.wm, self.b.wm, count=3, node_type="locator")
+        self.assertIsInstance(mids, List)
+        self.assertEqual(len(cmds.ls(type="blendMatrix")), 3)
+        np.testing.assert_allclose(mids.weight.get(), W, atol=1e-6)
+        # a.t (2, 0, 0), b.t (10, 4, 0), b.s 2: a quarter, a half, three quarters of the way
+        np.testing.assert_allclose(mids.tx.get(), [4, 6, 8], atol=1e-4)
+        np.testing.assert_allclose(mids.sx.get(), [1.25, 1.5, 1.75], atol=1e-4)
+        mids[1].weight << 1                                          # live
+        self.assertAlmostEqual(mids[1].tx.get(), 10, places=4)
+
+    def test_it_checks_before_it_builds(self):
+        from rig.examples import in_betweens
+        before = set(cmds.ls())
+        for kwargs, words in (({"count": 0}, "at least one"), ({"weights": [0.5]}, "must be 3 numbers"),
+                              ({"weights": [0.2, 0.5, 2]}, "from 0 to 1"), ({"node_type": "cube"}, "one of")):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaisesRegex(ValueError, words):
+                    in_betweens.create_in_betweens(self.a.wm, self.b.wm, **kwargs)
+        self.assertEqual(set(cmds.ls()) - before, set())
+
+
 class TestWeights(_Poles):
     def test_the_matrix_verbs(self):
         a, b = self.a, self.b

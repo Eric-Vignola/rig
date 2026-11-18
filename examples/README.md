@@ -1,8 +1,8 @@
-# `rig.examples` — five rigs, built end to end
+# `rig.examples` — six rigs, built end to end
 
-Five scripts that each build something complete with the DSL: two rail
-spines (a tutorial one and the full one), a limb twist, a camera sticker
-rig and a looping image plane. Each is a plain module with one build function; the
+Six scripts that each build something complete with the DSL: two rail
+spines (a tutorial one and the full one), a limb twist, in-betweens
+between two matrices, a camera sticker rig and a looping image plane. Each is a plain module with one build function; the
 `__main__` block at the bottom is its demo. The module docstrings say what
 each script does and which features it leans on — read those first, then
 run one.
@@ -48,6 +48,7 @@ print(Node(riders[-1]).t.get())                  # [ 0. 15.  0.]
 | The tutorial spine, one feature at a time | [`rail_spine_simple.py`](rail_spine_simple.py) — about 100 lines of rig code |
 | The full spine: closed loops, any odd degree, projection modes | [`rail_spine.py`](rail_spine.py) |
 | Twist nodes between two matrices (transforms, locators, joints or cubes), the limb's twist shared out by each one's `u` | [`limb_twist.py`](limb_twist.py) |
+| Nodes between two matrices, one `blend` per weight: a list of weights is rows | [`in_betweens.py`](in_betweens.py) |
 | Image planes that hold their aspect and their size in frame | [`perspective_image_planes.py`](perspective_image_planes.py) |
 | One plane that loops a numbered image sequence | [`image_loop.py`](image_loop.py) |
 | The docstring of any of them, from a Maya prompt | `help(rail_spine_simple)` after the import |
@@ -61,6 +62,7 @@ print(Node(riders[-1]).t.get())                  # [ 0. 15.  0.]
 | `rail_spine_simple.py` | a cubic curve driven by N controls, M rider joints along it, four knobs | `create_simple_rail(position_controls, riders=10, ...)` |
 | `rail_spine.py` | the same rail with closed loops, degree 1/3/5/7, per-control orient and scale, three projection modes | `create_rail(position_controls, u, ...)` |
 | `limb_twist.py` | N twist nodes (transforms, locators, joints or cubes) between a start and an end matrix, slerping the two end frames by each node's `u`, with live pole axes and flips | `create_limb_twist(start_matrix, end_matrix, count=5, node_type="transform", ...)` |
+| `in_betweens.py` | N nodes (transforms, locators or joints) between two matrices, each blending them by its live `weight`: one `blendMatrix` per node | `create_in_betweens(start_matrix, end_matrix, count=3, weights=None, node_type="transform", ...)` |
 | `perspective_image_planes.py` | a camera plus N image planes under it, each shaped to its image and sized by its distance | `create_setup(camera, count, ...)` |
 | `image_loop.py` | one plane facing +Z that loops a numbered image sequence forever | `create_plane(image_dir, name="image_loop", target_size=10.0)` |
 | `images/` | `dog1.jpg` … `dog5.jpg` — a fixture both image scripts can eat | |
@@ -69,36 +71,38 @@ print(Node(riders[-1]).t.get())                  # [ 0. 15.  0.]
 
 Every builder returns rig objects, never strings: the rail's `Transform`
 node, a `namedtuple` of nodes and `List`s for the limb twist and the
-image rigs.
+image rigs, a `List` of nodes for the in-betweens.
 
 ### Which language features each one showcases
 
-| Feature | `rail_spine_simple` | `rail_spine` | `limb_twist` | `perspective_image_planes` | `image_loop` |
-|---|---|---|---|---|---|
-| `with container("name"):` — a scoped utility graph | yes | yes | yes | yes | yes |
-| `container.add(node)` — enrol a node made outside the scope | | | | yes | yes |
-| `rc.*` — `maya.cmds` returning nodes / `List` (`rc.curve`, `rc.polyPlane`, `rc.parent`) | yes | yes | yes | yes | yes |
-| `rn.*` — node factories with attribute kwargs (`rn.motionPath()`, `rn.file()`, `rn.curveInfo()`) | yes | yes | yes | yes | yes |
-| `node << Float("x", min=0, max=1) << value << lock` spec injection | `Float` | `Float`, `Enum` | `Float`, `Enum` | `Float`, `Int`, `Enum`, `String` | `Float`, `Int`, `String` |
-| `plug << lock`, `plug << hide` | `hide` | both | | both | `lock` |
-| `List(controls).wm * rail.wim` — broadcast matrix multiply | yes | yes | | | |
-| `rail_shape.cv[:] << matrices` — matrix-to-CV shorthand | yes | yes | | | |
-| `rider << matrix_plug` — matrix-to-transform shorthand (t / r / s + shear) | yes | yes | yes | | |
-| `plug.get()` — the `getAttr` idiom | yes | yes | yes | | demo |
-| `matrix.axis`, `matrix.multiply(local=True)`, `matrix.decompose` | axis, multiply | multiply, decompose | multiply | | |
-| `matrix.aim`, `to_quaternion`, `matrix.compose`, `matrix.translation` — an aim frame, and a matrix from a quaternion and a point | `compose` | | yes | | |
-| `quaternion.from_axis_angle`, `quaternion.pow` — a turn as a quaternion, and a share of it | yes | | | | |
-| `normalize`, `dist` — cross-type dispatch verbs | `normalize` | both | `normalize` | `dist` | |
-| `lerp`, `slerp`, `elerp`, `interpolate.sequence(method=...)` | `lerp` | `slerp`, `elerp`, `sequence` | `lerp`, `slerp` (quaternions) | | |
-| `condition(a > b, x, y)` — comparisons build `condition` nodes | `rf.condition` | yes | `rf.condition` | yes | yes |
-| `rf.choice`, `rf.clamp`, `rf.cumsum`, `rf.rev`, `rf.max`, `rf.abs` | | choice, clamp, cumsum, rev | choice | choice, clamp, rev, max, abs | rev |
-| `rf.frame()` and `%` — scene time and modulo | | `%` | | both | both |
-| `trigonometry.atand`, `trigonometry.sind` — degree variants, no conversion nodes | | | | yes | |
-| `constant(0)` — a literal that must be a plug | | yes | | yes | |
-| `Lambert.create(name=..., ...)` — a new material network; `shape << material` | | | | yes | yes |
-| `set_options(create_containers=...)` | | demo | | | |
-| `container=False` on a factory, then `rc.parent` | yes | yes | yes | yes | `container=False` only |
-| `Lambert.create(..., container=True)` — a per-plane look opts into the container | | | | yes | yes |
+| Feature | `rail_spine_simple` | `rail_spine` | `limb_twist` | `perspective_image_planes` | `image_loop` | `in_betweens` |
+|---|---|---|---|---|---|---|
+| `with container("name"):` — a scoped utility graph | yes | yes | yes | yes | yes | yes |
+| `container.add(node)` — enrol a node made outside the scope | | | | yes | yes | |
+| `rc.*` — `maya.cmds` returning nodes / `List` (`rc.curve`, `rc.polyPlane`, `rc.parent`) | yes | yes | yes | yes | yes | yes |
+| `rn.*` — node factories with attribute kwargs (`rn.motionPath()`, `rn.file()`, `rn.curveInfo()`) | yes | yes | yes | yes | yes | yes |
+| `node << Float("x", min=0, max=1) << value << lock` spec injection | `Float` | `Float`, `Enum` | `Float`, `Enum` | `Float`, `Int`, `Enum`, `String` | `Float`, `Int`, `String` | `Float` |
+| `plug << lock`, `plug << hide` | `hide` | both | | both | `lock` | |
+| `List(controls).wm * rail.wim` — broadcast matrix multiply | yes | yes | | | | |
+| `rail_shape.cv[:] << matrices` — matrix-to-CV shorthand | yes | yes | | | | |
+| `rider << matrix_plug` — matrix-to-transform shorthand (t / r / s + shear) | yes | yes | yes | | | yes |
+| `plug.get()` — the `getAttr` idiom | yes | yes | yes | | demo | demo |
+| `matrix.axis`, `matrix.multiply(local=True)`, `matrix.decompose` | axis, multiply | multiply, decompose | multiply | | | |
+| `matrix.aim`, `to_quaternion`, `matrix.compose`, `matrix.translation` — an aim frame, and a matrix from a quaternion and a point | `compose` | | yes | | | |
+| `quaternion.from_axis_angle`, `quaternion.pow` — a turn as a quaternion, and a share of it | yes | | | | | |
+| `normalize`, `dist` — cross-type dispatch verbs | `normalize` | both | `normalize` | `dist` | | |
+| `lerp`, `slerp`, `elerp`, `interpolate.sequence(method=...)` | `lerp` | `slerp`, `elerp`, `sequence` | `lerp`, `slerp` (quaternions) | | | `blend` |
+| A list is rows — `matrix.axis([wm0, wm1])`, `rf.choice(..., selector=[...])`, `matrix.aim(v, [up0, up1])`: one call per element | `matrix.axis` | | yes | | | |
+| A `List` of values is rows — `slerp(a, b, twists.u)`, `blend(a.wm, b.wm, nodes.weight)`: one call per node | | | yes | | | yes |
+| `condition(a > b, x, y)` — comparisons build `condition` nodes | `rf.condition` | yes | `rf.condition` | yes | yes | |
+| `rf.choice`, `rf.clamp`, `rf.cumsum`, `rf.rev`, `rf.max`, `rf.abs` | | choice, clamp, cumsum, rev | choice | choice, clamp, rev, max, abs | rev | |
+| `rf.frame()` and `%` — scene time and modulo | | `%` | | both | both | |
+| `trigonometry.atand`, `trigonometry.sind` — degree variants, no conversion nodes | | | | yes | | |
+| `constant(0)` — a literal that must be a plug | | yes | | yes | | |
+| `Lambert.create(name=..., ...)` — a new material network; `shape << material` | | | | yes | yes | |
+| `set_options(create_containers=...)` | | demo | | | | |
+| `container=False` on a factory, then `rc.parent` | yes | yes | yes | yes | `container=False` only | `container=False` only |
+| `Lambert.create(..., container=True)` — a per-plane look opts into the container | | | | yes | yes | |
 
 `rc` is `rig.bridges.commands`, `rn` is `rig.bridges.nodes`, `rf` is
 `rig.functions`.
@@ -115,19 +119,20 @@ nodes or a `List` of either.
 ```python
 from rig import Node, List
 from rig.bridges import commands as rc
-from rig.examples import rail_spine_simple, rail_spine, limb_twist, perspective_image_planes, image_loop
+from rig.examples import rail_spine_simple, rail_spine, limb_twist, in_betweens, perspective_image_planes, image_loop
 
 controls = rc.ls(selection=True)                                # a List of the selected controls
 rail     = rail_spine_simple.create_simple_rail(controls, riders=10)
 rail     = rail_spine.create_rail(controls, 20, orient_controls=controls, scale_controls=controls)
 twist    = limb_twist.create_limb_twist(controls[0].wm, controls[1].wm, count=5, node_type="joint")  # .root .twists
+mids     = in_betweens.create_in_betweens(controls[0].wm, controls[1].wm, count=3)               # a List
 setup    = perspective_image_planes.create_setup("camera1", 5)  # .camera .planes .shapes
 loop     = image_loop.create_plane(image_loop.LOOP_FRAMES)     # .transform .shape .material .texture
 ```
 
 The `__main__` block at the bottom of each file is a demo: open the file
 in the Script Editor and run it, and `__name__` is `"__main__"` there, so
-the demo builds. The two rail demos and the limb twist demo need nothing;
+the demo builds. The two rail demos, the limb twist and the in-betweens demos need nothing;
 the two image demos use the pictures beside them: the five photos of
 `images/` (`perspective_image_planes`) and the 24 frames of `images/loop/`
 (`image_loop`: a ball bouncing on a transparent background, which
@@ -393,6 +398,49 @@ Each twist node takes its `u`'s share of the twist: none on `twist1`, a
 quarter on `twist2`, all of it on `twist5`. With `twist2` at `u = 0.5` it
 sits on `twist3` and takes the same half. Flip `endInvert` and the end's
 `+Y` becomes its pole: the twist runs the other way.
+
+---
+
+## `in_betweens.py` — nodes between two matrices
+
+`create_in_betweens(start_matrix, end_matrix, count=3, weights=None, node_type="transform", name="inBetween1")`
+puts `count` nodes between two matrices (a hip's `wm` and its knee's,
+say), each at its own share of the way from one to the other. It is the
+shortest rig of rows: the nodes get their weights at once,
+`nodes << Float("weight", min=0, max=1) << weights`, and one call blends
+the matrices for all of them, `nodes << blend(start, end, nodes.weight)`.
+`nodes.weight` is a `List`, so `blend` makes one `blendMatrix` per node
+(rotation slerped, translation and scale lerped), and the `List` of
+matrices goes into the nodes one by one. A plain list of numbers is rows
+the same way: `blend(start, end, [0.25, 0.5, 0.75])` is three blends.
+
+Without `weights=` the nodes are evenly spaced strictly between the two
+matrices (three of them: 0.25, 0.5 and 0.75); each `weight` stays live.
+The nodes are made at the top of the scene, as the matrices are world
+ones: parent one and the injection reads the matrix in the parent's space.
+
+```python
+cmds.file(new=True, force=True)
+from rig.bridges import nodes as rn
+from rig.examples import in_betweens
+
+start = rn.transform(name="start")
+end   = rn.transform(name="end")
+end.t << (10, 4, 0)
+end.r << (0, 90, 0)
+end.s << (2, 2, 2)
+
+mids = in_betweens.create_in_betweens(start.wm, end.wm, count=3, node_type="locator")
+print([str(node) for node in mids])         # ['inBetween1', 'inBetween2', 'inBetween3']
+print(mids.weight.get())                    # [0.25 0.5  0.75]
+print(mids.tx.get())                        # [2.5 5.  7.5]
+print(mids.ry.get())                        # [22.5 45.  67.5]
+print(mids.sx.get())                        # [1.25 1.5  1.75]
+print(len(cmds.ls(type="blendMatrix")))     # 3
+
+mids[1].weight << 0.9                        # slide inBetween2 most of the way to end
+print(mids.tx.get())                        # [2.5 9.  7.5]
+```
 
 ---
 
