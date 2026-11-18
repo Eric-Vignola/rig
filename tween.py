@@ -116,7 +116,7 @@ __all__ = [
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_linear(t: Any) -> Any:
     """Linear ease-in (no easing) -- identity function (returns ``t``)."""
@@ -126,7 +126,7 @@ def in_linear(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_linear(t: Any) -> Any:
     """Linear ease-out (no easing). Mirror of in_linear."""
@@ -141,7 +141,7 @@ def out_linear(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_quad(t: Any) -> Any:
     """Quadratic ease-in (t^2). Accelerating from zero velocity."""
@@ -151,7 +151,7 @@ def in_quad(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_quad(t: Any) -> Any:
     """Quadratic ease-out (-t*(t-2)). Decelerating to zero velocity."""
@@ -161,7 +161,7 @@ def out_quad(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_out_quad(t: Any) -> Any:
     """Quadratic ease-in/out -- accel to halfway, then decel."""
@@ -173,7 +173,7 @@ def in_out_quad(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_in_quad(t: Any) -> Any:
     """Quadratic ease-out/in -- decel to halfway, then accel."""
@@ -188,7 +188,7 @@ def out_in_quad(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_cubic(t: Any) -> Any:
     """Cubic ease-in (t^3)."""
@@ -198,7 +198,7 @@ def in_cubic(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_cubic(t: Any) -> Any:
     """Cubic ease-out ((t-1)^3 + 1)."""
@@ -208,7 +208,7 @@ def out_cubic(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_out_cubic(t: Any) -> Any:
     """Cubic ease-in/out.
@@ -225,7 +225,7 @@ def in_out_cubic(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_in_cubic(t: Any) -> Any:
     """Cubic ease-out/in."""
@@ -240,7 +240,7 @@ def out_in_cubic(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_quart(t: Any) -> Any:
     """Quartic ease-in (t^4)."""
@@ -250,7 +250,7 @@ def in_quart(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_quart(t: Any) -> Any:
     """Quartic ease-out (1 - (t-1)^4)."""
@@ -260,7 +260,7 @@ def out_quart(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_out_quart(t: Any) -> Any:
     """Quartic ease-in/out."""
@@ -272,7 +272,7 @@ def in_out_quart(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_in_quart(t: Any) -> Any:
     """Quartic ease-out/in."""
@@ -287,7 +287,7 @@ def out_in_quart(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_quint(t: Any) -> Any:
     """Quintic ease-in (t^5)."""
@@ -297,7 +297,7 @@ def in_quint(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_quint(t: Any) -> Any:
     """Quintic ease-out ((t-1)^5 + 1)."""
@@ -307,7 +307,7 @@ def out_quint(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_out_quint(t: Any) -> Any:
     """Quintic ease-in/out."""
@@ -319,7 +319,7 @@ def in_out_quint(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_in_quint(t: Any) -> Any:
     """Quintic ease-out/in."""
@@ -334,7 +334,7 @@ def out_in_quint(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_sine(t: Any) -> Any:
     """Sine ease-in (1 - cos(t*90deg))."""
@@ -344,7 +344,7 @@ def in_sine(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_sine(t: Any) -> Any:
     """Sine ease-out (sin(t*90deg))."""
@@ -354,7 +354,7 @@ def out_sine(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_out_sine(t: Any) -> Any:
     """Sine ease-in/out (-0.5 * (cos(180deg*t) - 1))."""
@@ -364,7 +364,7 @@ def in_out_sine(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_in_sine(t: Any) -> Any:
     """Sine ease-out/in."""
@@ -379,7 +379,7 @@ def out_in_sine(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_expo(t: Any) -> Any:
     """Exponential ease-in (2^(10*(t-1)))."""
@@ -389,7 +389,7 @@ def in_expo(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_expo(t: Any) -> Any:
     """Exponential ease-out (1 - 2^(-10*t))."""
@@ -399,7 +399,7 @@ def out_expo(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_out_expo(t: Any) -> Any:
     """Exponential ease-in/out.
@@ -416,7 +416,7 @@ def in_out_expo(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_in_expo(t: Any) -> Any:
     """Exponential ease-out/in."""
@@ -431,7 +431,7 @@ def out_in_expo(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_circ(t: Any) -> Any:
     """Circular ease-in (1 - sqrt(1 - t^2))."""
@@ -441,7 +441,7 @@ def in_circ(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_circ(t: Any) -> Any:
     """Circular ease-out (sqrt(1 - (t-1)^2))."""
@@ -451,7 +451,7 @@ def out_circ(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_out_circ(t: Any) -> Any:
     """Circular ease-in/out."""
@@ -463,7 +463,7 @@ def in_out_circ(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_in_circ(t: Any) -> Any:
     """Circular ease-out/in."""
@@ -482,7 +482,7 @@ _ELASTIC_S      = (_ELASTIC_PERIOD / 360) * 90
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_elastic(t: Any) -> Any:
     """Elastic ease-in (exponentially decaying sine wave)."""
@@ -496,7 +496,7 @@ def in_elastic(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_elastic(t: Any) -> Any:
     """Elastic ease-out (exponentially decaying sine wave)."""
@@ -509,7 +509,7 @@ def out_elastic(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_out_elastic(t: Any) -> Any:
     """Elastic ease-in/out."""
@@ -521,7 +521,7 @@ def in_out_elastic(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_in_elastic(t: Any) -> Any:
     """Elastic ease-out/in."""
@@ -539,7 +539,7 @@ _BACK_S = 1.70158
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_back(t: Any) -> Any:
     """Back ease-in (overshooting cubic: t^2*((s+1)*t - s)).
@@ -553,7 +553,7 @@ def in_back(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_back(t: Any) -> Any:
     """Back ease-out.
@@ -570,7 +570,7 @@ def out_back(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_out_back(t: Any) -> Any:
     """Back ease-in/out."""
@@ -582,7 +582,7 @@ def in_out_back(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_in_back(t: Any) -> Any:
     """Back ease-out/in."""
@@ -597,7 +597,7 @@ def out_in_back(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_bounce(t: Any) -> Any:
     """Bounce ease-out (exponentially decaying parabolic). Defined
@@ -618,7 +618,7 @@ def out_bounce(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_bounce(t: Any) -> Any:
     """Bounce ease-in (1 - out_bounce(1-t))."""
@@ -628,7 +628,7 @@ def in_bounce(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def in_out_bounce(t: Any) -> Any:
     """Bounce ease-in/out."""
@@ -640,7 +640,7 @@ def in_out_bounce(t: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize
 def out_in_bounce(t: Any) -> Any:
     """Bounce ease-out/in."""

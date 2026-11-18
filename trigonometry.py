@@ -65,7 +65,7 @@ __all__ = [
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def degrees(token: Any) -> Any:
     """``degrees(x)`` -- radians -> degrees (multiply by ``180/pi``)."""
@@ -75,7 +75,7 @@ def degrees(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def radians(token: Any) -> Any:
     """``radians(x)`` -- degrees -> radians (multiply by ``pi/180``)."""
@@ -198,7 +198,7 @@ def _atan2d_modern(y: Any, x: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def sind(token: Any) -> Any:
     """``sind(x)`` -- sine of ``x`` (degrees)."""
@@ -208,7 +208,7 @@ def sind(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def cosd(token: Any) -> Any:
     """``cosd(x)`` -- cosine of ``x`` (degrees)."""
@@ -218,7 +218,7 @@ def cosd(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def tand(token: Any) -> Any:
     """``tand(x)`` -- tangent of ``x`` (degrees).
@@ -242,7 +242,7 @@ def tand(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def sin(token: Any) -> Any:
     """``sin(x)`` -- sine of ``x`` (radians)."""
@@ -254,7 +254,7 @@ def sin(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def cos(token: Any) -> Any:
     """``cos(x)`` -- cosine of ``x`` (radians)."""
@@ -266,7 +266,7 @@ def cos(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def tan(token: Any) -> Any:
     """``tan(x)`` -- tangent of ``x`` (radians)."""
@@ -283,7 +283,7 @@ def tan(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def asind(token: Any) -> Any:
     """``asind(x)`` -- arc sine of ``x``, result in degrees.
@@ -324,7 +324,7 @@ def _asind_legacy(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def asin(token: Any) -> Any:
     """``asin(x)`` -- arc sine of ``x``, result in radians."""
@@ -336,7 +336,7 @@ def asin(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def acosd(token: Any) -> Any:
     """``acosd(x)`` -- arc cosine of ``x``, result in degrees."""
@@ -369,7 +369,7 @@ def _acosd_legacy(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def acos(token: Any) -> Any:
     """``acos(x)`` -- arc cosine of ``x``, result in radians."""
@@ -381,7 +381,7 @@ def acos(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def atand(token: Any) -> Any:
     """``atand(x)`` -- arc tangent of ``x``, result in degrees.
@@ -412,7 +412,7 @@ def atand(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def atan(token: Any) -> Any:
     """``atan(x)`` -- arc tangent of ``x``, result in radians.
@@ -455,7 +455,7 @@ def _atan2_legacy(y: Any, x: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(),()->()")
 @memoize(foldable="scalar")
 def atan2d(y: Any, x: Any) -> Any:
     """``atan2d(y, x)`` -- principal value of arc tangent of ``y/x``,
@@ -479,7 +479,7 @@ def atan2d(y: Any, x: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(),()->()")
 @memoize(foldable="scalar")
 def atan2(y: Any, x: Any) -> Any:
     """``atan2(y, x)`` -- principal value of arc tangent of ``y/x``,

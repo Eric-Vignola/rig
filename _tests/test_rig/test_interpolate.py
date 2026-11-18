@@ -1,7 +1,7 @@
 """Smoke tests for ``rig.interpolate``."""
 
 from maya import cmds
-from rig import interpolate as i, Node, Plug
+from rig import interpolate as i, List, Node, Plug
 from rig._tests._base import MayaTestCase
 
 
@@ -271,13 +271,18 @@ class TestInterpolateAll(MayaTestCase):
 
 class TestLiteralVectorInputs(MayaTestCase):
     """Regression: smoothstep / inverse_lerp must accept FLAT LITERAL vec3
-    inputs. The Maya-2024+ native nodes (smoothStep / inverseLerp) are
-    scalar-only; a raw ``[x, y, z]`` must route to the component-wise path
-    (gated by ``_is_scalar_value``) rather than crashing on the scalar node."""
+    inputs, never crashing a scalar-only Maya-2024+ native node (smoothStep /
+    inverseLerp). Plain lists of numbers with no vector to line up with are
+    rows (vectorize decision 4): three scalar calls, folded to a List of
+    three numbers, where they used to be one compound plug; the values are
+    the same."""
 
     TEST_START_NEW_SCENE = True
 
     def _vec(self, plug):
+        if isinstance(plug, (list, tuple)):            # rows: a List of numbers or plugs
+            self.assertIsInstance(plug, List)
+            return [x if isinstance(x, (int, float)) else cmds.getAttr(str(x)) for x in plug]
         val = cmds.getAttr(str(plug))
         return val[0] if isinstance(val, list) else val
 

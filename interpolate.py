@@ -58,6 +58,7 @@ def _pick(test: Any, when_true: Any, when_false: Any) -> Any:
 
 
 @operands(config=("method", "ends"))
+@vectorize("(),[k],[k]->()")
 @memoize
 def sequence(x: Any, xp: Any, yp: Any, method: Any = _v_lerp, ends: Any = "extrapolate") -> Any:
     """``sequence(x, xp, yp, method=lerp, ends="extrapolate")`` -- sample a
@@ -205,7 +206,7 @@ def interp(x: Any, xp: Any, fp: Any, left: Any = None, right: Any = None, period
 
 
 @operands(config=("normalize",))
-@vectorize
+@vectorize("(),(),()->()")
 @memoize(foldable="scalar")
 def smoothstep(
     input1: Any, input2: Any, weight: Any = 0.5, normalize: bool = False
@@ -255,7 +256,7 @@ def smoothstep(
 
 
 @operands(config=("normalize",))
-@vectorize
+@vectorize("(),(),()->()")
 @memoize(foldable="scalar")
 def smootherstep(
     input1: Any, input2: Any, weight: Any = 0.5, normalize: bool = False
@@ -295,7 +296,7 @@ def smootherstep(
 
 
 @operands
-@vectorize
+@vectorize("(),(),()->()")
 @memoize(foldable="scalar")
 def inverse_lerp(input1: Any, input2: Any, weight: Any) -> Any:
     """``inverse_lerp(a, b, x)`` -- return ``t`` such that

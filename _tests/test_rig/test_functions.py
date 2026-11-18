@@ -986,15 +986,19 @@ class TestFunctionsAll(MayaTestCase):
 
 class TestLiteralVectorInputs(MayaTestCase):
     """Regression: component-wise math ops must accept FLAT LITERAL vec3
-    inputs (not just compound Plugs). The Maya-2024+ native nodes are
-    scalar-only; a raw ``[x, y, z]`` must route to the component-wise path
-    (gated by ``_is_scalar_value``) instead of crashing on the scalar node
-    with 'Cannot inject sequence of size 3 into scalar attribute'. Values are
-    version-independent (a literal always takes the component path)."""
+    inputs (not just compound Plugs), never crashing a scalar-only Maya-2024+
+    native node with 'Cannot inject sequence of size 3 into scalar attribute'.
+    A plain list of numbers with no vector to line up with is rows (vectorize
+    decision 4): three scalar calls, folded to a List of three numbers, where
+    it used to be one compound plug; the values are the same. Values are
+    version-independent."""
 
     TEST_START_NEW_SCENE = True
 
     def _vec(self, plug):
+        if isinstance(plug, (list, tuple)):            # rows: a List of numbers or plugs
+            self.assertIsInstance(plug, List)
+            return [x if isinstance(x, (int, float)) else cmds.getAttr(str(x)) for x in plug]
         val = cmds.getAttr(str(plug))
         return val[0] if isinstance(val, list) else val
 

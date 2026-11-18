@@ -423,6 +423,101 @@ class TestTypedModules(_Poles):
         np.testing.assert_allclose(_value(out[0]), _value(rig.vector.slerp(p.t, a.t, 0.5)), atol=1e-4)
 
 
+class TestPerChannel(_Poles):
+    """Step 3: functions, trigonometry, tween, interpolate and random. A () takes one value (a vector plug
+    passes whole); a plain list of scalars is rows unless it lines up with a vector's channels in another
+    () (decision 4); a List is rows"""
+
+    def scalars(self, values=(-1, 0.25, 0.5, 2, 3)):
+        nodes = [Node.create("transform", name=f"s{k}") for k in range(len(values))]
+        for node, value in zip(nodes, values):
+            node.tx << value
+        return [node.tx for node in nodes]
+
+    def test_every_function_has_a_layout(self):
+        missing = []
+        for module in (rig.functions, rig.trigonometry, rig.tween, rig.interpolate, rig.random):
+            for name in dir(module):
+                func = getattr(module, name)
+                if callable(func) and getattr(func, "__module__", None) == module.__name__ and \
+                        getattr(func, "_rig_vectorized", False) and func._rig_layout is None:
+                    missing.append(f"{module.__name__}.{name}")
+        self.assertEqual(missing, [])
+
+    def test_clamp_reads_your_examples(self):
+        F = rig.functions
+        tx = self.scalars()
+        out = F.clamp(tx, 0, 1)                      # five scalars: rows (before: no 5-channel attribute)
+        self.assertIsInstance(out, List)
+        np.testing.assert_allclose(_value(out), [0, 0.25, 0.5, 1, 1], atol=1e-6)
+        out = F.clamp(List(tx), 0, 1)                # a List (before: InjectionError in a container)
+        np.testing.assert_allclose(_value(out), [0, 0.25, 0.5, 1, 1], atol=1e-6)
+        a = Node.create("transform", name="v")
+        a.t << [-1, 0.5, 2]
+        out = F.clamp(a.t, [0, 0, 0], [1, 1, 3])     # lines up with a.t's channels: one vector
+        self.assertNotIsInstance(out, List)
+        np.testing.assert_allclose(_value(out), [0, 0.5, 2], atol=1e-6)
+        out = F.clamp([a.t, self.p.t], 0, 1)         # two vectors: two rows
+        np.testing.assert_allclose(_value(out), [[0, 0.5, 1], [1, 0, 0]], atol=1e-6)
+        out = F.clamp([a.tx, a.ty, a.tz], 0, 1)      # three scalars, nothing to line up with: rows
+        self.assertIsInstance(out, List)
+        self.q.t << out                              # which << still connects channel by channel
+        self.assertEqual(cmds.getAttr("q.t")[0], (0.0, 0.5, 1.0))
+        with self.assertRaisesRegex(ValueError, r"token has 2 rows and min_value has 3 rows"):
+            F.clamp(tx[:2], [0, 0, 0], 1)
+
+    def test_comparisons_trigonometry_tween_random(self):
+        F = rig.functions
+        tx = self.scalars()
+        np.testing.assert_allclose(_value(F.greater_than(tx[:3], 0.4)), [0, 0, 1], atol=1e-6)
+        degrees = self.scalars((0, 30, 90))
+        np.testing.assert_allclose(_value(rig.trigonometry.sind(degrees)), [0, 0.5, 1], atol=1e-6)
+        np.testing.assert_allclose(_value(rig.tween.in_quad(tx[1:3])), [0.0625, 0.25], atol=1e-6)
+        out = rig.random.uniform([0, 10], 20, seed=7)    # two ranges: two values
+        self.assertEqual(len(out), 2)
+        low, high = _value(out)
+        self.assertTrue(0 <= low < 20 and 10 <= high < 20, (low, high))
+        np.testing.assert_allclose(_value(rig.interpolate.smoothstep(0, 1, tx[1:3])), [0.15625, 0.5], atol=1e-4)
+
+    def test_a_shape_is_read_from_the_attribute(self):
+        # the same answer whether an element exists or not, and nothing made by reading it
+        from rig._internal.layout import _plug_shape
+        a = self.a
+        indices = cmds.getAttr("a.wm", multiIndices=True)
+        self.assertEqual(_plug_shape(a.wm[5]), (4, 4))
+        self.assertEqual(cmds.getAttr("a.wm", multiIndices=True), indices)
+        choice = Node(cmds.createNode("choice", name="pick"))
+        choice.input[0] << a.t
+        self.assertEqual(_plug_shape(choice.output), (3,))               # "any" data: as math_type reads it
+
+    def test_choice_takes_any_tokens(self):
+        F = rig.functions
+        out = F.choice([self.a.wm, self.b.wm], 1)                        # a space switch: matrices
+        np.testing.assert_allclose(_value(out), _value(self.b.wm), atol=1e-4)
+        self.assertEqual(len(F.choice([self.a.wm, self.b.wm], [0, 1])), 2)
+        self.assertEqual(cmds.nodeType(F.sum({"x": self.a.tx, "y": 1}.values()).get_node()), "sum")
+
+    def test_lists_taken_whole(self):
+        F = rig.functions
+        tx = self.scalars()                                                  # -1, 0.25, 0.5, 2, 3
+        self.assertAlmostEqual(F.sum([tx[0], tx[3]]) >> None, 1.0)          # one sum of two
+        np.testing.assert_allclose(_value(F.sum(List([self.p.t, self.q.t]))), [10, 10, 0], atol=1e-6)
+        out = F.sum(List([[tx[0], tx[1]], [tx[2], tx[3]]]))                # a List of lists: rows
+        np.testing.assert_allclose(_value(out), [-0.75, 2.5], atol=1e-6)
+        out = F.max([self.p.t, self.q.t])                                  # a list of two vectors: one max
+        np.testing.assert_allclose(_value(out), [10, 10, 0], atol=1e-6)
+        out = F.choice([self.p.t, self.q.t], [0, 1])                       # a list of selectors: rows
+        np.testing.assert_allclose(_value(out), [[10, 0, 0], [0, 10, 0]], atol=1e-6)
+        self.assertEqual(F.sum([1, 2, 3]), 6)
+        with self.assertRaisesRegex(TypeError, r"tokens takes a list of .*\[k\]\(n\?\).*got a 3-channel plug"):
+            F.sum(self.p.t)                                                  # before: Attribute.__iter__ TypeError
+        out = rig.interpolate.sequence(List(tx[1:3]), [0, 1, 4], [0, 10, 0])   # before: InjectionError
+        np.testing.assert_allclose(_value(out), [2.5, 5.0], atol=1e-6)
+        # yp's elements are anything the method takes: matrices for rig.slerp
+        out = rig.interpolate.sequence(tx[2], [0, 1], [self.a.wm, self.b.wm], method=rig.slerp)
+        np.testing.assert_allclose(_value(out), _value(rig.slerp(self.a.wm, self.b.wm, 0.5)), atol=1e-4)
+
+
 class TestWeights(_Poles):
     def test_the_matrix_verbs(self):
         a, b = self.a, self.b

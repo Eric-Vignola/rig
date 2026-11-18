@@ -175,7 +175,7 @@ def _memoize_on_seed(func: Callable[..., Any]) -> Callable[..., Any]:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @_memoize_on_seed
 def value(trigger: Optional[Any] = None, seed: Optional[int] = None) -> Any:
     """``value(trigger=None, seed=None)`` -- pseudo-random scalar Plug
@@ -239,7 +239,7 @@ def value(trigger: Optional[Any] = None, seed: Optional[int] = None) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(),(),()->()")
 @_memoize_on_seed
 def uniform(
     start:   Any,
@@ -260,7 +260,7 @@ def uniform(
 
 
 @operands
-@vectorize
+@vectorize("(),(),()->()")
 @_memoize_on_seed
 def randint(
     start:   Any,
@@ -305,7 +305,7 @@ def _check_seeds(function: str, seed: Any) -> None:
 
 
 @operands
-@vectorize
+@vectorize("()->(3)")
 @_memoize_on_seed
 def value3D(trigger: Optional[Any] = None, seed: Optional[Any] = None) -> Any:
     """``value3D(trigger=None, seed=None)`` -- pseudo-random 3-vector
@@ -344,7 +344,7 @@ def value3D(trigger: Optional[Any] = None, seed: Optional[Any] = None) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(3?),(3?),()->(3)")
 @_memoize_on_seed
 def uniform3D(
     start:   Any,
@@ -370,7 +370,7 @@ def uniform3D(
 
 
 @operands
-@vectorize
+@vectorize("(3?),(3?),()->(3)")
 @_memoize_on_seed
 def randint3D(
     start:   Any,

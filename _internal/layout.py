@@ -14,7 +14,8 @@ The cores, rig's dialect::
     (4,4)    a matrix: a matrix plug, 16 numbers, 4x4 (or 3x3) nested numbers, a 4x4 array
     (n?)     a scalar, or a vector of any size n; n is the same in every parameter naming it
     (3?)     three channels, or one value for all three
-    [k]      a list of k values taken whole (sum, interp's breakpoints); [k](n?) a list of vectors
+    [k]      a list of k values taken whole, whatever they are (choice's tokens, a List or a dict's
+             values too); [k](n?) a list of scalars or vectors (sum's)
     a|b      either core: (3)|(4,4) takes a vector or a matrix
     *core    every remaining positional argument (multiply(*tokens))
 
@@ -42,6 +43,7 @@ from __future__ import annotations
 import inspect
 import numbers
 import re
+from collections.abc import Collection, Mapping
 from typing import Any, Callable, Dict, Iterator, List as _TList, Optional, Tuple
 
 import numpy as np
@@ -50,7 +52,7 @@ from maya.api import OpenMaya
 from rig._internal.fuse import Fused
 from rig._internal.list import List
 from rig._internal.types import _ARITY_BY_DATA_TYPE, _SCALAR_DATA_TYPES, _arity_of, _is_attribute
-from rig.nodetypes._base import _PLUG_TYPES, _fixed_attr_kind
+from rig.nodetypes._base import _PLUG_TYPES
 
 __all__ = ["Layout", "Bound", "Plan", "LayoutError", "parse"]
 
@@ -299,6 +301,10 @@ def _kind_shapes() -> dict:
 
 _KIND_SHAPES = _kind_shapes()
 _COMPOUND = OpenMaya.MFn.kCompoundAttribute
+_TYPED = OpenMaya.MFn.kTypedAttribute
+_GENERIC = OpenMaya.MFn.kGenericAttribute
+_MATRIX_DATA = OpenMaya.MFnData.kMatrix
+_ANY_DATA = OpenMaya.MFnData.kAny
 _NOT_FIXED = object()
 
 
@@ -327,40 +333,51 @@ def _leaf_shape(value: Any):
 
 
 def _plug_shape(plug: Any):
-    """A plug's shape: by its attribute's kind when that fixes it (held on the plug), else by its
-    data once (a typed or generic attribute, as `math_type` reads it). _UNKNOWN, with no query, for
-    a plug whose node or attribute was freed (reading its type can crash Maya; rig's operand checks
-    raise for it) or whose kind rig cannot read (a deleted attribute, an array element that does
-    not exist: the data query would make it)."""
+    """A plug's shape, read from its attribute (the MObject its MPlug holds, an element's being its
+    array's), never by name: the answer does not depend on whether an element exists yet, and no
+    query makes one. A kind that fixes the shape answers (a numeric, a 3-double, a matrix
+    attribute), a typed attribute by its data (a matrix), a compound by its children, a generic or
+    "any" one by its runtime data (the compound a choice selects). _UNKNOWN, with nothing read, for a plug
+    whose node or attribute was freed (reading it can crash Maya; rig's operand checks raise for it)
+    or that holds no handle of its node."""
     d = plug.__dict__
     handle = d.get("_handle")
-    if handle is not None and not handle.isAlive():
+    if handle is None or not handle.isAlive():
         return _UNKNOWN
     handle = d.get("_attrh")
     if handle is not None and not handle.isAlive():
         return _UNKNOWN
-    kind = _fixed_attr_kind(plug)
-    if kind is None:
-        return _UNKNOWN
-    shape = _KIND_SHAPES.get(kind, _NOT_FIXED)
-    if shape is not _NOT_FIXED:
-        return shape
     try:
+        mplug = plug._mplug
+        attribute = mplug.attribute()
+        kind = attribute.apiType()
+        shape = _KIND_SHAPES.get(kind, _NOT_FIXED)
+        if shape is not _NOT_FIXED:
+            return shape
         if kind == _COMPOUND:
-            count = type(plug)._raw_get_child_count(plug)
+            count = OpenMaya.MFnCompoundAttribute(attribute).numChildren()
             return (count,) if count else _UNKNOWN
-        data = type(plug)._raw_get_data_type(plug)
-        if data == "matrix":
-            return _MATRIX
-        arity = _ARITY_BY_DATA_TYPE.get(data)
-        if arity:
-            return (arity,)
-        if data in _SCALAR_DATA_TYPES:
-            return _SCALAR
-        arity = _arity_of(plug)          # a generic attribute: the compound a choice selects
-        return (arity,) if arity else _UNKNOWN
+        if kind == _TYPED:
+            data_kind = OpenMaya.MFnTypedAttribute(attribute).attrType()
+            if data_kind == _MATRIX_DATA:
+                return _MATRIX
+            if data_kind != _ANY_DATA:
+                return _UNKNOWN
+        elif kind != _GENERIC:
+            return _UNKNOWN
+        # a generic or "any" attribute (a choice's input and output): its data follows its
+        # connection, read as `math_type` reads it; not on an element (the query would make one)
+        if not mplug.isElement:
+            data = type(plug)._raw_get_data_type(plug)
+            if data == "matrix":
+                return _MATRIX
+            arity = _ARITY_BY_DATA_TYPE.get(data) or _arity_of(plug)
+            if arity:
+                return (arity,)
+            return _SCALAR if data in _SCALAR_DATA_TYPES else _UNKNOWN
     except Exception:  # noqa: BLE001 (a plug Maya cannot type: its function decides)
         return _UNKNOWN
+    return _UNKNOWN
 
 
 def _literal_shape(value: Any):
@@ -458,13 +475,14 @@ def _fits(core: Core, value: Any, out: Dict[str, int]) -> bool:
 
 def _fits_into(core: Core, value: Any, out: Dict[str, int]) -> bool:
     if core.items is not None:
-        if not (_plain(value) or isinstance(value, List)):
+        if not _listlike(value):
             return False
         items = _row_items(value)
         inner = core.inner
-        for x in items:
-            if not (_fits_scalar_core(x) if inner.scalar else _fits(inner, x, out)):
-                return False
+        if not inner.scalar:             # a bare [k]'s elements are anything (choice's tokens)
+            for x in items:
+                if not _fits(inner, x, out):
+                    return False
         d = core.items
         if d.size is not None:
             return d.size == len(items)
@@ -491,6 +509,15 @@ def _fits_into(core: Core, value: Any, out: Dict[str, int]) -> bool:
     if core.matrix:
         return False
     return _bind(core.channels, shape, out)
+
+
+def _listlike(value: Any) -> bool:
+    """True for what a [k] core takes as a list: a List, a plain sequence, or another sized
+    collection (a dict's values) -- not a str, a mapping, a plug or a fused value"""
+    if _plain(value) or isinstance(value, List):
+        return True
+    return (isinstance(value, Collection) and not isinstance(value, (str, bytes, Mapping, np.ndarray))
+            and type(value) is not Fused)
 
 
 def _fits_scalar_core(value: Any) -> bool:
@@ -758,8 +785,7 @@ def _core_words(slot: Slot) -> str:
 
 def _one_core_words(core: Core) -> str:
     if core.items is not None:
-        inner = "values" if not core.channels else _one_core_words(Core(None, core.channels, "")) + "s"
-        return f"a list of {inner} {core.text}"
+        return f"a list of {_many_words(core.inner)} {core.text}"
     if core.scalar:
         return "one value ()"
     if core.matrix:
@@ -771,3 +797,16 @@ def _one_core_words(core: Core) -> str:
             return f"{what}{' or a scalar' if d.optional else ''} {core.text}"
         return f"{'a scalar or ' if d.optional else ''}a vector {core.text}"
     return f"a value {core.text}"
+
+
+def _many_words(core: Core) -> str:
+    """What a [k] core's elements are, in the plural: "values", "scalars or vectors", ..."""
+    if core.scalar:
+        return "values"
+    if core.matrix:
+        return "matrices"
+    if len(core.channels) == 1:
+        d = core.channels[0]
+        what = "vectors" if d.size is None else f"{d.size}-channel values"
+        return f"scalars or {what}" if d.optional else what
+    return "values"

@@ -141,6 +141,7 @@ def frame() -> Any:
 
 
 @operands
+@vectorize("(),(),()->()")
 @memoize(foldable="scalar")
 def clamp(token: Any, min_value: Any, max_value: Any) -> Any:
     """``clamp(x, lo, hi)`` -- Maya 2024+ uses ``clampRange``; older falls
@@ -205,7 +206,7 @@ def _per_channel(name: str, scalar_fn: Any, *args: Any, names: Any = None) -> An
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def abs(token: Any) -> Any:
     """``abs(x)`` -- Maya 2024+ uses ``absolute`` node; older uses
@@ -224,7 +225,7 @@ def abs(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def int(token: Any) -> Any:
     """``int(x)`` -- truncate-toward-zero via ``_constant`` long cast."""
@@ -246,7 +247,7 @@ def int(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(),()->()")
 @memoize(foldable="scalar")
 def round(token: Any, digits: Any = 0) -> Any:
     """``round(x, digits=0)`` -- round to ``digits`` decimal places.
@@ -290,7 +291,7 @@ def round(token: Any, digits: Any = 0) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def floor(token: Any) -> Any:
     """``floor(x)`` -- Maya 2024+ uses ``floor`` node; older uses long cast."""
@@ -316,7 +317,7 @@ def floor(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def ceil(token: Any) -> Any:
     """``ceil(x)`` -- Maya 2024+ uses ``ceil`` node; older uses long cast."""
@@ -339,7 +340,7 @@ def ceil(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def trunc(token: Any) -> Any:
     """``trunc(x)`` -- toward-zero truncation. Maya 2024+ uses ``truncate``
@@ -368,6 +369,7 @@ def trunc(token: Any) -> Any:
 
 
 @operands
+@vectorize("[k](n?)->(n?)")
 @memoize(foldable="reduce")
 def sum(tokens: Sequence[Any]) -> Any:
     """``sum([t0, t1, ...])`` -- single ``plusMinusAverage`` node."""
@@ -381,6 +383,7 @@ def sum(tokens: Sequence[Any]) -> Any:
 
 
 @operands
+@vectorize("[k](n?)->(n?)")
 @memoize(foldable="reduce")
 def avg(tokens: Sequence[Any]) -> Any:
     """``avg([t0, t1, ...])`` -- Maya 2024+ uses the ``average`` node, and a
@@ -435,6 +438,7 @@ def _clamp_by_literals(tokens: Sequence[Any], *, largest: bool, name: str) -> An
 
 
 @operands
+@vectorize("[k](n?)->(n?)")
 @memoize(foldable="reduce")
 def max(tokens: Sequence[Any]) -> Any:
     """``max([t0, t1, ...])`` -- Maya 2024+ uses the ``max`` node, and a
@@ -466,6 +470,7 @@ def max(tokens: Sequence[Any]) -> Any:
 
 
 @operands
+@vectorize("[k](n?)->(n?)")
 @memoize(foldable="reduce")
 def min(tokens: Sequence[Any]) -> Any:
     """``min([t0, t1, ...])`` -- Maya 2024+ uses the ``min`` node, and a
@@ -500,7 +505,7 @@ def min(tokens: Sequence[Any]) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def exp(token: Any) -> Any:
     """``exp(x)`` -- e**x via ``multiplyDivide`` op=3."""
@@ -510,7 +515,7 @@ def exp(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def sign(token: Any) -> Any:
     """``sign(x)`` -- ``-1`` for x<0, ``+1`` otherwise."""
@@ -522,7 +527,7 @@ def sign(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def sqrt(token: Any) -> Any:
     """``sqrt(x)`` -- same as ``x ** 0.5``."""
@@ -532,7 +537,7 @@ def sqrt(token: Any) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(),()->()")
 @memoize(foldable="scalar")
 def pow(base: Any, exponent: Any) -> Any:
     """``pow(b, e)`` -- same as ``b ** e``."""
@@ -553,6 +558,7 @@ def pow(base: Any, exponent: Any) -> Any:
 
 
 @operands
+@vectorize("[k],()->()")
 @memoize
 def choice(tokens: Sequence[Any], selector: Any = None) -> Any:
     """``choice([t0, t1, ...], selector=plug)`` -- wraps a Maya ``choice``
@@ -601,7 +607,7 @@ def choice(tokens: Sequence[Any], selector: Any = None) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("()->()")
 @memoize(foldable="scalar")
 def rev(token: Any) -> Any:
     """``rev(x)`` -- ``1 - x``, via ``reverse`` node."""
@@ -627,6 +633,7 @@ def rev(token: Any) -> Any:
 
 
 @operands(config=("return_index", "side"))
+@vectorize("[k],()->()")
 @memoize
 def searchsorted(
     tokens:       Sequence[Any],
@@ -678,6 +685,7 @@ def searchsorted(
 
 
 @operands
+@vectorize("[k]->()")
 @memoize(foldable="reduce")
 def all(tokens: Sequence[Any]) -> Any:
     """``all([t0, t1, ...])`` -- True iff every token is non-zero."""
@@ -697,6 +705,7 @@ def all(tokens: Sequence[Any]) -> Any:
 
 
 @operands
+@vectorize("[k]->()")
 @memoize(foldable="reduce")
 def any(tokens: Sequence[Any]) -> Any:
     """``any([t0, t1, ...])`` -- True iff any token is non-zero."""
@@ -713,6 +722,7 @@ def any(tokens: Sequence[Any]) -> Any:
 
 
 @operands
+@vectorize("[k]->()")
 @memoize(foldable="reduce")
 def argmin(tokens: Sequence[Any]) -> Any:
     """``argmin(tokens)`` -- index of the lowest value."""
@@ -735,6 +745,7 @@ def argmin(tokens: Sequence[Any]) -> Any:
 
 
 @operands
+@vectorize("[k]->()")
 @memoize(foldable="reduce")
 def argmax(tokens: Sequence[Any]) -> Any:
     """``argmax(tokens)`` -- index of the highest value."""
@@ -822,7 +833,7 @@ def inf() -> float:
 
 
 @operands
-@vectorize
+@vectorize("(),()->()")
 @memoize(foldable="scalar")
 def log(token: Any, base: Any = math.e) -> Any:
     """``log(x, base=e)`` -- natural log by default; pass ``base=10`` for
@@ -851,7 +862,7 @@ def log(token: Any, base: Any = math.e) -> Any:
 
 
 @operands
-@vectorize
+@vectorize("(),(),()->()")
 @memoize(foldable="scalar")
 def equal(input1: Any, input2: Any, eps: Any = 1e-6) -> Any:
     """``equal(a, b, eps=1e-6)`` -- fuzzy float equality. Returns ``1.0``
@@ -912,6 +923,7 @@ def equal(input1: Any, input2: Any, eps: Any = 1e-6) -> Any:
 
 
 @operands
+@vectorize("(),()->()")
 def not_equal(input1: Any, input2: Any) -> Any:
     """``not_equal(a, b)`` -- equivalent to ``a != b``.
 
@@ -922,6 +934,7 @@ def not_equal(input1: Any, input2: Any) -> Any:
 
 
 @operands
+@vectorize("(),()->()")
 def greater_than(input1: Any, input2: Any) -> Any:
     """``greater_than(a, b)`` -- equivalent to ``a > b``.
 
@@ -933,6 +946,7 @@ def greater_than(input1: Any, input2: Any) -> Any:
 
 
 @operands
+@vectorize("(),()->()")
 def less_than(input1: Any, input2: Any) -> Any:
     """``less_than(a, b)`` -- equivalent to ``a < b``.
 
@@ -944,6 +958,7 @@ def less_than(input1: Any, input2: Any) -> Any:
 
 
 @operands
+@vectorize("(),()->()")
 def greater_or_equal(input1: Any, input2: Any) -> Any:
     """``greater_or_equal(a, b)`` -- equivalent to ``a >= b``.
 
@@ -954,6 +969,7 @@ def greater_or_equal(input1: Any, input2: Any) -> Any:
 
 
 @operands
+@vectorize("(),()->()")
 def less_or_equal(input1: Any, input2: Any) -> Any:
     """``less_or_equal(a, b)`` -- equivalent to ``a <= b``.
 
@@ -976,6 +992,7 @@ def less_or_equal(input1: Any, input2: Any) -> Any:
 
 
 @operands
+@vectorize("(),()->()")
 def logical_and(input1: Any, input2: Any) -> Any:
     """``logical_and(a, b)`` -- equivalent to ``a & b``.
 
@@ -987,6 +1004,7 @@ def logical_and(input1: Any, input2: Any) -> Any:
 
 
 @operands
+@vectorize("(),()->()")
 def logical_or(input1: Any, input2: Any) -> Any:
     """``logical_or(a, b)`` -- equivalent to ``a | b``.
 
@@ -998,6 +1016,7 @@ def logical_or(input1: Any, input2: Any) -> Any:
 
 
 @operands
+@vectorize("(),()->()")
 def logical_xor(input1: Any, input2: Any) -> Any:
     """``logical_xor(a, b)`` -- equivalent to ``a ^ b``.
 
@@ -1009,6 +1028,7 @@ def logical_xor(input1: Any, input2: Any) -> Any:
 
 
 @operands
+@vectorize("()->()")
 def logical_not(input1: Any) -> Any:
     """``logical_not(a)`` -- equivalent to ``~a``.
 
