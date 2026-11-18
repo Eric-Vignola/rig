@@ -134,10 +134,10 @@ class TestComponentSliceBroadcast(MayaTestCase):
         )
 
     def test_mesh_vtx_step_slice_lshift_sets_positions(self):
-        # ``[0, 0, 0]`` reaches each element through the asymmetric
-        # broadcast (plug i receives ``src[min(i, 2)]``, a SCALAR that the
-        # compound point fans out), so it lands every touched vertex on the
-        # origin. A per-vertex vector needs the nested form, pinned below.
+        # ``[0, 0, 0]`` is one point, the vertices' shape, so every touched
+        # vertex takes it whole (`List._paired`: the channels win, numpy's
+        # broadcast) and lands on the origin. A per-vertex vector needs the
+        # nested form, pinned below.
         cube  = cmds.polyCube(name="pc")[0]
         shape = Node(cmds.listRelatives(cube, shapes=True)[0])
         before = [

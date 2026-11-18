@@ -529,6 +529,31 @@ def _fits_scalar_core(value: Any) -> bool:
     return not (_plain(value) or isinstance(value, List))
 
 
+def lines_up(items: Any, value: Any) -> bool:
+    """True when ``value``, a plain sequence, is one value of the shape every element of ``items``
+    has (a vector plug's channels, a matrix), so a List's ``<<`` or operator gives it whole to each
+    element: ``List([a, b]).t << [0, 5, 0]`` puts both at (0, 5, 0), numpy's broadcast of a (3,)
+    against rows of (3,). So does ``List([a, b, c]).t << [0, 5, 0]``, where three values could be
+    three rows: the channels win, as in a function's () parameter (decision 4). A ``range`` counts
+    elements, so it is never one value (``curve.cv[:] << range(3)`` gives CV i the value i, and
+    raises on four CVs); a List is never one either. Only plugs and fused values have a shape here
+    (a List's numbers and plain values have none), and a multi's root is not channels."""
+    if not items or type(value) is range or not _plain(value):
+        return False
+    shape = _UNKNOWN
+    for x in items:
+        s = _leaf_shape(x) if not (_plain(x) or isinstance(x, List)) else _UNKNOWN
+        if not s or (shape is not _UNKNOWN and s != shape):
+            return False             # a scalar (), an unknown shape, or two shapes
+        if type(x) in _PLUG_TYPES and x._mplug.isArray:
+            return False
+        shape = s
+    found = _literal_shape(value)
+    if found is None:
+        return False
+    return found in _MATRIX_LITERALS if shape == _MATRIX else found == shape
+
+
 # --------------------------------------------------------------------------------------- binding
 
 

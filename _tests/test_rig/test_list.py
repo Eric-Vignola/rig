@@ -88,39 +88,49 @@ class TestPlugListInjection(MayaTestCase):
     def _four(self, prefix="cube"):
         return List([Node.create("transform", name=f"{prefix}{i}") for i in range(4)])
 
-    def test_lshift_a_shorter_right_side_holds_its_last(self):
-        nodes = self._four()
-        nodes.tx << [10.0, 20.0]
-        self.assertEqual([cmds.getAttr(f"cube{i}.tx") for i in range(4)], [10.0, 20.0, 20.0, 20.0])
+    # one value for every element, or one each: any other length is a ValueError
+    # raised before an element is written (the rule of rig's functions, decision 3A;
+    # a shorter side held its last value, and a longer one stopped at the List's end)
 
-    def test_lshift_a_longer_right_side_stops_at_the_end(self):
-        # each element is written once: the last one is never written again with every
-        # value left over (it read 99 after range(100))
+    def test_lshift_a_shorter_right_side_raises(self):
         nodes = self._four()
+        with self.assertRaisesRegex(ValueError, r"^List << \[10\.0, 20\.0\]: the List has 4 elements and the "
+                                                r"right side 2 values; give 1 value for all of them, or 4, one each$"):
+            nodes.tx << [10.0, 20.0]
+        self.assertEqual([cmds.getAttr(f"cube{i}.tx") for i in range(4)], [0.0] * 4)
+
+    def test_lshift_a_longer_right_side_raises(self):
+        nodes = self._four()
+        nodes.tx << -1
         for values in (range(100), list(range(100)), tuple(range(100))):
             with self.subTest(type(values).__name__):
-                nodes.tx << -1
-                nodes.tx << values
-                self.assertEqual([cmds.getAttr(f"cube{i}.tx") for i in range(4)], [0.0, 1.0, 2.0, 3.0])
-        nodes.ty = range(10)                              # the assignment sugar too
+                with self.assertRaisesRegex(ValueError, r"the List has 4 elements and the right side 100 values"):
+                    nodes.tx << values
+                self.assertEqual([cmds.getAttr(f"cube{i}.tx") for i in range(4)], [-1.0] * 4)
+        with self.assertRaisesRegex(ValueError, r"the List has 4 elements and the right side 10 values"):
+            nodes.ty = range(10)                          # the assignment sugar too
+        nodes.ty = range(4)
         self.assertEqual([cmds.getAttr(f"cube{i}.ty") for i in range(4)], [0.0, 1.0, 2.0, 3.0])
 
-    def test_lshift_longer_plugs_connect_each_element_once(self):
+    def test_lshift_longer_plugs_connect_nothing(self):
         nodes, sources = self._four(), List([Node.create("transform", name=f"src{i}") for i in range(6)])
         events = []
         callback = OpenMaya.MDGMessage.addConnectionCallback(
             lambda src, dst, made, data: events.append((src.name(), dst.name(), made)))
         self.addCleanup(OpenMaya.MMessage.removeCallback, callback)
-        nodes.tx << sources.tx
+        with self.assertRaisesRegex(ValueError, r"the List has 4 elements and the right side 6 values"):
+            nodes.tx << sources.tx
+        self.assertEqual(events, [])
+        nodes.tx << sources[:4].tx
         self.assertEqual(sorted(events), [(f"src{i}.translateX", f"cube{i}.translateX", True) for i in range(4)])
-        for i in (4, 5):
-            self.assertEqual(cmds.listConnections(f"src{i}.tx", source=False, destination=True) or [], [])
 
-    def test_lshift_a_longer_membership_right_side_stops_at_the_end(self):
+    def test_lshift_a_longer_membership_right_side_raises(self):
         pair = List([Node(cmds.polyCube(name=f"m{i}", constructionHistory=False)[0]) for i in range(2)])
-        pair << [Tag("ta"), Tag("tb"), Tag("tc")]
-        tags = [{str(t) for t in Tag.of(x)} & {"ta", "tb", "tc"} for x in pair]
-        self.assertEqual(tags, [{"ta"}, {"tb"}])         # m1 was in tc too
+        with self.assertRaisesRegex(ValueError, r"the List has 2 elements and the right side 3 values"):
+            pair << [Tag("ta"), Tag("tb"), Tag("tc")]
+        self.assertEqual([{str(t) for t in Tag.of(x)} & {"ta", "tb", "tc"} for x in pair], [set(), set()])
+        pair << [Tag("ta"), Tag("tb")]
+        self.assertEqual([{str(t) for t in Tag.of(x)} & {"ta", "tb"} for x in pair], [{"ta"}, {"tb"}])
 
 
 class TestPlugListSlicing(MayaTestCase):

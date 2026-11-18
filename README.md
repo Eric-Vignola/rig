@@ -192,16 +192,19 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
   the node itself; the node or the components on the left are the
   members. `cube.tx << red` is a `TypeError` that names `cube << red`
   (with `in`, a plug stands for its node: `cube.tx in layer`).
-- **`List` vectorizes, under two broadcast rules.** Attribute access
+- **`List` vectorizes, under one broadcast rule.** Attribute access
   maps over the list (`cubes.t` is a `List` of plugs, and so is
   `cubes.__tag__` when every element has that attr). The
-  **operators** (`<<`, `+`, `==`...) pair elements and cap the shorter
-  operand to its last element: `cubes.ty << [1, 2]` sets 1, 2, 2. `<<`
-  writes each element once, so a longer right side stops at the List's
-  end: `cubes.ty << range(10)` sets 0, 1, 2. The
-  **function libraries** (`rig.functions`, `lerp`, `dist`...) are
-  NumPy-strict: every list must be the same length, or length 1, or a
-  scalar, and a mismatch is a `ValueError`. An operand is a plug, a number
+  **operators** (`<<`, `+`, `==`...) and the **function libraries**
+  (`rig.functions`, `lerp`, `dist`...) pair the same NumPy-strict way:
+  every list must be the same length, or length 1, or a scalar, and a
+  mismatch is a `ValueError` raised before anything is written or built
+  (`cubes.ty << [1, 2]` on three cubes: a shorter side does not repeat
+  its last value, and a longer one is not cut). A plain list that is one
+  value of the elements' shape goes to each of them whole:
+  `cubes.t << [0, 5, 0]` puts every cube at (0, 5, 0), as long as the
+  List or not (a `range` counts elements: one value each). An operand is
+  a plug, a number
   or a sequence of them: a generator is read into a list first
   (`f.sum(c.tx for c in ctrls)`), and a `set`, `frozenset` or `dict` is a
   `TypeError`, since it has no order. `rig.List` is not `typing.List`.
@@ -322,12 +325,16 @@ cubes = List([rc.polyCube(name=n)[0] for n in ("a", "b", "c")])
 cubes.ty << [1, 2, 3]  # one value per element
 cubes.tz << 7          # a scalar broadcasts
 print(cubes.ty >> None, cubes.tz >> None)            # [1. 2. 3.] [7. 7. 7.]
-cubes.ty << [1, 2]                                   # an operator caps: the last element repeats
-print(cubes.ty >> None)                              # [1. 2. 2.]
+cubes.s << [1, 2, 1]                                 # one vector for each: its channels, not 3 rows
+print(cubes.sy >> None)                              # [2. 2. 2.]
+try:
+    cubes.ty << [1, 2]                               # 2 values for 3 cubes: nothing is set
+except ValueError:
+    print("strict")                                  # strict
 
 a, b, c = cubes
 try:
-    lerp(cubes.tx, List([a.ty, b.ty]), 0.5)          # a function is strict: 3 against 2
+    lerp(cubes.tx, List([a.ty, b.ty]), 0.5)          # a function, the same rule: 3 against 2
 except ValueError:
     print("strict")                                  # strict
 

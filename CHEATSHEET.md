@@ -30,7 +30,7 @@ of rig names the cgmath commit it was verified on here and in
 | 3 | [Plug — compounds, multis, aliases](#3-plug--compounds-multis-aliases) | `[a, b, c]` fan-out, `skip` / `lock` / `None` slots, all or nothing, `[:]` slicing, multi attrs, a `Typed` slot that holds any data, blendShape targets |
 | 4 | [Plug — connections, hashing, equality](#4-plug--connections-hashing-equality) | `get_inputs` / `get_outputs`, `==` builds a node or folds, `equals`, dict and set keys, the one truth value (two plugs), `plug == None` refused |
 | 5 | [Plug — `>>` clones and publishes](#5-plug---clones-and-publishes) | `plug >> Node`, `plug >> "newName"`, a taken name refused, `plug >> container` |
-| 6 | [List](#6-list) | construction, broadcast, asymmetric lists, slicing, fancy indexing, `>> None`, string probes, `lock()` / `unlock()` |
+| 6 | [List](#6-list) | construction, broadcast, one value for all or one each, slicing, fancy indexing, `>> None`, string probes, `lock()` / `unlock()` |
 | 7 | [Arithmetic](#7-arithmetic) | `+ - * / ** // %`, reflected forms, `-x`, a plain string is no operand, what each builds |
 | 8 | [Matrices and quaternions](#8-matrices-and-quaternions) | `wm * wim`, point-matrix, `**`, quaternion routing, auto-decompose, `node << matrix` |
 | 9 | [Logic, comparisons, `condition`, `constant`](#9-logic-comparisons-condition-constant) | `& \| ^ ~`, `== != < <= > >=`, per-channel fan-out, `condition(...)`, `constant(...)`, Python's `if` and DSL comparisons (no truth value, no folding) |
@@ -38,7 +38,7 @@ of rig names the cgmath commit it was verified on here and in
 | 11 | [Containers](#11-containers) | `with container(...)`, nesting and flattening, `container.add`, `container=False`, typed creators, publishing, `Container`, locking a container, when a new node joins |
 | 12 | [Options, `force_nodes`, `cleanup`](#12-options-force_nodes-cleanup) | `set_options` / `get_options` / `ContainerOptions`, constant folding, garbage collection, a locked container kept |
 | 13 | [`memoize`, `vectorize`, `prune_memoize_caches`](#13-memoize-vectorize-prune_memoize_caches) | the two decorators and the cache sweep |
-| 14 | [`sequences` and `arguments`](#14-sequences-and-arguments) | the asymmetric generators behind every broadcast |
+| 14 | [`sequences` and `arguments`](#14-sequences-and-arguments) | two asymmetric generators, for scripts (rig's broadcasts are strict) |
 | 15 | [`NodeOp` and the target Maya version](#15-nodeop-and-the-target-maya-version) | version-keyed impls, `set_options(maya_version=...)`, `set_target_version` |
 | 16 | [`InjectionError`](#16-injectionerror) | the one thing `<<` refuses, re-running over a locked plug |
 | 17 | [Function libraries: the map](#17-function-libraries-the-map) | the nine modules and twelve verbs, folding, memoisation, `List` broadcast, the seven rules |
@@ -1064,16 +1064,29 @@ except TypeError as err:
     print(type(err).__name__, len(nodes))           # TypeError 3
 ```
 
-`<<` broadcasts a scalar to every element and pairs a sequence element by
-element; a shorter right side is capped to its last entry, and a longer one
-stops at the List's end: each element is written once (`nodes.tx <<
-range(100)` sets 0, 1, 2).
+`<<` takes one value for every element, or one each, by the rule of rig's
+functions: a scalar, a plug or a sequence of one goes to all of them, and a
+sequence as long as the List pairs element by element. Any other length is
+a `ValueError` raised before an element is written: a shorter right side
+does not repeat its last value, and a longer one is not cut at the List's
+end. A plain list that is one value of the elements' shape (a vector's
+channels, a matrix) goes to each of them whole, even when it is as long as
+the List (numpy's rule); a `List` is always one value each, and so is a
+`range`, which counts elements (`curve.cv[:] << range(4)` gives CV i the
+value i).
 
 ```python
 nodes.t  << 0          # every translate to the origin
-nodes.tx << [1, 2, 3]  # pairwise
-nodes.ty << [10, 20]   # asymmetric: c2.ty gets 20
-print(nodes.t >> None)                       # [[ 1. 10.  0.] [ 2. 20.  0.] [ 3. 20.  0.]]
+nodes.tx << [1, 2, 3]  # one each
+nodes.ty << [10]       # one for all
+print(nodes.t >> None)                       # [[ 1. 10.  0.] [ 2. 10.  0.] [ 3. 10.  0.]]
+nodes.s << [1, 2, 1]                         # one scale for each node: 3 channels, not 3 rows
+print(nodes.sy >> None)                      # [2. 2. 2.]
+nodes.s << 1
+try:
+    nodes.ty << [10, 20]                     # 2 values for 3 nodes: nothing is set
+except ValueError as err:
+    print(err)                               # List << [10, 20]: the List has 3 elements and the right side 2 values; give 1 value for all of them, or 3, one each
 nodes.tz = 5                                 # assignment sugar broadcasts too
 print(nodes.tz >> None)                      # [5. 5. 5.]
 ```
@@ -1469,7 +1482,10 @@ print(a.find_attr("speed", quiet=True) is None)                   # True
 
 Point components are plugs: `vtx` / `cv` / `pt` / `map` resolve to the
 shape's `controlPoints` / `uvpt`, through a transform with one geometry
-shape. A slice is a `List`, a list key is fancy indexing.
+shape. A slice is a `List`, a list key is fancy indexing, and `<<` pairs a
+slice as it pairs any List (section 6): one value for every element or one
+each, one point for all of them, and a `ValueError` for any other length,
+before a point moves.
 
 ```python
 cmds.file(new=True, force=True)
@@ -1483,6 +1499,12 @@ cube.vtx[::2] << [0, 0, 0]                   # one point value, broadcast to the
 print(cmds.pointPosition("pCube1.vtx[2]", local=True))   # [0.0, 0.0, 0.0]
 cube.vtx[::2] << [[1, 0, 0], [0, 2, 0], [0, 0, 3], [4, 4, 4]]   # one value per element
 print(cmds.pointPosition("pCube1.vtx[6]", local=True))   # [4.0, 4.0, 4.0]
+cube.vtx[:] << np.arange(24).reshape(8, 3)   # an (8, 3) array: one row per vertex
+print(cmds.pointPosition("pCube1.vtx[7]", local=True))   # [21.0, 22.0, 23.0]
+try:
+    cube.vtx[:] << range(100)                # 100 values for 8 vertices: none moves
+except ValueError as err:
+    print(err)   # List << range(0, 100): the List has 8 elements and the right side 100 values; give 1 value for all of them, or 8, one each
 ```
 
 Faces and edges have no plug, so `cube.f` / `cube.e` are a `Components`:
@@ -1901,9 +1923,8 @@ print(prune_memoize_caches() >= 3)            # True
 
 ## 14. `sequences` and `arguments`
 
-The asymmetric generators behind every broadcast in the DSL. Pure Python,
-no Maya. Scalars and strings repeat; a shorter sequence caps to its last
-entry.
+Two asymmetric generators, for scripts of your own. Pure Python, no Maya.
+Scalars and strings repeat; a shorter sequence caps to its last entry.
 
 ```python
 from rig import arguments, sequences
@@ -1914,8 +1935,9 @@ print(list(arguments([1, 2], scale=[10, 20], name="n")))  # [([1], {'scale': 10,
 print(list(sequences()), list(arguments()))               # [] []
 ```
 
-`sequences` is the permissive rule (`<<` and `List` use it);
-`@vectorize` checks lengths first and raises instead of capping.
+`sequences` is the permissive rule, and none of rig's broadcasts uses it:
+`<<`, `>>`, a `List`'s operators and `@vectorize` check lengths first and
+raise instead of capping (section 6).
 
 ---
 

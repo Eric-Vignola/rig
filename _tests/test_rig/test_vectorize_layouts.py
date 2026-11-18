@@ -592,6 +592,183 @@ class TestAListInAListOut(_Poles):
         self.assertEqual(cmds.getAttr("pma.input1D", multiIndices=True), [0])
 
 
+class TestOneRuleForLists(_Poles):
+    """Step 5 (decision 3A): a List's ``<<``, ``>>`` and operators pair as rig's functions do, one value for
+    all or one each, any other length raising before anything is written or built; a plain list that is one
+    value of the elements' shape goes to each of them (decision 4: the channels win)"""
+
+    def _nodes(self, count, prefix="n"):
+        return List([Node.create("transform", name=f"{prefix}{i}") for i in range(count)])
+
+    @staticmethod
+    def _t(nodes, attr="t"):
+        return [list(cmds.getAttr(f"{n}.{attr}")[0]) for n in nodes]
+
+    def test_lshift_one_for_all_or_one_each(self):
+        nodes = self._nodes(3)
+        for values, expected in (([1, 2, 3], [1, 2, 3]), (7, [7] * 3), ([5], [5] * 3), (range(3), [0, 1, 2]),
+                                 (np.array([4.0, 5.0, 6.0]), [4, 5, 6]), (List([8, 9, 10]), [8, 9, 10])):
+            with self.subTest(values=values):
+                nodes.tx << values
+                self.assertEqual([cmds.getAttr(f"{n}.tx") for n in nodes], [float(x) for x in expected])
+        nodes.tx << List([self.b.tx])                                   # a List of one: to every element
+        self.assertEqual([cmds.listConnections(f"{n}.tx", source=True, plugs=True) for n in nodes],
+                         [["b.translateX"]] * 3)
+
+    def test_lshift_other_lengths_raise_and_write_nothing(self):
+        nodes, a, b = self._nodes(3), self.a, self.b
+        for values in ([10, 20], [10, 20, 30, 40], (1, 2), range(100), np.array([1.0, 2.0]), List([a.tx, b.tx])):
+            with self.subTest(values=values):
+                with self.assertRaisesRegex(ValueError, r"^List << .+: the List has 3 elements and the right side "
+                                                        r"\d+ values; give 1 value for all of them, or 3, one each$"):
+                    nodes.tx << values
+                self.assertEqual([cmds.getAttr(f"{n}.tx") for n in nodes], [0.0] * 3)
+        self.assertEqual(cmds.listConnections("n0.tx", source=True) or [], [])
+        with self.assertRaisesRegex(ValueError, r"the List has 3 elements and the right side 10 values"):
+            nodes.ty = range(10)                                        # the assignment sugar
+        with self.assertRaisesRegex(ValueError, r"^List << \[1, 2, 3\]: the List has 1 element and the right side "
+                                                r"3 values; give 1 value$"):
+            List([self.p]).tx << [1, 2, 3]                              # a destination never broadcasts
+        self.assertEqual(cmds.getAttr("p.tx"), 10.0)
+
+    def test_lshift_a_vector_for_every_element(self):
+        nodes, q = self._nodes(3), self.q
+        nodes.t << [0, 5, 0]                          # three values, three nodes: the channels win (numpy)
+        self.assertEqual(self._t(nodes), [[0, 5, 0]] * 3)
+        List(nodes[:2]).t << [1, 2, 3]
+        self.assertEqual(self._t(nodes), [[1, 2, 3], [1, 2, 3], [0, 5, 0]])
+        List([nodes[2]]).t << (4, 5, 6)
+        self.assertEqual(self._t(nodes)[2], [4, 5, 6])
+        nodes.t << [q.tx, q.ty, q.tz]                 # scalar plugs: channel by channel
+        self.assertEqual([cmds.listConnections(f"{n}.ty", source=True, plugs=True) for n in nodes],
+                         [["q.translateY"]] * 3)
+        self.assertEqual(self._t(nodes), [[0, 10, 0]] * 3)
+
+    def test_lshift_rows_of_vectors(self):
+        nodes = self._nodes(3)
+        nodes.t << [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+        self.assertEqual(self._t(nodes), [[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+        nodes.t << np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]]) * 2   # an N x 3 array: rows (6A)
+        self.assertEqual(self._t(nodes), [[2, 4, 6], [8, 10, 12], [14, 16, 18]])
+        nodes.t << [[1, 2, 3]]                                         # one vector, for all
+        self.assertEqual(self._t(nodes), [[1, 2, 3]] * 3)
+        nodes.t << List([1, 2, 3])                                     # a List is rows: one value each
+        self.assertEqual(self._t(nodes), [[1, 1, 1], [2, 2, 2], [3, 3, 3]])
+        for values in ([(1, 2, 3), (4, 5, 6)], [1, 2]):                # [1, 2] is not 3 channels, nor 3 rows
+            with self.subTest(values=values):
+                with self.assertRaisesRegex(ValueError, r"the List has 3 elements and the right side 2 values"):
+                    nodes.t << values
+        self.assertEqual(self._t(nodes), [[1, 1, 1], [2, 2, 2], [3, 3, 3]])
+        List(nodes[:2]).t << [self.a.t, self.b.t]                      # vector plugs: rows
+        self.assertEqual([cmds.listConnections(f"n{i}.t", source=True, plugs=True) for i in range(2)],
+                         [["a.translate"], ["b.translate"]])
+
+    def test_lshift_a_matrix_for_every_element(self):
+        nodes = self._nodes(4)
+        flat = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 6, 7, 1]
+        nodes.opm << flat
+        self.assertEqual([cmds.getAttr(f"{n}.opm")[12:15] for n in nodes], [[5.0, 6.0, 7.0]] * 4)
+        nested = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [1, 2, 3, 1]]
+        nodes.opm << nested                            # 4 x 4 on four nodes: one matrix each, not 4 rows
+        self.assertEqual([cmds.getAttr(f"{n}.opm")[12:15] for n in nodes], [[1.0, 2.0, 3.0]] * 4)
+
+    def test_operators(self):
+        a, b, p = self.a, self.b, self.p                # tx: 2, 10, 10
+        xs = List([a.tx, b.tx, p.tx])
+        np.testing.assert_allclose(_value(xs + [1, 2, 3]), [3, 12, 13])
+        np.testing.assert_allclose(_value(xs + 1), [3, 11, 11])
+        np.testing.assert_allclose(_value(xs + [1]), [3, 11, 11])
+        np.testing.assert_allclose(_value([1, 2, 3] + xs), [3, 12, 13])
+        np.testing.assert_allclose(_value(List([a.tx]) + [1, 2, 3]), [3, 4, 5])   # a List of one meets every value
+        np.testing.assert_allclose(_value(List([a.t, b.t]) + [1, 2, 3]), [[3, 2, 3], [11, 6, 3]])   # channels
+        np.testing.assert_allclose(_value(List([a.t, b.t, p.t]) + [1, 2, 3]),
+                                   [[3, 2, 3], [11, 6, 3], [11, 2, 3]])            # three of three: channels
+        np.testing.assert_allclose(_value(List([a.t, b.t, p.t]) + List([1, 2, 3])),
+                                   [[3, 1, 1], [12, 6, 2], [13, 3, 3]])            # a List: rows
+        self.assertEqual(len(List([]) + 1), 0)
+        before = set(cmds.ls())
+        for build in (lambda: xs + List([a.ty, b.ty]), lambda: xs * [1, 2], lambda: [1, 2] - xs,
+                      lambda: xs == [1, 2], lambda: xs + [1, 2, 3, 4], lambda: List([a.t, b.t, p.t]) + [1, 2]):
+            with self.assertRaisesRegex(ValueError, r": \d rows and \d; each side must have 1 row or as many as "
+                                                    r"the other$"):
+                build()
+        with rig.fuse():
+            with self.assertRaisesRegex(ValueError, r": 3 rows and 2; each side must have 1 row"):
+                xs + List([a.ty, b.ty])
+        self.assertEqual(set(cmds.ls()) - before, set())
+
+    def test_rshift_pairs_the_same_way(self):
+        p = self.p
+        for name in ("foo", "bar", "baz"):
+            p << rig.spec.Float(name)
+        d = self._nodes(2, "d")
+        with self.assertRaisesRegex(ValueError, r"^List >> .+: the List has 3 elements and the right side 2; give 1 "
+                                                r"for all of them, or 3, one each$"):
+            List([p.foo, p.bar, p.baz]) >> d
+        has = lambda attr: [cmds.attributeQuery(attr, node=f"d{i}", exists=True) for i in range(2)]  # noqa: E731
+        self.assertEqual(has("foo") + has("bar") + has("baz"), [False] * 6)
+        List([p.foo, p.bar]) >> d
+        self.assertEqual(has("foo") + has("bar"), [True, False, False, True])
+        List([p.baz]) >> d                                              # a List of one: to each (a fan-out)
+        self.assertEqual(has("baz"), [True, True])
+
+    @staticmethod
+    def _curve(count, name="crv"):
+        crv = cmds.curve(degree=1, point=[(i, 0, 0) for i in range(count)], name=name)
+        return Node(cmds.listRelatives(crv, type="nurbsCurve")[0])
+
+    @staticmethod
+    def _cvs(shape, count):
+        return [list(cmds.pointPosition(f"{shape}.cv[{i}]", local=True)) for i in range(count)]
+
+    def test_component_slices(self):
+        rng = np.random.default_rng(5)
+        curve = self._curve(4)
+        start = self._cvs(curve, 4)
+        for values in (range(100), range(3), [[1, 1, 1]] * 3, rng.random((5, 3)), rng.random((3, 3))):
+            with self.subTest(values=np.shape(values)):
+                with self.assertRaisesRegex(ValueError, r"^List << .+: the List has 4 elements and the right side "
+                                                        r"\d+ values; give 1 value for all of them, or 4, one each$"):
+                    curve.cv[:] << values
+                self.assertEqual(self._cvs(curve, 4), start)          # nothing written
+        points = rng.random((4, 3))
+        curve.cv[:] << points                                         # (m, 3) on m CVs: one row each
+        np.testing.assert_allclose(self._cvs(curve, 4), points, atol=1e-6)
+        curve.cv[:] << range(4)                                       # a range: one value each
+        self.assertEqual(self._cvs(curve, 4), [[i, i, i] for i in range(4)])
+        curve.cv[:] << [1, 2, 3]                                      # a list of 3: one point for every CV
+        self.assertEqual(self._cvs(curve, 4), [[1, 2, 3]] * 4)
+        curve.cv[1:3] << [[5, 5, 5], [6, 6, 6]]
+        self.assertEqual(self._cvs(curve, 4), [[1, 2, 3], [5, 5, 5], [6, 6, 6], [1, 2, 3]])
+        three = self._curve(3, "three")
+        three.cv[:] << range(3)                                       # three on three CVs: still one each
+        self.assertEqual(self._cvs(three, 3), [[0, 0, 0], [1, 1, 1], [2, 2, 2]])
+        points = rng.random((3, 3))
+        three.cv[:] << points                                         # (3, 3): rows, not one value
+        np.testing.assert_allclose(self._cvs(three, 3), points, atol=1e-6)
+        cube = Node(cmds.listRelatives(cmds.polyCube(name="pc")[0], shapes=True)[0])
+        with self.assertRaisesRegex(ValueError, r"the List has 8 elements and the right side 100 values"):
+            cube.vtx[:] << range(100)
+        points = rng.random((8, 3))
+        cube.vtx[:] << points
+        np.testing.assert_allclose([cmds.pointPosition(f"{cube}.vtx[{i}]", local=True) for i in range(8)], points,
+                                   atol=1e-5)
+
+    def test_multi_slices(self):
+        pma, full = Node.create("plusMinusAverage", name="pma"), Node.create("plusMinusAverage", name="full")
+        for i in range(2):
+            cmds.setAttr(f"full.input1D[{i}]", 1)
+        pma.input1D[:] << range(5)                    # an empty multi: as many elements as values, as before
+        self.assertEqual(cmds.getAttr("pma.input1D", multiIndices=True), [0, 1, 2, 3, 4])
+        with self.assertRaisesRegex(ValueError, r"the List has 2 elements and the right side 5 values"):
+            full.input1D[:] << range(5)               # its two elements: two values, or one for both
+        self.assertEqual(list(cmds.getAttr("full.input1D")[0]), [1.0, 1.0])
+        full.input1D[:] << [7, 8]
+        self.assertEqual(list(cmds.getAttr("full.input1D")[0]), [7.0, 8.0])
+        full.input1D << range(5)                      # the multi itself takes any count
+        self.assertEqual(cmds.getAttr("full.input1D", multiIndices=True), [0, 1, 2, 3, 4])
+
+
 class TestTheInBetweensExample(_Poles):
     """examples/in_betweens.py: N nodes between two matrices, one blendMatrix per weight"""
 

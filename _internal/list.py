@@ -24,7 +24,8 @@ Examples::
     nodes = List(["pCube1", "pCube2", "pCube3"])
     nodes.t                    # List([Plug("pCube1.translate"), ...])
     nodes.t << src             # broadcast src to all .t
-    nodes.t << [a, b, c]       # asymmetric: a->pCube1.t, etc.
+    nodes.t << [a, b, c]       # one each: a->pCube1.t, etc.
+    nodes.t << [0, 5, 0]       # one vector for every .t
     a, b, c = nodes.tx + nodes.ty  # element-wise addition
     nodes.__tag__ = 5          # a '_' Maya attr, when every element has it
 
@@ -33,9 +34,11 @@ a node or plug that has a Maya attr of that name (see `_private_plugs`); any
 other read is AttributeError, as Python's probes (``__deepcopy__``) expect
 (an assignment: see `List.__setattr__`).
 
-Asymmetric operators use :func:`sequences` to broadcast (the shorter operand
-caps to its last element), but ``<<`` writes each element once: a right side
-longer than the List stops at its end.
+``<<``, ``>>`` and the operators broadcast by rig's one rule, its functions'
+(`_paired`): a sequence gives as many values as the List holds, one each, or
+one for all of them, and any other length is a ValueError raised before
+anything is written (``nodes.tx << [1, 2]`` on three nodes). A plain list that
+is one value of the elements' shape goes to each (``nodes.t << [0, 5, 0]``).
 
 Connection queries are methods, N-aligned -- one result slot per element,
 so index correspondence with the source list holds::
@@ -47,8 +50,8 @@ Every slot is a ``List``, empty where nothing is wired, so a slot can
 never be a ``None`` that ``<<`` would read as "disconnect". Nested results
 are terminal for attribute broadcast and arithmetic -- neither recurses into
 them -- but :meth:`List.get` DOES, so a query result reads as values.
-Both methods iterate elements directly rather than routing through
-:func:`sequences`, so an empty ``List`` yields an empty result.
+Both methods iterate the elements, so an empty ``List`` yields an empty
+result.
 
 A List holds what is in the scene (the List rule, user decisions 1A-4A and
 6C, 2026-10-17): while an element it holds -- a node, a plug or components of
@@ -83,7 +86,6 @@ from __future__ import annotations
 
 import contextlib
 import functools
-import itertools
 import numbers
 import operator
 import reprlib
@@ -117,7 +119,6 @@ from rig.nodetypes._base import (
 )
 from rig._internal import anim_keys as _anim_keys
 from rig._internal.anim_keys import _Keys
-from rig._internal.generators import sequences
 from rig._internal.introspect import _stack_values
 from rig._internal import fuse as _fuse
 from rig._internal import journal as _journal
@@ -136,7 +137,7 @@ from rig._internal.operands import (
     REFLECTED,
 )
 from rig._internal.plug import _MethodPlug, Plug
-from rig._internal.types import _is_attribute_spec, _is_components, _is_membership
+from rig._internal.types import _is_attribute_spec, _is_components, _is_membership, _is_sequence
 from rig._internal.types import _lazy as _types_lazy
 from rig.nodetypes.errors import AmbiguousNodeError
 from rig._internal.undo import _undo_chunk
@@ -339,9 +340,60 @@ def _safe_repr(x: Any) -> str:
         return f"<{type(x).__name__} object at {id(x):#x}>"
 
 
+_PAIRED_SEQUENCES = (set, tuple, list, dict)
+
+
+def _paired(items: list, other: Any, dunder: str, owner: Any = None) -> list:
+    """The rows ``(element, value)`` of a List's ``<<``, ``>>`` or operator
+    ``dunder`` with ``other``, rig's one broadcast rule (its functions' rule,
+    user decision 3A): a value that is not a sequence goes to every element,
+    and so does a plain sequence that is one value of the shape every element
+    has (``List([a, b]).t << [0, 5, 0]``: `layout.lines_up`; never a range,
+    and not for ``>>``). Another sequence (a List, a list, a tuple, a range,
+    an array's rows, a dict's keys) gives each element its own value, as many
+    as the List holds, or one for all of them; for an operator and ``>>`` a
+    List of one meets every value (``List([a.tx]) + [1, 2, 3]`` is a List of
+    3). Any other
+    pairing is a ValueError, raised before anything is written or built: a
+    shorter side does not repeat its last value, and a longer one is not cut
+    at the List's end. ``owner``, the List ``items`` were read from, is how an
+    operator's error names it."""
+    if not (isinstance(other, _PAIRED_SEQUENCES) or _is_sequence(other)):
+        return [(x, other) for x in items]
+    if dunder != "__rshift__" and _layout.lines_up(items, other):
+        return [(x, other) for x in items]
+    values = list(other)
+    n, m = len(items), len(values)
+    if m == n:
+        return list(zip(items, values))
+    if m == 1:
+        value = values[0]
+        return [(x, value) for x in items]
+    if n == 1 and dunder != "__lshift__":
+        mine = items[0]
+        return [(mine, v) for v in values]
+    raise _length_error(dunder, items if owner is None else owner, other, n, m)
+
+
+def _length_error(dunder: str, items: Any, other: Any, n: int, m: int) -> ValueError:
+    """`_paired`'s ValueError: ``n`` elements met ``m`` values"""
+    plural = "s" if n != 1 else ""
+    if dunder == "__lshift__":
+        need = "give 1 value or none" if not n else "give 1 value" if n == 1 else \
+            f"give 1 value for all of them, or {n}, one each"
+        return ValueError(f"List << {_render(other)}: the List has {n} element{plural} and the "
+                          f"right side {m} values; {need}")
+    if dunder == "__rshift__":
+        return ValueError(f"List >> {_render(other)}: the List has {n} element{plural} and the "
+                          f"right side {m}; give 1 for all of them, or {n}, one each")
+    where = operator_where(dunder, _render(items), other)
+    return ValueError(f"{where}: {n} row{plural} and {m}; each side must have 1 row or as many "
+                      f"as the other")
+
+
 def _operand_rows(dunder: str, items: list, other: Any) -> list:
-    """The broadcast rows ``sequences(items, other)`` of a List operator,
-    checked before any row builds a node.
+    """The broadcast rows `_paired` gives a List operator, checked before any
+    row builds a node.
 
     A row that pairs a Plug with a plain str, or with a sequence holding one,
     raises TypeError: that Plug's operator would reject the row anyway (see
@@ -362,7 +414,7 @@ def _operand_rows(dunder: str, items: list, other: Any) -> list:
         and isinstance(other, _RESHAPED)
     ):
         other = _prepared_operand(other, operator_where(dunder, _render(items), other))
-    rows = list(sequences(list(items), other))
+    rows = _paired(list(items), other, dunder, items)
     for row, (mine, theirs) in enumerate(rows):
         if isinstance(mine, Plug):
             if isinstance(theirs, _CAN_HOLD_STR) and not isinstance(theirs, Attribute):
@@ -734,7 +786,7 @@ class List(list):
         # Keys: one curve per plug (``List(ctrls).ry << AnimCurve([...])``), every
         # row planned first, then one undo step (``rig.animcurve``)
         if type(other) is _Keys:
-            _anim_keys.inject_rows(list(sequences(list(self), other)))
+            _anim_keys.inject_rows(_paired(list(self), other, "__lshift__"))
             return self
 
         # Spec broadcast -- apply the same spec to every element node. An
@@ -770,24 +822,20 @@ class List(list):
                 parent << other
                 return self
 
-        # Asymmetric broadcast. A Components element dispatches too, so
+        # The broadcast (`_paired`): one value for every element, or one each
+        # (``nodes.tx << [1, 2]`` on three nodes is a ValueError, and so is
+        # ``nodes.tx << range(100)``), checked before any element is written.
+        # A Components element dispatches too, so
         # ``List([cube.f[:2], cube.f[2:]]) << [Tag("a"), Tag("b")]``
         # pairs each selection with its own spec. Enum field names are read
-        # for every row first, so a wrong one sets nothing. Each element is
-        # written once: a right side longer than the List stops at its end
-        # (``nodes.tx << range(100)`` on four nodes sets 0, 1, 2, 3), where the
-        # broadcast would hold the last element for every value left over (and
-        # write it, connect it or add it to a set again for each). An empty
-        # List still raises (`_yield`'s IndexError).
-        rows = sequences(list(self), other)
-        if list.__len__(self):
-            rows = itertools.islice(rows, list.__len__(self))
+        # for every row first, so a wrong one sets nothing.
+        rows = _paired(list(self), other, "__lshift__")
         if isinstance(other, (list, tuple)) and any(_is_membership(o) for o in other):
-            return self._membership_rows(list(rows))
+            return self._membership_rows(rows)
         if isinstance(other, (list, tuple)) and any(type(o) is _Keys for o in other):
             # pairs of keys: every pair planned first (a row of another kind is a
             # TypeError: one '<<' per kind), then one undo step
-            _anim_keys.inject_rows(list(rows))
+            _anim_keys.inject_rows(rows)
             return self
         if _holds_text(other):
             rows = _enum_rows(rows)
@@ -831,8 +879,9 @@ class List(list):
         - Other RHS types delegate to each element's :meth:`Plug.__rshift__`,
           which raises :class:`TypeError` for unsupported pairings.
 
-        Asymmetric broadcast follows the same :func:`sequences` rules as the
-        other List operators (when ``other`` is itself iterable).
+        A sequence ``other`` pairs with the elements as in the other List
+        operators (`_paired`): as many as the List holds, or one for all of
+        them; a List of one goes to every one (a fan-out).
         """
         if self._epoch != _EPOCH[0]:
             _check(self)
@@ -850,7 +899,7 @@ class List(list):
             )
 
         results = []
-        for x, y in sequences(list(self), other):
+        for x, y in _paired(list(self), other, "__rshift__"):
             if isinstance(x, (Plug, Node)) or _is_components(x):
                 results.append(x >> y)
             else:
@@ -1862,3 +1911,6 @@ def _tests_list(items: Iterable[Any]) -> "_Tests":
 
 
 _register_list_type()
+
+# `_paired`'s shapes (`lines_up`); layout reads List, so it is imported once List exists
+from rig._internal import layout as _layout  # noqa: E402
