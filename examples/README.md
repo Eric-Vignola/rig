@@ -161,8 +161,9 @@ feature at a time, in eight numbered steps you can read in one sitting:
 3. A `curveInfo` reads the live arc length; `current_length.get()`
    snapshots the build-time length as a Python float, and
    `default_length / current_length` builds the stretch ratio plug.
-4. `matrix.axis(controls[0].wm, up_axis)` and `normalize(...)` give the
-   first and last control's up vector. An `angleBetween` gives the axis
+4. `matrix.axis([controls[0].wm, controls[-1].wm], up_axis)` and
+   `normalize(...)` give the first and last control's up vector (a list of
+   the two matrices is two rows: one call each). An `angleBetween` gives the axis
    and angle from one to the other, and `quaternion.from_axis_angle(...)`
    turns them into one quaternion, `turn`.
 5. Two `pointOnCurveInfo` nodes sit on the curve's two ends
@@ -326,18 +327,22 @@ in five steps:
 
 1. A root transform: the twist nodes' parent, and the home of the live
    pole knobs.
-2. Each end's pole: `rf.choice([[1,0,0],[0,1,0],[0,0,1]], selector=root.startAxis)`
-   times `rf.condition(root.startInvert, -1, 1)`, turned into world space
-   by `matrix.multiply(..., local=True)` and normalized.
-3. Each end's frame, built once: `matrix.aim(end - start, pole, ...)`, an
-   `aimMatrix` aiming down the limb with its up axis toward that pole, as
-   a quaternion (`to_quaternion`). The two frames differ only by a roll
-   about the limb: the twist the nodes share.
+2. Each end's pole, both ends at once (a list of the two is two rows):
+   `rf.choice([[1,0,0],[0,1,0],[0,0,1]], selector=[root.startAxis, root.endAxis])`
+   (one choice per end, the three axes made once for both) times
+   `rf.condition(List([root.startInvert, root.endInvert]), -1, 1)`, turned
+   into world space by `matrix.multiply(..., [start_matrix, end_matrix], local=True)`
+   and normalized.
+3. Each end's frame, built once: `matrix.aim(end - start, [start_pole, end_pole], ...)`,
+   an `aimMatrix` per end aiming down the limb with its up axis toward that
+   end's pole, as a quaternion (`to_quaternion`). The two frames differ only
+   by a roll about the limb: the twist the nodes share.
 4. Per twist node: a `u` attribute, 0 on the start and 1 on the end, from
-   `weights=` or spread evenly.
-5. `slerp(start_frame, end_frame, twist.u)` (one `quatSlerp`) and
-   `lerp(start, end, twist.u)`, composed and injected:
-   `twist << matrix.compose(rotate=..., translate=...) * root.wim`.
+   `weights=` or spread evenly: `twists << Float("u") << weights`.
+5. `slerp(start_frame, end_frame, twists.u)` and
+   `lerp(start, end, twists.u)`: `twists.u` is a List, so each is one call
+   for every node (a `quatSlerp` each, a lerp each), composed and injected:
+   `twists << matrix.compose(rotate=..., translate=...) * root.wim`.
 
 | Knob | On | Default | Does |
 |---|---|---|---|

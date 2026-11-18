@@ -29,9 +29,11 @@ DSL features showcased here
   * ``with container("..."):``                             -- scoped utility graph
   * ``root << Enum("startAxis", en="X:Y:Z:")``             -- spec-object injection
   * ``rf.choice(AXES, selector=...) * rf.condition(...)``  -- a live axis pick and flip
+  * ``matrix.translation([start, end])``                   -- a list is rows: one call per end
   * ``matrix.multiply(vec, m, local=True)``                -- vec x matrix (rotation only)
   * ``matrix.translation`` / ``matrix.aim``                -- a point and an aim frame from matrices
   * ``to_quaternion`` / ``slerp`` / ``lerp``               -- dispatch verbs: a quatSlerp, a vector lerp
+  * ``slerp(a, b, twists.u)``                              -- a List of weights: one quatSlerp per node
   * ``matrix.compose(rotate=quat, translate=point)``       -- a matrix from a quaternion and a point
   * ``twist << matrix_plug * root.wim``                    -- matrix -> t/r/s decompose
 
@@ -161,47 +163,51 @@ def create_limb_twist(
         root << Enum("endAxis", en="X:Y:Z:", dv=end_axis)
         root << Enum("endInvert", dv=int(end_invert))
 
-        # ---- 2. Each end's pole, in world space. ----
-        # ``rf.choice`` picks the local axis the enum names; ``rf.condition``
-        # turns the toggle into -1 or 1. ``matrix.multiply(..., local=True)``
-        # turns that vector through the matrix without its translation, and
-        # ``normalize`` drops any scale.
-        start_axis_vector = rf.choice(AXES, selector=root.startAxis) * rf.condition(root.startInvert, -1, 1)
-        end_axis_vector   = rf.choice(AXES, selector=root.endAxis) * rf.condition(root.endInvert, -1, 1)
-        start_pole        = normalize(matrix.multiply(start_axis_vector, start_matrix, local=True))
-        end_pole          = normalize(matrix.multiply(end_axis_vector, end_matrix, local=True))
+        # ---- 2. Each end's pole, in world space: both ends at once. ----
+        # A list of the two ends is two rows: every call below runs once per
+        # end. ``rf.choice`` picks the local axis each enum names (one choice
+        # per selector, the three axes made once for both); ``rf.condition``
+        # turns each toggle into -1 or 1. ``matrix.multiply(..., local=True)``
+        # turns each vector through its end's matrix without the translation,
+        # and ``normalize`` drops any scale.
+        ends                 = [start_matrix, end_matrix]
+        axis_vectors         = rf.choice(AXES, selector=[root.startAxis, root.endAxis])
+        flips                = rf.condition(List([root.startInvert, root.endInvert]), -1, 1)
+        start_pole, end_pole = normalize(matrix.multiply(axis_vectors * flips, ends, local=True))
 
         # ---- 3. The two end frames, built once. ----
         # Both aim down the limb, from start to end; each turns its up axis
         # toward its own pole. They differ only by a roll about the limb:
         # the twist the nodes share. As quaternions, they slerp.
-        start_point = matrix.translation(start_matrix)
-        end_point   = matrix.translation(end_matrix)
-        limb        = end_point - start_point
-        start_frame = to_quaternion(matrix.aim(limb, start_pole, aim_axis=AXES[aim_axis], up_axis=AXES[up_axis]))
-        end_frame   = to_quaternion(matrix.aim(limb, end_pole, aim_axis=AXES[aim_axis], up_axis=AXES[up_axis]))
+        start_point, end_point = matrix.translation(ends)
+        limb                   = end_point - start_point
+        start_frame, end_frame = to_quaternion(
+            matrix.aim(limb, [start_pole, end_pole], aim_axis=AXES[aim_axis], up_axis=AXES[up_axis])
+        )
 
         # The build-time limb length, a Python float: it sizes the cubes and locators.
         length = float(np.linalg.norm(limb.get()))
 
         # ---- 4. The twist nodes, each with its own u. ----
         twists = List()
-        for weight in weights:
+        for _ in weights:
             twist = _twist_node(node_type, twist_name, length, count, aim_axis, up_axis)
             rc.parent(twist, root)
-
-            # 0 on the start, 1 on the end: where the node sits, and how much
-            # of the twist it takes. Change it at any time.
-            twist << Float("u", min=0, max=1) << weight
-
-            # ---- 5. Slerp the frames by u, lerp the position, inject. ----
-            # ``slerp`` of two quaternions is one ``quatSlerp`` node; the
-            # matrix it composes with the lerped point lands in root space,
-            # and the injection decomposes it into the node's channels.
-            rotation = slerp(start_frame, end_frame, twist.u)
-            position = lerp(start_point, end_point, twist.u)
-            twist << matrix.compose(rotate=rotation, translate=position) * root.wim
             twists.append(twist)
+
+        # 0 on the start, 1 on the end: where each node sits, and how much of
+        # the twist it takes. One u per node, from the list of weights; change
+        # any of them at any time.
+        twists << Float("u", min=0, max=1) << weights
+
+        # ---- 5. Slerp the frames by u, lerp the position, inject. ----
+        # ``twists.u`` is a List, one u per node, so each call runs once per
+        # node: a ``quatSlerp`` each, a lerp each. The matrices they compose
+        # land in root space, and the injection decomposes each into its
+        # node's channels.
+        rotations = slerp(start_frame, end_frame, twists.u)
+        positions = lerp(start_point, end_point, twists.u)
+        twists << matrix.compose(rotate=rotations, translate=positions) * root.wim
 
     return LimbTwist(root, twists)
 

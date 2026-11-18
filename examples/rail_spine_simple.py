@@ -43,6 +43,7 @@ DSL features showcased here
   * ``Float("pivot", min=0, max=1)``          -- spec-object injection
   * ``plug.get()``                            -- read-value idiom
   * ``matrix.axis(wm, up_axis)``              -- extract basis vector
+  * ``matrix.axis([wm0, wm1], up_axis)``      -- a list is rows: one call per matrix
   * ``quaternion.from_axis_angle / pow``      -- a turn, and a share of it
   * ``matrix.compose(rotate=quat)``           -- quaternion -> rotation matrix
   * ``matrix.multiply(vec, m, local=True)``   -- vec x matrix (rotation only)
@@ -153,9 +154,11 @@ def create_simple_rail(
         # ``matrix.axis(wm, up_axis)`` extracts the rotation-only basis
         # vector for the chosen axis (``vectorProduct`` op=3 pre-2024,
         # ``axisFromMatrix`` on 2024+). ``normalize`` normalises in case
-        # controls have non-unit scale.
-        first_up = normalize(matrix.axis(position_controls[0].wm, up_axis))
-        last_up  = normalize(matrix.axis(position_controls[-1].wm, up_axis))
+        # controls have non-unit scale. A list of the two matrices is two
+        # rows: one axis, then one normalize, for each end.
+        first_up, last_up = normalize(
+            matrix.axis([position_controls[0].wm, position_controls[-1].wm], up_axis)
+        )
 
         # The turn from ``first_up`` to ``last_up`` as one quaternion: an
         # ``angleBetween`` gives the axis and the angle between them (the
