@@ -147,6 +147,34 @@ class TestArcCos(MayaTestCase):
         result = trig.acosd(a.tx)
         self.assertIsInstance(result, Plug)
 
+    def test_a_number_out_of_range_clamps_as_a_plug_does(self):
+        """asin and acos of a number outside [-1, 1] give the end value, as Maya's nodes give
+        a plug (they raised ValueError): 1.0000000000000002 is what the dot product of two
+        unit vectors rounds to"""
+        for x in (2.0, 1.0000000000000002, 7):
+            with self.subTest(x=x):
+                self.assertEqual(trig.acosd(x), 0.0)
+                self.assertEqual(trig.acos(x), 0.0)
+                self.assertAlmostEqual(trig.asind(x), 90.0)
+                self.assertAlmostEqual(trig.asin(x), math.pi / 2)
+        for x in (-2.0, -1.0000000000000002):
+            with self.subTest(x=x):
+                self.assertAlmostEqual(trig.acosd(x), 180.0)
+                self.assertAlmostEqual(trig.acos(x),  math.pi)
+                self.assertAlmostEqual(trig.asind(x), -90.0)
+                self.assertAlmostEqual(trig.asin(x),  -math.pi / 2)
+        self.assertAlmostEqual(trig.acosd(0.5), 60.0)          # (inside the range: as it was)
+        self.assertTrue(math.isnan(trig.acosd(float("nan"))))  # (a nan stays one)
+
+    def test_a_plug_out_of_range_gives_the_same(self):
+        a = Node.create("transform", name="a")
+        b = Node.create("transform", name="b")
+        b.tx << trig.acosd(a.tx)
+        b.ty << trig.asind(a.tx)
+        cmds.setAttr("a.tx", 2.0)
+        self.assertAlmostEqual(cmds.getAttr("b.tx"), trig.acosd(2.0))
+        self.assertAlmostEqual(cmds.getAttr("b.ty"), trig.asind(2.0))
+
 
 class TestArcTan(MayaTestCase):
     TEST_START_NEW_SCENE = True

@@ -84,6 +84,13 @@ def radians(token: Any) -> Any:
     return _multiply_divide_op(token, (math.pi / 180.0), operation=1, name="radians1")
 
 
+def _unit(value: float) -> float:
+    """``value`` clamped to [-1, 1], the domain of asin and acos: a number folds as a plug
+    computes, in Maya's nodes and in a fused node (the dot product of two unit vectors
+    rounds past 1). A nan stays one."""
+    return -1.0 if value < -1.0 else 1.0 if value > 1.0 else value
+
+
 # --------------------------------------------------------------------- #
 #  NodeOps -- modern (Maya 2024+) + legacy impls
 # --------------------------------------------------------------------- #
@@ -286,13 +293,14 @@ def tan(token: Any) -> Any:
 @vectorize("()->()")
 @memoize(foldable="scalar")
 def asind(token: Any) -> Any:
-    """``asind(x)`` -- arc sine of ``x``, result in degrees.
+    """``asind(x)`` -- arc sine of ``x``, result in degrees; ``x`` is clamped to
+    [-1, 1], a number as a plug.
 
     Maya 2024+ uses native ``asin``. Older uses an ``angleBetween``
     network (Eric's hack -- see ``_asind_legacy``).
     """
     if ContainerOptions.constant_folding and isinstance(token, numbers.Real):
-        return math.degrees(math.asin(token))
+        return math.degrees(math.asin(_unit(token)))
     try:
         return _asind_op(token)
     except RuntimeError:
@@ -327,9 +335,9 @@ def _asind_legacy(token: Any) -> Any:
 @vectorize("()->()")
 @memoize(foldable="scalar")
 def asin(token: Any) -> Any:
-    """``asin(x)`` -- arc sine of ``x``, result in radians."""
+    """``asin(x)`` -- arc sine of ``x``, result in radians; ``x`` is clamped to [-1, 1]."""
     if ContainerOptions.constant_folding and isinstance(token, numbers.Real):
-        return math.asin(token)
+        return math.asin(_unit(token))
     with container("asin1"):
         token = container.publish_input(token, "input")
         return container.publish_output(radians(asind(token)), "output")
@@ -339,9 +347,10 @@ def asin(token: Any) -> Any:
 @vectorize("()->()")
 @memoize(foldable="scalar")
 def acosd(token: Any) -> Any:
-    """``acosd(x)`` -- arc cosine of ``x``, result in degrees."""
+    """``acosd(x)`` -- arc cosine of ``x``, result in degrees; ``x`` is clamped to
+    [-1, 1], a number as a plug."""
     if ContainerOptions.constant_folding and isinstance(token, numbers.Real):
-        return math.degrees(math.acos(token))
+        return math.degrees(math.acos(_unit(token)))
     try:
         return _acosd_op(token)
     except RuntimeError:
@@ -372,9 +381,9 @@ def _acosd_legacy(token: Any) -> Any:
 @vectorize("()->()")
 @memoize(foldable="scalar")
 def acos(token: Any) -> Any:
-    """``acos(x)`` -- arc cosine of ``x``, result in radians."""
+    """``acos(x)`` -- arc cosine of ``x``, result in radians; ``x`` is clamped to [-1, 1]."""
     if ContainerOptions.constant_folding and isinstance(token, numbers.Real):
-        return math.acos(token)
+        return math.acos(_unit(token))
     with container("acos1"):
         token = container.publish_input(token, "input")
         return container.publish_output(radians(acosd(token)), "output")
