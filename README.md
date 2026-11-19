@@ -50,7 +50,8 @@ cube and the third one stays halfway between.
 
 Complex, elegant rigs can lead to large node networks. The provided
 [rail_spine.py](examples/rail_spine.py) example builds 1,721 nodes and
-6,111 connections for a 20-joint spine.
+6,111 connections for a 20-joint spine. This is what the node graph looks
+like for a single rider:
 
 ![rail_spine.py built from Maya's own nodes](examples/images/fuse/before.png)
 
