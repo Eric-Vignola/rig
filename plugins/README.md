@@ -72,6 +72,17 @@ rig asks Maya whether the plug-in is loaded each time fusing starts: unloaded by
 loaded again from the list above; loaded by hand after a lookup that found none, it is used
 (the lookup itself is not run twice: it is slow).
 
+### Opening a fused scene
+
+That lookup serves the session that builds. A Maya that only opens a scene holding
+`rigExpression` nodes loads `rig.mll` by itself, by the scene's `requires "rig"` line, and
+only from `MAYA_PLUG_IN_PATH`: put this folder's `<version>` on it, with a module file's
+`MAYA_PLUG_IN_PATH+:=rig\plugins\2025` line say, for everyone who opens such scenes
+(animators, a farm). Without it the node opens as an `unknown` node and everything it drives
+reads 0, a scale too; nothing is lost (the node and its connections are kept, and the scene
+opens right where the plug-in is found). `rig.unfuse()` turns a scene's fused nodes back into
+rig's own network before a hand-over: in the scene that owns them, not through a reference.
+
 `MIN_VERSION` is the lowest version its programs run on and give the documented results
 with (1.2: `Q_ARC`, angleBetween's turn as Maya's `MQuaternion(a, b)`; `TIME`, the scene's
 time; `RAND`, rig.random; eulers through Maya's own decompositions; 1.3: the three guards

@@ -4728,7 +4728,10 @@ A fused value is built when it is used, not when it is written, so:
 * The block is one undo step. `rig.fuse("arm")` names its node `arm`:
   `arm1`, `arm2` ... when a node has the name (above, the block's node
   is `rider1`: the transform is `rider`), and for the block's next
-  nodes. A block with no name makes `fused1`, `fused2` ...
+  nodes. A block with no name makes `fused1`, `fused2` ... Name a block
+  unlike the nodes built in it: Maya numbers both in one series (a block
+  `rider` in a loop that makes the joints `rider1`, `rider2` ... takes
+  some of their numbers).
 * `with rig.fuse("arm") as io:` gives the block, which stands in for its
   node once it made one: `str(io)` is the node's name, so
   `cmds.select(io)` selects it; `io.notes`, `io.vectorOut[0]`,
@@ -4807,7 +4810,16 @@ A fused value is built when it is used, not when it is written, so:
   asks Maya each time a block opens: a plug-in unloaded by hand is loaded
   again, and one loaded by hand after that warning is used.
 * A saved scene needs only the plug-in: the program is an int array and the
-  constants a double array on the node.
+  constants a double array on the node. But the Maya that opens it has to
+  find `rig.mll` by itself, by the scene's `requires "rig"` line: put
+  `rig/plugins/<version>` on `MAYA_PLUG_IN_PATH` (a module file's
+  `MAYA_PLUG_IN_PATH+:=rig\plugins\2025` line) for everyone who opens such
+  scenes. In a session that never fused, without that folder on the path,
+  the node opens as an `unknown` node and everything it drives reads `0`,
+  a scale too (the node and its connections are kept: the scene opens right
+  where the plug-in is found). `rig.unfuse()` before a hand-over removes the
+  need: in the scene that owns the node, not through a reference (Maya
+  deletes no referenced node, so `rig.unfuse()` refuses one).
 * `set_options(maya_version=...)` targeting another Maya turns fusing off
   (one warning): the scene must open where the plug-in may not exist.
 

@@ -2362,6 +2362,27 @@ class TestScopes(_Case):
         self.assertNotEqual(self.driver("out.ty"), "rigExpression")
         self.assertEqual(self.driver("out.tz"), "rigExpression")
 
+    def test_rail_spines_riders_keep_their_names_under_the_option(self):
+        """the example's rider blocks are named unlike its joints: a block's node takes the
+        block's name, numbered as Maya numbers any name (``rider``, ``rider2`` ... took the
+        joints' numbers, which became ``rider1``, ``rider3``, ``rider6`` ...)"""
+        from rig.examples import rail_spine
+        joints = []
+        for fused in (False, True):
+            cmds.file(new=True, force=True)
+            controls = List()
+            for i in range(4):
+                controls.append(Node(cmds.spaceLocator(name=f"ctl{i}")[0]))
+                controls[i].ty << i * 5
+            set_options(fuse=fused)
+            rail_spine.create_rail(controls, 4, orient_controls=controls, scale_controls=controls,
+                                   degree=3, periodic=False, aim_axis=1, up_axis=0, debug=False)
+            set_options(fuse=False)
+            joints.append(sorted(cmds.ls(type="joint")))
+            self.assertEqual(bool(self.fused_nodes()), fused)
+        self.assertEqual(joints[0], ["rider1", "rider2", "rider3", "rider4"])
+        self.assertEqual(joints[1], joints[0])
+
 
 class TestHandle(_Case):
     """``with rig.fuse("name") as io``: the block, standing in for its node"""

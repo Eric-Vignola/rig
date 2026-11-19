@@ -345,7 +345,7 @@ def create_rail(
         # parallel with the other riders'. Off (the default): rig's network.
         fused = get_options()["fuse"]
         for u_default in u:
-            with fuse("rider") if fused else contextlib.nullcontext():
+            with fuse("riderMath") if fused else contextlib.nullcontext():
                 # Joint sits OUTSIDE the container so its parent-rename doesn't
                 # confuse container membership tracking. ``rc.parent`` keeps
                 # the Node reference up-to-date when Maya renames on parent.
