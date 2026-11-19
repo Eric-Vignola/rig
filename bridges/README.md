@@ -180,7 +180,7 @@ is nothing to join.
 
 `shared=` is refused, a `TypeError` before anything is made: a factory
 always makes a new node, and `Transform.define("x")` is the verb that finds
-or makes one (the [construction rule](../README.md#the-construction-rule)).
+or makes one (the [construction rule](../GUIDE.md#the-construction-rule)).
 So `s` is no short form here: `rn.transform(s=2)` is a scale of 2.
 
 Everything else is applied **in order** as `getattr(node, key) << value`, so

@@ -1,0 +1,677 @@
+# The `rig` guide
+
+How the language works, for when the [welcome page](README.md) is not enough:
+the operators, the rule for making nodes, the conventions, a map of the
+package, and the things that surprise people in their first hour. For a
+runnable example of every name, see the [Cheatsheet](CHEATSHEET.md).
+
+## Contents
+
+- [A longer taste](#a-longer-taste)
+- [The language in one table](#the-language-in-one-table)
+- [The construction rule](#the-construction-rule)
+- [Conventions](#conventions)
+- [What's inside](#whats-inside)
+- [Where to go next](#where-to-go-next)
+- [Real behaviour, verified](#real-behaviour-verified)
+- [Requirements](#requirements)
+
+---
+
+## A longer taste
+
+Three cubes, a lerp driven by a new attribute, a container around the
+network, a component tag and a material.
+
+```python
+from maya import cmds
+from rig import Node, List, container, Tag
+from rig.spec import Float, lock
+from rig.bridges import commands as rc
+from rig.nodetypes import Blinn, Material
+
+obj1, obj2, obj3 = [rc.polyCube(name=n)[0] for n in ("cube1", "cube2", "cube3")]
+obj2.t << [10, 0, 0]                             # setAttr
+obj3   << Float("weight", min=0, max=1) << 0.25  # addAttr, then setAttr on the new plug
+
+with container("ye_olde_lerp"):                        # nodes built inside join the container
+    obj3.t << (obj2.t - obj1.t) * obj3.weight + obj1.t
+
+print(obj3.t >> None)                                         # [2.5 0.  0. ]
+print(cmds.container("ye_olde_lerp", q=True, nodeList=True))  # ['sub1', 'mul1', 'add1']
+
+obj1.f[:3] << Tag("lid")                               # a face component tag on cube1Shape
+print(obj1 >> Tag("lid"))                              # [0 1 2]
+
+red = Blinn.define("red", color=(1, 0, 0))             # finds red, or makes red + redSG
+obj1 << red                                            # the material node on the right assigns cube1
+print(Material.of(obj1), obj1 in red)                  # [Blinn("red")] True
+```
+
+---
+
+## The language in one table
+
+Two operators carry the language:
+- `<<` points the way data flows in. (aka: injection)
+- `>>` points the way it flows out. (aka: introspection)
+
+`in` asks a yes-or-no membership question.
+
+A name on a node or a plug follows one rule: **a bare name is the Maya
+attribute if one exists, otherwise the method; with brackets it is the
+method.** `ctl.lock` is the plug of a `lock` attribute when `ctl` has one,
+and `ctl.lock()` locks the node either way. Nodes and plugs have no
+properties, so what rig tells you about them is a method too: `str(node)`
+or `node.get_name()`, `plug.get_node()`, `plug.is_locked()`. Other objects
+follow what they are. One that points into the scene reads through methods:
+`Components` (`faces.get_indices()`), a `ColorSet`, `rig.container`
+(`get_stack()`), a membership token such as `-layer` (its name is
+`str(token)`; its `inject` / `query` / `contains` are the protocol `<<` /
+`>>` / `in` call). A value you hold keeps its data as attributes: keys
+(`keys.values`), a `Tag` (`Tag("cap").name`), a spec (`Float("w").kargs`),
+an astype `Conversion`, an error, cgmath data; like cgmath's, it refuses a
+typo (`Tag("cap").nmae = 1`: "'Tag' has no attribute 'nmae'; public
+attributes must be declared"). The renames since 2.0.0a5 are
+listed in [CHEATSHEET section 2](CHEATSHEET.md#2-plug--read-set-connect).
+
+| Spelling | Meaning | Returns |
+|---|---|---|
+| `a << b` | **inject**: `b` flows into `a`. A value is `setAttr` (an enum also takes a field name, `t.ro << "zxy"`), a plug is `connectAttr`, `None` disconnects. A value or a plug over any connection (a constraint, a curve, a pairBlend, a wire) replaces it; one driver per channel: on a compound, the inputs its children have of their own go too | `a`, so it chains |
+| `a >> None` | **introspect**: read the value (`getAttr`); on a node, the node itself | a float, a NumPy array, a string... |
+| `a >> node` | clone `a`'s attribute definition onto `node` | the new plug |
+| `node << Float("x")` | declare an attribute: any `rig.spec` type, then modifiers such as `<< lock` / `<< hide`; declaring it again applies the settings given and keeps the value | the new plug, so its value goes next |
+| `node >> Float("x")` | add an output-only (non-writable) attribute | the new plug |
+| `slot << b` on a `Typed` (a typed attribute that holds any data, as a choice node's input) | a plug connects whole, whatever the slot held (no shorthand node, no split into channels); a number sets; any other value is a `TypeError`; `<< None` also drops the data the old input left | `slot`, so it chains |
+| `plug << AnimCurve([0, 90], times=[0, 24])` | **keys** the plug: one animation curve per channel, of the type the plug takes (`animCurveTL` / `TA` / `TU` / `TT`, Maya's rule), the values in the UI's units; an input the plug has is replaced (no pairBlend); a re-run updates the plug's own curve in place, and keys it holds already write nothing; one undo step | `plug`, so it chains |
+| `x.lock()`, `x << lock`; `x.unlock()`, `x << unlock` | lock a node (`lockNode`), a plug (`setAttr -lock`) or a `List` (its plugs, then its nodes, in one undo step); nothing is written when `x` already is; a refusal is an `InjectionError` that names the way out | `x`, so it chains |
+| `x << red`, `x << layer`, `x << Tag("cap")` | **membership**: `x` (a node, components, a `List`) joins a material, a display layer or a component tag; `red.remove(x)` leaves it (shorthand `x << -red`; it returns `x` too), `x << Material()` / `Layer()` / `Tag()` leaves every one of that kind | `x`, so it chains |
+| `x in red`, `x not in layer` | yes or no: every member of `x` is in it | `bool` |
+| `x >> red`, `x >> Tag("cap")` | the ids of `x` that are in it (`cube >> red`: face ids); `x >> Material()` lists the collections holding `x` | an ndarray; a list |
+| `node.tx = 5` | sugar for `node.tx << 5` | |
+| `a + b`, `a - b`, `a * b`, `a / b`, `a ** b`, `a // b`, `a % b` | arithmetic builds nodes. Matrices and quaternions are detected and routed to `multMatrix`, `quatProd`...; `[x, y, z] * m` is point-by-matrix | the output plug |
+| `-a`, `~a` | negate; logical NOT | the output plug |
+| `a == b`, `!=`, `<`, `<=`, `>`, `>=` | comparisons build condition nodes; `==` / `!=` of a Maya plug with itself fold to a bool | the output plug; `True` / `False` for one plug |
+| `a & b`, `a \| b`, `a ^ b` | logical AND / OR / XOR networks | the output plug |
+| `rig.run("arm.py", {"side": "L"})` | **run a file** as `__main__`, as if in a fresh Python: your own modules are read from disk again on every run (no reload), rig and the packages it uses are shared, the code is never transformed; a list, `rig.run(["lib.py", "arm.py"])`, runs the files in turn in one namespace; the run is one undo step, `rig.run arm.py` ([CHEATSHEET section 40](CHEATSHEET.md#40-rigrun-a-file-as-if-in-a-fresh-python)) | a read-only mapping of the file's globals (`result["ctrls"]`, `result.call("main")`) |
+| `rig.exec("import arm; arm.build()")` | **run a string of code** the same way, as `python -c` runs it: `__main__` with no `__file__`, the session's `sys.path`, the code dedented first; your own modules are read from disk again on every call; one undo step, `rig.exec import arm; arm.build()`; not in `__all__`, so `from rig import *` keeps Python's `exec` ([CHEATSHEET section 41](CHEATSHEET.md#41-rigexec-a-string-of-code-as-if-in-a-fresh-python)) | a `Run`, as `rig.run` returns |
+
+---
+
+## The construction rule
+
+**Calling a node class names a node that already exists. `.define()`
+finds that node or makes it, and never makes a second node under a name
+you can already refer to. `.create()` always makes a new one. What lives
+inside a node (an attribute, a component tag) is declared, with `Float`,
+`Enum` or `Tag`, and applied with `<<`.** In short: naming never creates;
+`define` makes sure; `create` makes new; declarations go inside a node.
+
+| | **refer** `Cls("x")` | **define** `Cls.define("x", ...)` | **create** `Cls.create(name="x", ...)` |
+|---|---|---|---|
+| writes the scene | never | makes `x` when it is missing; sets the values given either way (`update=False`: a found node is left as it is) | always |
+| `x` missing | `NodeNotFoundError`, with a did-you-mean hint and the `define` that makes it | makes it, with the attributes given | makes it |
+| `x` exists | that node, as its most derived class (`Transform("j1")` is `Joint("j1")`) | that node, with the values given set on it: the script is the source of truth | a second one, which Maya names `x1` |
+| `x` exists only elsewhere (under another parent, in another namespace) | that node, when it is the only one | refused: pass `parent=` or spell the namespace | — |
+| `x` is another type | `NodeTypeError` | `NodeTypeError` | — |
+| the name is | a lookup: a short name, a path, `ns:name` | a key: the node `create` would make (the namespace, the scope prefix, `parent=`) | a label, `name=` keyword only |
+
+The three verbs are on every node class: `Transform`, `Joint`, `Blinn`,
+`Material`, `Layer` (the `DisplayLayer` class), `ObjectSet`, `AnimCurveTL`
+(and `TA`, `TU`, `TT`, whose `define` / `create` take the keys:
+`AnimCurveTU.define("blink", [0, 1, 0])`) ... Like `Material`,
+`AnimCurve("x")` refers to any curve, but `AnimCurve([0, 1, 0])`, called
+with values, makes keys for `plug << ...`, not a node. Every
+refusal writes nothing. The errors are one family, `NodeNotFoundError`
+and `AmbiguousNodeError` (both `NodeLookupError`) and `NodeTypeError`, and
+each is also a `TypeError` and a `ValueError`. Math and utility nodes keep
+their makers (`a.t + b.t`, `rn.*`, `rc.*`, `Node.create`), which always
+make new nodes and look no name up.
+
+A plug string (`"drv.tx"`, `List(["drv.tx"])`, `node.attr << "drv.tx"`) is
+a Maya plug name: it resolves as `cmds` resolves it. It can answer
+differently from `Node("drv")` only while a namespace other than the root
+is current, where `Node` also looks in that namespace (and raises
+`AmbiguousNodeError` when both have a `drv`) and the string takes Maya's
+answer. Spell the namespace (`"char:drv.tx"`) to name one for sure.
+
+```python
+from rig import NodeNotFoundError
+from rig.nodetypes import Joint, Transform
+
+cmds.file(new=True, force=True)
+Joint.create(name="spine_01")
+try:
+    Joint("spnie_01")                         # a typo never creates
+except NodeNotFoundError as err:
+    print(err)                                # no joint named 'spnie_01' (did you mean 'spine_01'?); Joint.define('spnie_01') finds or makes it
+
+cmds.namespace(add="char")
+cmds.namespace(set="char")
+Joint.create(name="root")                     # made in the current namespace: char:root
+cmds.namespace(set=":")
+try:
+    Joint("root")
+except NodeNotFoundError as err:
+    print(err)                                # no joint named 'root' ('char:root' exists); Joint.define('root') finds or makes it
+print(repr(Joint("char:root")))               # Joint("char:root")
+
+def build():
+    rig = Transform.define("rig")                            # made on the first run, found on the next
+    for side in "LR":
+        arm = Transform.define(f"{side}_arm", parent=rig)
+        Transform.define("ctl", parent=arm, tx=1)            # |rig|L_arm|ctl and |rig|R_arm|ctl: two keys
+
+build()
+before = len(cmds.ls(type="transform"))
+build()                                                      # a re-run finds every node
+print(len(cmds.ls(type="transform")) == before)              # True
+print(repr(Transform.create(name="rig")))                    # Transform("rig1") -- create is always new
+```
+
+---
+
+## Conventions
+
+- **Every node is a `Node`, typed.** `Node("x")` returns the node in its
+  typed class (`Transform("x")`, `Mesh("xShape")`, from
+  [`rig.nodetypes`](nodetypes/README.md)), which carries the DSL and the
+  typed methods on one object. `Node(x) is x` for a node, `Node(plug)` and
+  `Node("x.tx")` give the plug's node, and `node >> None` is the node
+  itself. `node.tx` is a DSL `Plug`; `node.find_attr("tx")` is the typed
+  `Attribute` of the same plug. A name that is both a Maya attribute and a
+  method is the attribute bare and the method with brackets (`ctl.lock` is
+  the plug of a `lock` attribute, `ctl.lock()` locks the node).
+  `Node.create(type, ...)` makes a node and `Node.find_all(type)` lists
+  them. A class names its type too:
+  `Transform("x")` is the same node, refused when `x` is no transform.
+- **Injection is right-to-left and returns the left-hand side.**
+  `obj.t << [1, 2, 3] << lock` reads "t receives 1,2,3, then a lock". The
+  one exception is an attribute spec: `node << Float("w")` returns the
+  **new plug**, because the next thing you inject is its value.
+  Membership returns the LHS again, so `cube.f[:3] << Tag("a") << red`.
+- **Membership takes nodes and components, never an attribute.** A
+  material, a shading engine or a display layer on the right of `<<` is
+  the node itself; the node or the components on the left are the
+  members. `cube.tx << red` is a `TypeError` that names `cube << red`
+  (with `in`, a plug stands for its node: `cube.tx in layer`).
+- **`List` vectorizes, under one broadcast rule.** Attribute access
+  maps over the list (`cubes.t` is a `List` of plugs, and so is
+  `cubes.__tag__` when every element has that attr). The
+  **operators** (`<<`, `+`, `==`...) and the **function libraries**
+  (`rig.functions`, `lerp`, `dist`...) pair the same NumPy-strict way:
+  every list must be the same length, or length 1, or a scalar, and a
+  mismatch is a `ValueError` raised before anything is written or built
+  (`cubes.ty << [1, 2]` on three cubes: a shorter side does not repeat
+  its last value, and a longer one is not cut). A plain list that is one
+  value of the elements' shape goes to each of them whole:
+  `cubes.t << [0, 5, 0]` puts every cube at (0, 5, 0), as long as the
+  List or not (a `range` counts elements: one value each). A function's
+  layout says what one call takes (`help()` shows it): a plain list of
+  vectors is rows (`v.slerp([a.t, b.t], c.t, 0.5)` is two slerps, a
+  `List` of 2), and `[0, 0, 10]` is one vector. An operand is a plug, a
+  number
+  or a sequence of them: a generator is read into a list first
+  (`f.sum(c.tx for c in ctrls)`), and a `set`, `frozenset` or `dict` is a
+  `TypeError`, since it has no order. `rig.List` is not `typing.List`.
+- **A `List` holds numbers and rig objects.** A number, `None`, a value
+  (a vector tuple, a matrix, an OpenMaya `MVector` / `MMatrix`, an operand
+  row `(c.tx, 1, 2)`) and a node, plug, components or `List` go in as they
+  are; a name becomes the node or plug it names, and so does any other
+  object, through its `uuid` (cgmath data) or its `str`
+  (`List(Node("root").serialize_hierarchy())` is the hierarchy's nodes,
+  typed: each `TransformData` is the node it was serialized from). An element that names nothing is a `TypeError` naming its index,
+  and nothing is added; `append`, `extend`, `insert`, `+=` and slice
+  assignment cast the same way.
+- **Components live on the shape.** `cube.f` and `cube.e` are
+  `Components` (faces and edges have no plug to wrap); `cube.vtx` and
+  `cube.uv` are plugs (`controlPoints`, `uvpt`), as is `surface.cv`, and
+  `cube.vtx[3]` is one element plug. A transform with one shape resolves
+  to it; two shapes are an `AttributeError` naming both. A real attribute
+  always wins: `curve.f` is `curveShape.form`.
+- **Nodes join the active container.** Inside `with container("x"):`
+  every node the DSL creates is added to `x`; nested blocks flatten into
+  the outermost, prefixing their nodes with the inner block's name
+  (`inner_add1`); `preserve=True` makes a real sub-container instead.
+  Only nodes a call *creates* join: a query, a `parent` or a `rename`
+  never moves a node in. The typed creators join too
+  (`Transform.create(name="x")`, `Joint.create(...)`). Geometry, display
+  layers, sets and materials never join (`Lambert.create(...,
+  container=True)` opts a per-asset look in); `container=False` opts any
+  `rc` / `rn` call or typed create out. A node rig makes with
+  `createNode` joins when the statement that made it ends (a typed create
+  adds its nodes as it makes them): code you run between statements, its
+  queries and rig's own container calls see it as a member; code of yours
+  that runs inside the statement (an `MMessage` callback or a `scriptJob`
+  that fires there, a `_create` / `post_create` override) can see it
+  outside, as a `nodeAdded` callback always did.
+- **Memoization.** A function or operator called twice with the same
+  plugs and the same literals returns the same output plug; the cache
+  forgets nodes that were deleted, and a new scene or a file open clears
+  it. All-literal math never touches the scene (`functions.abs(-5)` is
+  `5`); `with force_nodes():` builds it anyway.
+- **Maya-version dispatch.** Each operation is registered per Maya
+  release; the highest implementation not newer than the target runs.
+  The target is the live Maya, or `set_options(maya_version=2023)` to
+  build networks an older release can open.
+- **Comparisons are nodes.** `a == b` builds a node and returns its
+  output plug, unless `a` and `b` are the same Maya plug: then `==` is
+  `True` and `!=` is `False`, and nothing is built (`force_nodes()` builds
+  it anyway). `Plug.__hash__` is overridden so plugs still work as dict
+  keys and set members, keyed by the Maya plug (a rename keeps the key,
+  one plug read through two instance paths is one key, and a lookup
+  builds nothing). Only `==` / `!=` between two plugs has a truth value
+  (the same Maya plug?). Every other DSL result raises a `TypeError` in an
+  `if`: an ordering (`if plug > 0:`, `sorted(plugs)`), a comparison with a
+  value (`if plug == 5:`), a plug on its own (`if ctl.is_locked:`; test a
+  missing plug with `is None`) and a List of comparisons (`all(...)` /
+  `any(...)` on the values). `plug == None` raises at once. Python runs one
+  branch, so `b.ty << condition(a.tx > 0, 1, 2)` is how a rig picks.
+- **A plug belongs to the node you read it from.** `node.tx.get_node()
+  is node`. An instanced node names its plugs through the path you took
+  (`Node("|T2|S").v` is `T2|S.visibility`, and its `worldMatrix` is T2's
+  element). A handle never falls back to a name: once its node is deleted,
+  or freed by a new scene, a file open or a reference unload, it raises
+  `already deleted!` instead of reaching a new node of the same name. So
+  does a plug built from a string (`Plug("a.tx")`) or an MPlug. Only its
+  name still answers: `str(node)` is its last known name, marked
+  (`"a (deleted)"`), which names no Maya node, for everyone (a plug's too:
+  `"a.translateX (deleted)"`). A `List` holds what is in the scene: once
+  an element is deleted, every rig operation on the List raises one
+  `RuntimeError` naming it (build a new List), while Python's `len()`,
+  indexing and iteration still answer, so raw `maya.cmds` given the List
+  raises Maya's own error instead of crashing. An undo that brings the node
+  back makes the List usable again.
+- **Locks: plugs first, then the node.** `ctl.tx.lock()` locks a plug
+  and `ctl.lock()` the node (`lockNode`); `x << lock` is the same call, and
+  `ctl.is_locked()` reads either (a member of a locked container reads
+  locked). An object already locked or unlocked is left as it is, with no
+  undo step. Maya locks no plug of a locked node, so lock the plugs first
+  (`List([ctl.tx, ctl]).lock()` does it in that order). A locked node still
+  takes values and connections; rig refuses to rename, delete or reparent
+  it, or to add, replace or destroy its attributes, with one message:
+  `cannot rename 'ctl': it is locked; Node('ctl').unlock() unlocks it`.
+  A locked plug refuses any value or connection, even the one it already
+  holds, so a build that locks plugs unlocks them before it runs again. A
+  referenced node is refused either way (Maya saves no `lockNode` edit for
+  it), and so is a container locked inside its own `with` block.
+- **Sibling fallback.** `plug.foo` looks for a child attribute first,
+  then a sibling Maya attribute on the same node, so `(a.tx + 5).input`
+  reaches the `sum` node behind the output. It never reaches the node's
+  Python methods: `a.tx.rename` is an `AttributeError`.
+- **Undo.** Every edit is undoable. A statement's connects and plain
+  value sets are one step together (`List(ctrls).t << [0, 1, 0]` is one),
+  and every other Maya command it runs (`createNode`, a container's
+  member add, a lock) is a step of its own; a `List` lock is one step
+  (`rig.lock` / `rig.unlock`), and a keying statement (`plug <<
+  AnimCurve(...)`, a compound, a `List`) is one step, `rig.animcurve`,
+  or none when every curve holds those keys already. A statement that raises keeps
+  what it did before the error, with the same steps, so undo still walks
+  the build back step by step. A membership edit (`<< Tag("x")`, `<< red`...),
+  a `define` that makes its node, `Mesh.create`, `NurbsCurve.create`,
+  `NurbsSurface.create` and `SkinCluster.create` are one named step each
+  (`rig.tag`, `rig.define`, `rig.Mesh.create`), each load of a cgmath file
+  too, the class's that creates and a node's that updates
+  (`Mesh.load`, `NurbsCurve.load`, `NurbsSurface.load`, `SkinCluster.load`,
+  `BlendShape.load`, `Joint.load_hierarchy`: `rig.Mesh.load` ...,
+  `rig.Joint.load_hierarchy`), and an API edit (`Mesh.set_points`, the UV and colour
+  set edits, skin weights) is one step. A statement's step and the API
+  edits go through rig's plug-in command `rigUndoableAPICommand`, which
+  rig loads from its own folder at its first such edit of a session
+  ([CHEATSHEET section 38](CHEATSHEET.md#38-undo): unloading it, and what
+  works without it).
+  `with rig.undo_chunk("build arm"):`, or `@rig.undo_chunk` on a function,
+  makes a whole build one named step.
+- **rig works in cm and degrees.** Maya's default units (at any frame
+  rate) are the ones its math is built and checked in. In a scene set to
+  others some of it gives other values (in radians, `rig.fuse()`'s angles;
+  in another linear unit on Maya 2024 to 2026, products and quotients of
+  distances in rig's network), so rig warns once in such a scene
+  ([CHEATSHEET, Setup](CHEATSHEET.md#setup)).
+
+```python
+from rig import set_options, lerp, functions as f
+
+cmds.file(new=True, force=True)
+cubes = List([rc.polyCube(name=n)[0] for n in ("a", "b", "c")])
+cubes.ty << [1, 2, 3]  # one value per element
+cubes.tz << 7          # a scalar broadcasts
+print(cubes.ty >> None, cubes.tz >> None)            # [1. 2. 3.] [7. 7. 7.]
+cubes.s << [1, 2, 1]                                 # one vector for each: its channels, not 3 rows
+print(cubes.sy >> None)                              # [2. 2. 2.]
+try:
+    cubes.ty << [1, 2]                               # 2 values for 3 cubes: nothing is set
+except ValueError:
+    print("strict")                                  # strict
+
+a, b, c = cubes
+try:
+    lerp(cubes.tx, List([a.ty, b.ty]), 0.5)          # a function, the same rule: 3 against 2
+except ValueError:
+    print("strict")                                  # strict
+
+print(str(a.tx + b.tx) == str(a.tx + b.tx))  # True   memoized: one sum node
+print(f.abs(-5), f.abs(a.tx))                # 5 abs1.output   literals fold, plugs build
+
+set_options(maya_version=2023)
+print(a.ty + b.ty)                           # add2.output1D   a plusMinusAverage
+set_options(maya_version=None)               # back to the live Maya
+```
+
+---
+
+## What's inside
+
+`rig/__init__.py` re-exports the core types, the `rig.spec` names and
+the cross-type math verbs, so most scripts import from `rig` directly.
+
+```
+rig/
+├── __init__.py          Node, Plug, List, Container, container, set_options / get_options,
+│                        force_nodes, cleanup, memoize / vectorize, lift, condition, constant,
+│                        undo_chunk, run (a file as if in a fresh Python)
+├── spec/                attribute specs: Float Int Bool Angle Time, Vector Color Euler Quat, Enum,
+│                        Matrix MeshAttr Message NurbsCurveAttr NurbsSurfaceAttr String, Typed (any
+│                        data); modifiers lock unlock hide unhide skip destroy Note
+├── bridges/
+│   ├── commands.py      maya.cmds returning nodes / List instead of strings   (rc)
+│   └── nodes.py         one factory per Maya node type, kwargs are injections     (rn)
+│
+├── functions.py         abs clamp min max sum avg floor ceil round choice searchsorted ... on plugs
+├── trigonometry.py      sin cos tan asin acos atan atan2, radians and degrees variants
+├── matrix.py            decompose compose aim multiply determinant translation rotation ...
+├── vector.py            dot cross length triple_product rotate, the X Y Z axes
+├── quaternion.py        add multiply conjugate from_axis_angle to_axis_angle ...
+├── euler.py             reorder
+├── _dispatch.py         dist lerp slerp blend elerp normalize inverse angle to_euler to_matrix ...
+│                        the cross-type verbs, re-exported flat from rig
+├── interpolate.py       sequence interp smoothstep smootherstep inverse_lerp
+├── tween.py             Penner easing curves: in_quad, out_bounce, in_out_elastic ...
+├── random.py            LCG networks that live inside the DG
+│
+├── membership.py        Tag (component tags), Layer (the DisplayLayer node class), Components,
+│                        Default (the initialShadingGroup engine)
+├── scene.py             create_scene / load_scene: a cgmath Scene (an fbx's nodes, meshes, blend
+│                        shapes, skins and take) built in Maya, joined by uuid
+│
+├── nodetypes/           the node classes every node is: Node (the root), DGNode, Transform,
+│                        Mesh, the shaders (Material Blinn Lambert Phong PhongE SurfaceShader
+│                        StandardSurface OpenPBRSurface; astype's Conversion report),
+│                        ShadingEngine (repair / tidy), AnimCurve and AnimCurveTL TA TU TT ...; Attribute,
+│                        the MPlug wrapper; save / load of cgmath files; the lookup errors
+├── plugins/             rig's plug-ins: the undo plug-in (load_plugin) and rig.mll (its source,
+│                        build.bat / build.sh, the builds per Maya version); README.md there
+├── examples/            rail_spine.py, rail_spine_simple.py, limb_twist.py, in_betweens.py,
+│                        image_loop.py, perspective_image_planes.py, images/ (their pictures),
+│                        ye_olde_lerp.gif
+├── utils.py             run_tests(): the suite, logged to rig_run_tests.log in the temp folder
+│                        (log=<path> for another file, log=False for none); the line of a test
+│                        is on disk before the test runs, so a crash names its test
+├── _defaults.toml       team-wide container option defaults
+├── _internal/           private: node.py plug.py list.py container.py members.py memoize.py
+│                        node_ops.py shorthand.py maya_version.py anim_keys.py (AnimCurve's keys) ...
+└── _tests/              the suite, run with rig.utils.run_tests() in this Maya session (a test
+                         that needs an interpreter of its own, or another Maya, is skipped)
+```
+
+The names most scripts start from:
+
+```python
+from rig import Node, Plug, List, Container, container, Components, Tag, Layer, Default, undo_chunk
+from rig import AnimCurve, AnimCurveTL, AnimCurveTA, AnimCurveTU, AnimCurveTT
+from rig import NodeNotFoundError, AmbiguousNodeError, NodeTypeError
+from rig import create_scene, load_scene                              # a cgmath Scene in Maya
+from rig import Float, Vector, Enum, lock, hide                      # rig.spec, re-exported
+from rig import dist, lerp, slerp, blend, normalize, to_euler, to_matrix
+from rig import functions, trigonometry, matrix, vector, quaternion, euler, interpolate, tween
+from rig.nodetypes import Blinn, Lambert, Phong, Material, ShadingEngine
+from rig.bridges import commands as rc
+from rig.bridges import nodes as rn
+```
+
+`rig.functions` shadows Python builtins (`abs`, `min`, `max`, `sum`,
+`int`, `round`...): import the module, never `from rig.functions import *`.
+Put the **parent** of `rig/` on `sys.path`, not `rig/` itself, or
+`rig.random` shadows the stdlib `random`.
+
+---
+
+## Where to go next
+
+Every subpackage has a **README** (concepts, conventions, when to reach
+for it) and a **CHEATSHEET** (every public name, with a runnable example).
+
+| Page | What it holds | |
+|---|---|---|
+| **this page** | the operator table, conventions, the map | [CHEATSHEET](CHEATSHEET.md) — every operator and top-level name, runnable |
+| `rig.spec` | attribute specs (`Float`, `Vector`, `Enum`...) and the modifiers (`lock`, `hide`, `destroy`...) | [README](spec/README.md) · [CHEATSHEET](spec/CHEATSHEET.md) |
+| `rig.bridges` | `commands` (`maya.cmds` returning nodes) and `nodes` (a factory per node type) | [README](bridges/README.md) · [CHEATSHEET](bridges/CHEATSHEET.md) |
+| `rig.nodetypes` | the node classes every node is (`Transform`, `Mesh`, ...), their typed methods, `Attribute` | [README](nodetypes/README.md) · [CHEATSHEET](nodetypes/CHEATSHEET.md) |
+| `examples/` | complete builds: a rail spine, an image loop, perspective image planes | [README](examples/README.md) |
+
+---
+
+## Real behaviour, verified
+
+Not bugs to work around blindly; things a rigger meets in the first hour.
+
+- **`cube.f` is not a plug.** Faces and edges have no attribute behind
+  them, so `cube.f` / `cube.e` are `Components`; `cube.vtx` is
+  `Plug("cubeShape.controlPoints")` and `cube.uv` is `uvpt`. `cube.cv` on
+  a mesh is an `AttributeError` (CVs belong to NURBS).
+- **A comparison is not a Python test.** `cube.tx == 3` returns the output
+  plug of an `equal` node, known only when Maya evaluates it, so `if
+  cube.tx == 3:` is a `TypeError` naming the ways to an answer (the node it
+  built stays; undo removes it). Read values first: `cube.tx.get() == 3`,
+  or pick with `condition(...)`. So is an ordering (`if cube.tx > 3:`), a
+  plug on its own (`if ctl.is_locked:` where `is_locked` is a Maya attr:
+  `ctl.is_locked()` is the method) and a List of comparisons. Between two
+  plugs `==` is identity: `a.tx == a.tx` is `True` with no node, and
+  `a.tx == b.tx` builds the `equal` node, whose truth value is `False`.
+  rig never rewrites a script, so a Python `if` never becomes a network.
+- **A string is not an operand.** A `Plug` is a `str`, but
+  `cube.tx == "ball.ty"`, `cube.wm + "[0]"`, `"%s" % cube.tx` and
+  `f.abs("ball.ty")` raise a `TypeError` before they build anything. Write
+  `Plug("ball.ty")` for the plug, `str(plug)` or an f-string for text.
+- **`polyCube`'s six face tags are procedural.** With construction
+  history on, `top`, `bottom`, `front`, `back`, `left`, `right` are owned
+  by `polyCube1`: `cube.f[:3] << Tag("top")` is a `TypeError` naming the
+  owner, and `Tag("top", at=cube)` shadows it with an editable tag on the
+  shape. `polyCube(ch=False)` bakes them into the shape instead.
+- **One tag, one category.** Maya reads a tag as one component type,
+  the first one stored: faces into a vertex tag that holds vertices is a
+  `TypeError` with nothing written; `Tag("x").set(cube.f[:2])` replaces
+  and may flip the category. A query answers by contents: faces are not
+  in a vertex tag (`cube.f[:2] in Tag("x")` is `False`). A tag name follows
+  Maya's rule, the one `add_tag` checks: at least two characters,
+  letters, digits and `_`, starting with a letter or `_`, with single `.`
+  or `:` between characters (`Tag("b")`, `Tag("a:")` and `Tag("a-b")` are a
+  `ValueError`). Maya trims the whitespace at the ends of a name and makes a
+  space inside `_`, so `Tag(" ab ")` is the tag `ab` and `Tag("a b")` the
+  tag `a_b`. A non-ASCII name is a `ValueError`: Maya first maps it to
+  the system code page and stores another name.
+- **A name on the right never creates.** `cube << Blinn("red")`,
+  `cube >> Blinn("red")`, `Layer("L").remove(cube)` and `cube in Layer("L")`
+  raise `NodeNotFoundError` (a `ValueError`) at the reference when the
+  material or layer is missing, before anything is written; `define` is
+  the verb that makes one. A tag lives on the node, so a missing tag is
+  simply not holding anything: `cube in Tag("nope")` is `False`, and
+  `cube >> Tag("nope")` reads no ids, as components do.
+- **Materials are exclusive, and removal leaves faces green.**
+  `cube.f[:3] << decal` carves those faces out of `redSG`;
+  `decal.remove(cube.f[:3])` (shorthand `cube.f[:3] << -decal`) puts them
+  in **no** engine (Maya draws them green). `cube << Default()` is the way
+  back to `initialShadingGroup`;
+  `ShadingEngine.repair()` re-homes every green shape.
+- **Conversion parks, Maya's Type dropdown deletes.**
+  `red.astype(Phong)` makes a phong that keeps the name, the engine, the
+  container and the locks, and converts `red` itself in place (`type(red)`
+  is then `Phong`; one undo puts the blinn back on it); a value or an
+  incoming wire the new type cannot hold is parked on the node as a hidden
+  `__attr__` and comes back the next time the material becomes a type that
+  has it. Other objects of the old node raise `already deleted!`. Maya's own
+  Attribute Editor dropdown makes a brand-new node and cascade-deletes any
+  texture or animCurve whose only link was the shader; it also wipes
+  parked state.
+- **Unit conversions stay outside containers.** `xf.rx << cube.tx`
+  inserts Maya's `unitConversion` (linear to angle) and leaves it outside
+  the active container by default (`absorb_unit_conversions=False`),
+  because the Node Editor's "Hide Unit Conversion Nodes" view would
+  otherwise draw the container as leaking.
+- **`//` is floor division**, not PyMEL's disconnect. `plug << None`
+  disconnects.
+- **A value over a driven plug replaces the driver.** Maya's `setAttr`
+  takes a value on a keyed, constrained or pairBlend-driven plug and the
+  next evaluation overrides it; `cube.tx << 5` first disconnects whatever
+  drives `cube.tx` (logged at INFO, `breaking incoming connection(s)`),
+  then sets 5, as `cube.tx << other.ty` replaces it. A constraint or a
+  pairBlend keeps its other channels. The statement is one undo step
+  (`rig.replace`): one undo brings the driver back. A locked plug still
+  raises `InjectionError` with nothing changed, and `cube.tx.set(5)` is
+  Maya's `setAttr`, which refuses a wired plug.
+- **One driver per channel.** Maya takes a compound connected whole and an
+  input on one of its children at once (`c.t` into `cube.t`, and a wire or
+  a curve on `cube.tx`: Maya's `setKeyframe` on `cube.tx` makes one, so do
+  older scenes and raw `cmds`), and then answers by who reads: the viewport
+  and the evaluation manager read the child's input; `getAttr`, `MPlug`,
+  rig's `get()` and `bakeResults` read the compound's. rig keeps one driver
+  per channel, so every reader sees the channel's one input. A value, a
+  plug, keys or `None` on `cube.tx` first split the compound's input into
+  one per child (`c.tx` into `cube.tx` ..., logged at INFO), then replace
+  `cube.tx`'s: `cube.ty` and `cube.tz` keep following `c`. A child that
+  already has an input of its own under that wire keeps it (the leaf one;
+  the INFO line names it) and takes no part of the compound's, so a write
+  to any leaf of such a double drive, a value included, leaves one driver
+  on each channel. A plug or `None` on the compound itself also removes
+  the inputs its children have of their own (each logged at INFO), as a
+  value on it (`cube.t << [1, 2, 3]`, `cube.t << 1`) replaces each one:
+  `cube.t << None` frees every channel, the per-child wires of a split
+  and the plugs below a nested compound included; a list with a `skip` or
+  a `None` splits instead. Each statement is one undo step (`rig.replace`,
+  `rig.animcurve` for keys), and one undo brings back what was there, a
+  double drive included. An input with no matching children to split (a
+  `unitConversion` between unit kinds feeds the compound whole), or a
+  locked plug the split would connect into (a sibling that has no input of
+  its own, or a plug below a nested compound the split goes into), raises
+  `InjectionError` naming `cube.t << None`, with nothing changed. One
+  exception: `cube.rx << None` on a child that has an input of its own
+  under such a `unitConversion` wire (Maya's `setKeyframe` on `cube.rx`
+  with `b.t` into `cube.r`) removes that input only, logged at INFO; the
+  compound's wire is then the channel's one driver. A split inside a
+  referenced compound is saved as reference edits (the whole input
+  disconnected, one connect per child) that pin the sibling channels to
+  their driver at the time of the split: a later rewire of that compound
+  inside the asset is not picked up for those channels. To follow the
+  asset again, remove those edits (`referenceEdit` on the unloaded
+  reference).
+- **A lock is Maya's, with rig's checks in front.** A locked container
+  locks its members, and its unlock unlocks every member, also one that was
+  locked on its own; `member.unlock()` is refused, naming the container. A
+  container takes no new member while it is locked: a node a scope would
+  make inside it is refused before it is made. `cleanup()` keeps a locked
+  container, even an empty one. A reference node (`xRN`) stays locked. A
+  locked node's `delete` with a list (`node.delete([...])`) is Maya's: a
+  locked node in it is skipped with a printed `Error:`.
+- **A typed attribute that holds any data keeps only numbers.** A `Typed`
+  slot (`addAttr -attributeType typed`, the kind a choice node's input is)
+  takes any plug, but Maya's `setAttr` puts nothing but a number in it, and
+  data set through the API is refused, with an `Error:` line, when a `.ma`
+  is opened again. A disconnect keeps the last data the input gave: rig's
+  `slot << None` drops it (a number stays); one made outside rig leaves it,
+  and a `.ma` saved then errors on open (a `.mb` keeps it). The rule is
+  for every such attribute: a choice node's inputs rewire whole and take
+  numbers too.
+- **Keying a driven plug replaces its driver; rig makes no pairBlend.**
+  Maya's `setKeyframe` on a constrained, wired or expression-driven
+  translate or rotate channel inserts a pairBlend that drives all six
+  channels and adds `blendParent1` (at 0) to the control, and on any other
+  connected attribute keys nothing ("attribute already connected").
+  `ctl.tx << AnimCurve([...])` replaces that channel's input with the
+  curve, as `ctl.tx << other.ty` would (logged at INFO), on every kind of
+  attribute; the constraint keeps its other channels and no node is
+  deleted. On a channel Maya already keyed through a pairBlend, the curve
+  takes the pairBlend's place there and the pairBlend's own curve is kept,
+  unused on it. A locked plug raises `InjectionError`, even with the keys
+  its curve holds: unlock before running again. The curve's own routes
+  follow the same rule: `curve.set_keys(...)` and `AnimCurveTL.define(...)`
+  on a curve that keys a locked plug raise too, and their default out
+  tangent is a step when the curve keys a bool or an enum, as `<<` gives.
+- **A curve's keys go through the API, never `cutKey`.** Maya's `addKeys`
+  merges keys (a time given twice is silently one key) and `cutKey -clear`
+  deletes a curve it empties; rig checks the times itself (strictly
+  increasing) and replaces a curve's keys with the API in one undo step, so
+  a re-run keeps the node, its UUID and its name. A curve goes in the
+  current namespace, as `setKeyframe` puts it (`char:ctl` keyed from the
+  root gives `ctl_translateX`).
+- **Rewiring a multi element is safe through rig.** `net.w[0] << a.tx`
+  then `net.w[0] << a.ty` replaces the input, also on a multi that is not
+  keyable (`Float("w", multi=True, keyable=False)`, `Matrix`, `Message`,
+  a `Typed` multi, or after `net.w << hide`), where Maya frees an element's
+  MPlug along with its connection. rig finds the element again after every
+  disconnect it makes (`<<`, `<< None`, `disconnect`, `break_connections`),
+  for the plug object it was handed, and after every undo and redo for
+  every element plug it handed out (`p = net.w[0]; p << a.tx;
+  cmds.undo(); p << a.ty` works). An element plug of a node deleted to the
+  undo queue raises `already deleted!` until an undo brings the node back.
+  A plug object held across a disconnect made outside rig
+  (`cmds.disconnectAttr`, Maya's editors), or a second object for the same
+  element taken while it was connected, can dangle: take the plug again
+  (`net.w[0]`) after such a disconnect.
+
+```python
+cmds.file(new=True, force=True)
+cube = rc.polyCube(name="pCube1")[0]
+print(type(cube.f).__name__, cube.vtx, cube.uv)  # Components pCube1Shape.controlPoints pCube1Shape.uvpt
+print(cube >> Tag())                             # [Tag('back'), Tag('bottom'), Tag('front'), Tag('left'), Tag('right'), Tag('top')]
+try:
+    cube.f[:3] << Tag("top")
+except TypeError as e:
+    print(str(e)[:34])                               # 'top' on pCube1Shape is PROCEDURAL
+cube.f[:3] << Tag("top", at=cube)                    # an editable shadow on the shape
+print(cube >> Tag("top"))                            # [0 1 2]
+
+cond = cube.tx == 3
+print(cond, cube.tx.get() == 3)                      # equal1.output False
+print(cube.tx == Node("pCube1").translateX)          # True  -- one Maya plug: a bool, no node
+said = []
+for test in (lambda: cube.tx == 3, lambda: cube.tx > 3):
+    try:
+        said.append("then" if test() else "else")
+    except TypeError:
+        said.append("no truth value")
+print(said)                                          # ['no truth value', 'no truth value']
+
+xf = rc.createNode("transform", name="xf")
+with container("c1"):
+    xf.rx << cube.tx
+print(cmds.ls(type="unitConversion"), cmds.container("c1", q=True, nodeList=True))   # ['unitConversion1'] None
+
+from rig import AnimCurve
+drv = rc.createNode("transform", name="drv")
+ctl = rc.createNode("transform", name="ctl")
+cmds.parentConstraint("drv", "ctl")
+ctl.tx << AnimCurve([0, 10], times=[0, 10])          # the constraint's tx input is replaced
+print(cmds.listConnections("ctl.tx", source=True), cmds.ls(type="pairBlend"))   # ['ctl_translateX'] []
+print(cmds.listConnections("ctl.ty", source=True))   # ['ctl_parentConstraint1']
+```
+
+---
+
+## Requirements
+
+Autodesk Maya (the suite runs on 2025; version-keyed dispatch builds the
+legacy networks on older releases), with numpy and scipy installed for
+mayapy, and, for the data paths (`serialize`, `save` / `load`,
+`create(data)`), cgmath 4.0.0rc1 (`02b8b75`, 2026-11-11) or
+later: its shape model (a `ShapeData`'s `uuid` and `parent_uuid`, no matrix),
+a `MeshData`'s vertex colours (`colors` / `color_indices`) and its
+`hard_edges`, a `NurbsCurveData`'s and a `NurbsSurfaceData`'s `weights`,
+`renew_uuids()` on
+a hierarchy, a clip and a `Scene`, and a `MaterialData`'s `uuid`. cgmath is
+imported lazily, so `rig` loads without it; an older cgmath (3.0.1, 3.2.0, a
+commit before those landed) raises `ImportError` naming that pin on the first
+data path. Each round of rig names here the cgmath commit it was verified on.
+
+`rig.fuse()` also needs rig's plug-in, `rig.mll` 1.3 or later, built for your
+Maya with `plugins/build.bat` (`build.sh` on macOS) and loaded wherever a
+fused scene is opened: [plugins/README.md](plugins/README.md).

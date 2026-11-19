@@ -80,6 +80,7 @@ print(Node(riders[-1]).t.get())                  # [0. 0. 0.]  -- its offsetPare
 | `perspective_image_planes.py` | a camera plus N image planes under it, each shaped to its image and sized by its distance | `create_setup(camera, count, ...)` |
 | `image_loop.py` | one plane facing +Z that loops a numbered image sequence forever | `create_plane(image_dir, name="image_loop", target_size=10.0)` |
 | `images/` | `dog1.jpg` … `dog5.jpg` — a fixture both image scripts can eat | |
+| `images/fuse/` | `before.png` and `after.png`: `rail_spine.py`'s node graph without and with `rig.fuse()`, the two pictures the root README shows | |
 | `ye_olde_lerp.gif` | the animation the root README embeds | |
 | `__init__.py` | empty; it makes `rig.examples` importable | |
 

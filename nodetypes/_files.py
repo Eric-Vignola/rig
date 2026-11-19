@@ -41,7 +41,7 @@ CREATING_SPACE = "where the data's points land: in the world, or as the shape's 
 # the cgmath the data paths are written against: 4.0.0's shape model, a ShapeData's uuid and
 # parent_uuid, no matrix, a MeshData's colors / color_indices and its hard_edges, a NurbsCurveData's
 # and a NurbsSurfaceData's weights, renew_uuids() on a hierarchy, a clip and a Scene, a
-# MaterialData's uuid and the lists of one mesh (README.md's requirements and the CHEATSHEET name
+# MaterialData's uuid and the lists of one mesh (GUIDE.md's requirements and the CHEATSHEET name
 # it too)
 CGMATH_PIN = "cgmath 4.0.0rc1 (02b8b75, 2026-11-11)"
 

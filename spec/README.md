@@ -7,7 +7,7 @@ it into a node and the attribute exists; the spec hands back the new plug
 so the value goes next. A spec is a **declaration**: what lives inside a
 node is declared and applied with `<<`, while a node itself is named,
 defined or created through its class (the
-[construction rule](../README.md#the-construction-rule)). Declaring an
+[construction rule](../GUIDE.md#the-construction-rule)). Declaring an
 attribute the node already has applies the settings you pass and keeps
 its value and its connections.
 
@@ -290,7 +290,7 @@ except Exception as e:
 
 `node >> Float("x")` declares; `node >> Tag("x")` and `node >> red` (a
 membership collection) query. The right-hand family decides, as the
-[root README](../README.md) puts it.
+[guide](../GUIDE.md#the-language-in-one-table) puts it.
 
 ### `plug >> Node` clones the attribute
 

@@ -7,7 +7,7 @@ materials). The blocks run top to bottom as one script and share a
 namespace, notebook style; every section that needs a clean scene
 starts with one.
 
-Concepts and conventions live in [`README.md`](README.md). The
+Concepts and conventions live in [`GUIDE.md`](GUIDE.md). The
 subpackages have their own cheatsheets: [`spec/`](spec/CHEATSHEET.md)
 for attribute specs and modifiers, [`bridges/`](bridges/CHEATSHEET.md)
 for `maya.cmds` and the node factories, [`nodetypes/`](nodetypes/CHEATSHEET.md)
@@ -16,7 +16,7 @@ for the node classes and their typed methods.
 The data paths (`serialize`, `save` / `load`, `create(data)`) are written
 against cgmath 4.0.0rc1 (`02b8b75`, 2026-11-11); each round
 of rig names the cgmath commit it was verified on here and in
-[`README.md`](README.md#requirements).
+[`GUIDE.md`](GUIDE.md#requirements).
 
 ---
 
@@ -166,7 +166,7 @@ print(Node.find_all("joint"), Node.find_all("multiplyDivide"))   # [Joint("jnt")
 ```
 
 A node class names a node too, and follows the
-[construction rule](README.md#the-construction-rule): naming never creates;
+[construction rule](GUIDE.md#the-construction-rule): naming never creates;
 `define` makes sure; `create` makes new; declarations go inside a node.
 
 | | refer `Cls("x")` | define `Cls.define("x", ...)` | create `Cls.create(name="x", ...)` |
@@ -825,7 +825,7 @@ A world space array read through a node's path (`worldMatrix`, section 2)
 is that instance's element, so `<<` writes there instead of appending.
 Rewiring an element replaces its input, also on a multi that is not
 keyable; a plug object held across a disconnect made outside rig can
-dangle, so take it again (README, "Real behaviour, verified").
+dangle, so take it again ([GUIDE](GUIDE.md#real-behaviour-verified)).
 
 ```python
 from rig.spec import Float, Vector
@@ -4861,7 +4861,7 @@ print([round(v, 4) for v in cmds.getAttr("dst.t")[0]])   # [1.5345, 3.069, 4.603
 
 | Read | For |
 |---|---|
-| [`README.md`](README.md) | the operator table, the conventions, the map, the verified behaviour |
+| [`GUIDE.md`](GUIDE.md) | the operator table, the conventions, the map, the verified behaviour |
 | [`spec/CHEATSHEET.md`](spec/CHEATSHEET.md) | every attribute spec, kwarg and modifier |
 | [`bridges/CHEATSHEET.md`](bridges/CHEATSHEET.md) | `maya.cmds` returning nodes, and the node factories |
 | [`nodetypes/CHEATSHEET.md`](nodetypes/CHEATSHEET.md) | the node classes and their typed methods |

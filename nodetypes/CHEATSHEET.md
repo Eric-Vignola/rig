@@ -186,7 +186,7 @@ print(Transform.is_type("jnt"), Transform.is_type("jnt", exact_type=False))  # F
 ```
 
 A class names a node three ways (the
-[construction rule](../README.md#the-construction-rule)). `Cls("x")`
+[construction rule](../GUIDE.md#the-construction-rule)). `Cls("x")`
 **refers**: it never writes the scene, returns the node as its most derived
 class, and raises when `x` is missing, ambiguous or of another type.
 `Cls.exists("x")` is whether `Cls("x")` would return a node. The errors

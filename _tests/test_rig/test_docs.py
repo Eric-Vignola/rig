@@ -38,6 +38,7 @@ _FENCE = re.compile(r"(<!-- notest -->\s*)?^```python[^\n]*\n(.*?)^```", re.S | 
 
 _PAGES = (
     "README.md",
+    "GUIDE.md",
     "CHEATSHEET.md",
     os.path.join("examples", "README.md"),
     os.path.join("nodetypes", "README.md"),
@@ -389,16 +390,16 @@ class TestDocsSpeakTheNewSpellings(MayaTestCase):
     def test_the_rule_is_stated_where_the_operators_are(self):
         rule = ("a bare name is the Maya attribute if one exists, otherwise the method; "
                 "with brackets it is the method")
-        readme = " ".join(_text("README.md").split("## The construction rule")[0]
-                          .split("## The language in one table")[1].split())
+        guide = " ".join(_text("GUIDE.md").split("## The construction rule")[0]
+                         .split("## The language in one table")[1].split())
         doc = " ".join(rig.__doc__.split("Operator conventions:")[0].split())
-        for where, text in (("README.md, the language in one table", readme),
+        for where, text in (("GUIDE.md, the language in one table", guide),
                             ("help(rig), before the operators", doc),
                             ("nodetypes/README.md", " ".join(_text(os.path.join("nodetypes", "README.md")).split()))):
             with self.subTest(where=where):
                 self.assertTrue(rule.lower() in text.replace("**", "").lower(),
                                 f"{where} does not state the rule")
-        for where, text in (("README.md", readme), ("help(rig)", doc)):
+        for where, text in (("GUIDE.md", guide), ("help(rig)", doc)):
             with self.subTest(where=where, rule="per object"):
                 for words in ("points into the scene", "keeps its data as attributes"):
                     self.assertTrue(words in text, f"{where} does not say {words!r}")

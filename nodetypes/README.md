@@ -177,7 +177,7 @@ are attributes (`data.name`, `data.node_type`).
 ### Three verbs: refer, define, create
 
 Every class names its nodes the same three ways, the
-[construction rule](../README.md#the-construction-rule): naming never
+[construction rule](../GUIDE.md#the-construction-rule): naming never
 creates, `define` makes sure, `create` makes new.
 
 - **Refer, `Cls(x)`.** `x` is anything `Node(x)` takes. The result is the
