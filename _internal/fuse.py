@@ -3765,28 +3765,110 @@ class fuse:
     ``fused1`` ...). The block is one undo step. Without the rig plug-in (rig.mll), the
     block builds rig's nodes, with one warning per session. Inside it,
     ``rig.set_options(fuse=False)`` turns fusing off for the rest of the block (a block
-    opened after it fuses); code a ``rig.run`` / ``rig.exec`` runs fuses as the block does."""
+    opened after it fuses); code a ``rig.run`` / ``rig.exec`` runs fuses as the block does.
 
-    __slots__ = ("name", "chunk")
+    ``with rig.fuse("arm") as io:`` -- ``io`` is the block, standing in for its node once
+    it made one: ``str(io)`` is the node's name (so ``cmds.select(io)`` selects it),
+    ``io.notes``, ``io.vectorOut[0]``, ``io.rename(...)`` ... are the node's, ``io.node``
+    is the node (a ``DGNode``), ``io.nodes`` a List of every node the block made (``arm``,
+    ``arm1`` ...), and ``rig.unfuse(io)`` unfuses them all. ``bool(io)`` is False while it
+    holds no node: before the block's first connection, and after a block that left no
+    ``rigExpression`` (nothing in it was worth fusing, so the one-op rule made rig's own
+    node; nothing was connected; no plug-in). ``str(io)`` is then a sentence saying why,
+    which names no node (``cmds.select(io)`` raises TypeError with it, ``cmds.objExists``
+    is False), and the node's attributes raise AttributeError."""
+
+    # (_records: the block's records while it is open, (node, handle) pairs once it
+    # ended, so no record outlives its block for the handle; _rebuilt: the names of the
+    # nodes the one-op rule made of the block's)
+    __slots__ = ("name", "_chunk", "_records", "_rebuilt", "_ended")
 
     def __init__(self, name: "str | None" = None) -> None:
         if name is not None and not isinstance(name, str):
             raise TypeError(f"rig.fuse: name is a str, not {type(name).__name__}")
-        self.name  = name
-        self.chunk = None
+        self.name     = name
+        self._chunk   = None
+        self._records = None
+        self._rebuilt = []
+        self._ended   = False
+
+    # -- the handle: the block standing in for its node
+    def _alive(self) -> list:
+        """the block's nodes that exist, in the order it made them"""
+        records = self._records
+        if not records:
+            return []
+        if self._ended:
+            return [node for node, handle in records if handle.isValid() and handle.isAlive()]
+        return [record.node for record in records if record.alive()]
+
+    @property
+    def node(self):
+        """the block's first node (a ``DGNode``), or None while it holds none"""
+        alive = self._alive()
+        return alive[0] if alive else None
+
+    @property
+    def nodes(self):
+        """a List of every node the block made, in that order (empty while it holds none)"""
+        from rig._internal.list import List
+        return List(self._alive())
+
+    def __bool__(self) -> bool:
+        return bool(self._alive())
+
+    def __str__(self) -> str:
+        # (never raises: maya.cmds reads str() of what it is given, and an error raised
+        # inside its argument parser is left pending; a sentence names no node)
+        node = self.node
+        return self._no_node() if node is None else str(node)
+
+    def __getattr__(self, attr: str):
+        # (reached only when the block has no such attribute: the node's, then)
+        if attr.startswith("_"):
+            raise AttributeError(attr)
+        node = self.node
+        if node is None:
+            raise AttributeError(f"{self._no_node()}: no {attr!r}")
+        return getattr(node, attr)
+
+    def _no_node(self) -> str:
+        """why the block holds no node"""
+        me = f"rig.fuse({self.name!r})"
+        if self._records is None:
+            return f"{me} has not run: it has made no node"
+        if not self._ended:
+            return f"{me} has made no node yet: it makes one at its first connection"
+        if self._rebuilt:
+            made = [f"{n} (a {cmds.nodeType(n)})" for n in self._rebuilt if cmds.objExists(n)]
+            return (f"{me} left no rigExpression: nothing in it was worth fusing, so rig built its own node"
+                    + (f": {', '.join(made)}" if made else ""))
+        if self._records:
+            return f"{me} holds no node: its rigExpression was deleted or undone"
+        if FUSE.plugin is False:
+            return f"{me} made no rigExpression: the rig plug-in (rig.mll) is not loaded"
+        return f"{me} made no rigExpression: nothing in it was connected or fused"
 
     def __repr__(self) -> str:
-        return f"rig.fuse({self.name!r})"
+        me = f"rig.fuse({self.name!r})"
+        if self._records is None:
+            return me
+        alive = self._alive()
+        return f"{me}: {', '.join(str(n) for n in alive)}" if alive else f"{me}: no node"
 
+    # -- the block
     def __enter__(self) -> "fuse":
         from rig._internal.undo import undo_chunk
-        self.chunk = undo_chunk(f"rig.fuse {self.name}" if self.name else "rig.fuse")
-        self.chunk.__enter__()
+        self._chunk = undo_chunk(f"rig.fuse {self.name}" if self.name else "rig.fuse")
+        self._chunk.__enter__()
         if len(FUSE.ended) > 100000:
             _prune_ended()
         FUSE.depth += 1
         FUSE.names.append(self.name)
-        FUSE.blocks.append([])
+        self._records = []
+        self._rebuilt = []
+        self._ended   = False
+        FUSE.blocks.append(self._records)
         FUSE.frames.append(True)       # (a set_options(fuse=False) inside turns it off)
         _refresh()
         return self
@@ -3800,13 +3882,15 @@ class fuse:
         try:
             try:
                 if exc[0] is None:
-                    _one_op_rule(records)       # (in the block's undo step)
+                    self._rebuilt = _one_op_rule(records)       # (in the block's undo step)
                 if not FUSE.depth:
                     _write_notes()
             finally:
+                self._records = [(r.node, r.handle) for r in records if r.handle is not None]
+                self._ended   = True
                 _refresh()
         finally:
-            self.chunk.__exit__(*exc)
+            self._chunk.__exit__(*exc)
         return False
 
 

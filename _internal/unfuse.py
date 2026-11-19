@@ -906,8 +906,9 @@ def unfuse(*nodes):
     scene opened again unfuses too.
 
     No argument: every rigExpression node in the scene. Otherwise the nodes given (a
-    node, a name, or a list of them). One undo step. A node in a container has its
-    network made in it. Returns a List of the nodes made.
+    node, a name, a block, ``with rig.fuse() as io``, for every node it made, or a list
+    of them). One undo step. A node in a container has its network made in it. Returns a
+    List of the nodes made.
 
     Raises TypeError for a node that is not a rigExpression, RuntimeError inside a
     ``rig.fuse()`` block (the block would fuse the network again)."""
@@ -928,10 +929,11 @@ def _unfuse(nodes: tuple):
         F.FUSE.plugin = F._load_plugin()
     names: list = []
     for n in nodes:
-        if isinstance(n, (list, tuple)) or type(n).__name__ == "List":
-            names += [str(x) for x in n]
-        else:
-            names.append(str(n))
+        for x in (n if isinstance(n, (list, tuple)) or type(n).__name__ == "List" else (n,)):
+            if isinstance(x, F.fuse):
+                names += [str(y) for y in x.nodes]     # a block (`with rig.fuse() as io`): its nodes
+            else:
+                names.append(str(x))
     if not nodes:
         names = cmds.ls(type=F.NODE_TYPE) or []
     for n in names:

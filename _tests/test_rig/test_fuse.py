@@ -2337,6 +2337,116 @@ class TestScopes(_Case):
         self.assertEqual(self.driver("out.tz"), "rigExpression")
 
 
+class TestHandle(_Case):
+    """``with rig.fuse("name") as io``: the block, standing in for its node"""
+
+    def test_the_block_stands_in_for_its_node(self):
+        from rig.nodetypes import DGNode
+        with rig.fuse("calc") as io:
+            total = self.a.t + self.b.t
+            self.out.t << total
+            self.out.r << total * 2
+        self.assertIsInstance(io, rig.fuse)
+        self.assertNotIsInstance(io, DGNode)
+        self.assertTrue(io)
+        self.assertEqual(str(io), "calc")
+        self.assertIsInstance(io.node, DGNode)
+        self.assertEqual(str(io.node), "calc")
+        self.assertEqual([str(n) for n in io.nodes], ["calc"])
+        cmds.select(io)
+        self.assertEqual(cmds.ls(selection=True), ["calc"])
+        self.assertIn("vectorOut[0]", io.notes.get())
+        self.assertEqual(str(io.vectorOut[0]), "calc.vectorOut[0]")
+        self.assertEqual(repr(io), "rig.fuse('calc'): calc")
+        io.rename("arm")                              # the node's method
+        self.assertEqual(str(io), "arm")
+        self.assertEqual(io.name, "calc")             # the name the block was given
+        with rig.fuse() as unnamed:
+            self.out.sx << self.a.sx * 2 + 1
+        self.assertEqual(str(unnamed), "fused1")
+
+    def test_no_node_before_the_first_connection(self):
+        with rig.fuse("calc") as io:
+            self.assertFalse(io)
+            self.assertIsNone(io.node)
+            # str() never raises (maya.cmds reads it): a sentence that names no node
+            self.assertEqual(str(io), "rig.fuse('calc') has made no node yet: it makes one at its first connection")
+            with self.assertRaisesRegex(TypeError, "has made no node yet"):
+                cmds.select(io)
+            self.assertFalse(cmds.objExists(io))
+            self.out.tx << self.a.tx * 2 + 1
+            self.assertEqual(str(io), "calc")         # its node, while the block is open
+        self.assertEqual(repr(rig.fuse("later")), "rig.fuse('later')")
+
+    def test_every_node_of_the_block(self):
+        from unittest import mock
+        with mock.patch.object(_fuse, "MAX_INSTRUCTIONS", 1):    # a node a value: two nodes
+            with rig.fuse("arm") as io:
+                self.out.rx << self.a.tx * 3 + 2
+                self.out.ry << self.a.ty * 3 + 2
+        self.assertEqual([str(n) for n in io.nodes], ["arm", "arm1"])
+        self.assertEqual(str(io), "arm")              # the first
+        cmds.select(io.nodes)
+        self.assertEqual(sorted(cmds.ls(selection=True)), ["arm", "arm1"])
+        self.assertEqual(repr(io), "rig.fuse('arm'): arm, arm1")
+
+    def test_nested_blocks_hold_their_own_nodes(self):
+        with rig.fuse("outer") as outer:
+            self.out.tx << self.a.tx * 2 + 1
+            with rig.fuse("inner") as inner:
+                self.out.ty << self.a.ty * 2 + 1
+        self.assertEqual([str(n) for n in outer.nodes], ["outer"])
+        self.assertEqual([str(n) for n in inner.nodes], ["inner"])
+
+    def test_a_block_with_nothing_worth_fusing_holds_no_node(self):
+        _fuse.ONE_OP_RULE = True
+        with rig.fuse("tiny") as io:
+            self.out.rx << self.a.tx * 2              # one operation: rig's node and a unitConversion
+        self.assertEqual(self.fused_nodes(), [])
+        self.assertFalse(io)
+        self.assertIsNone(io.node)
+        self.assertEqual(list(io.nodes), [])
+        built = cmds.listConnections("out.rx", source=True, destination=False, skipConversionNodes=True)[0]
+        self.assertEqual(str(io), f"rig.fuse('tiny') left no rigExpression: nothing in it was worth fusing, "
+                                  f"so rig built its own node: {built} (a {cmds.nodeType(built)})")
+        with self.assertRaisesRegex(TypeError, "left no rigExpression"):
+            cmds.select(io)
+        self.assertFalse(cmds.objExists(io))
+        with self.assertRaisesRegex(AttributeError, "left no rigExpression"):
+            io.notes
+        self.assertFalse(hasattr(io, "notes"))
+        self.assertEqual(repr(io), "rig.fuse('tiny'): no node")
+        self.assertEqual(list(rig.unfuse(io)), [])    # nothing to unfuse
+        self.assertAlmostEqual(cmds.getAttr("out.rx"), 3.0)
+
+    def test_a_block_that_connects_nothing_holds_no_node(self):
+        with rig.fuse("idle") as io:
+            v = self.a.tx * 2                         # a value, never used
+        self.assertFalse(io)
+        self.assertEqual(str(io), "rig.fuse('idle') made no rigExpression: nothing in it was connected or fused")
+        del v
+
+    def test_an_undone_block_holds_no_node(self):
+        with rig.fuse("calc") as io:
+            self.out.tx << self.a.tx * 2 + 1
+        cmds.undo()
+        self.assertFalse(io)
+        self.assertEqual(str(io), "rig.fuse('calc') holds no node: its rigExpression was deleted or undone")
+
+    def test_unfuse_takes_the_block(self):
+        from unittest import mock
+        with mock.patch.object(_fuse, "MAX_INSTRUCTIONS", 1):
+            with rig.fuse("arm") as io:
+                self.out.rx << self.a.tx * 3 + 2
+                self.out.ry << self.a.ty * 3 + 2
+        made = rig.unfuse(io)                          # every node of the block
+        self.assertTrue(made)
+        self.assertEqual(self.fused_nodes(), [])
+        self.assertFalse(io)
+        self.assertAlmostEqual(cmds.getAttr("out.rx"), 6.5)
+        self.assertAlmostEqual(cmds.getAttr("out.ry"), -4.0)
+
+
 class TestNoPlugin(MayaTestCase):
     TEST_START_NEW_SCENE = True
 
@@ -2353,11 +2463,13 @@ class TestNoPlugin(MayaTestCase):
                 mock.patch.object(_fuse.cmds, "warning") as warning:
             with rig.fuse():
                 v = a.tx * 2
-            with rig.fuse():
+            with rig.fuse("calc") as io:
                 w = a.ty * 2
         self.assertNotIsInstance(v, rig.Fused)
         self.assertNotIsInstance(w, rig.Fused)
         self.assertEqual(cmds.ls(type="rigExpression"), [])
+        self.assertFalse(io)                         # the block holds no node
+        self.assertEqual(str(io), "rig.fuse('calc') made no rigExpression: the rig plug-in (rig.mll) is not loaded")
         self.assertEqual(warning.call_count, 1)
         self.assertIn("rig.mll", warning.call_args[0][0])
         script = {"win32": "plugins/build.bat", "darwin": "plugins/build.sh"}.get(sys.platform)

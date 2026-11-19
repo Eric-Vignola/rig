@@ -4665,6 +4665,19 @@ A fused value is built when it is used, not when it is written, so:
   `arm1`, `arm2` ... when a node has the name (above, the block's node
   is `rider1`: the transform is `rider`), and for the block's next
   nodes. A block with no name makes `fused1`, `fused2` ...
+* `with rig.fuse("arm") as io:` gives the block, which stands in for its
+  node once it made one: `str(io)` is the node's name, so
+  `cmds.select(io)` selects it; `io.notes`, `io.vectorOut[0]`,
+  `io.rename(...)` are the node's; `io.node` is the node, `io.nodes` a List
+  of every node the block made (`arm`, `arm1` ...), and `rig.unfuse(io)`
+  unfuses them all. It holds no node before the block's first connection,
+  nor after a block that left no `rigExpression`: nothing in it was worth
+  fusing (the one-op rule made rig's own node, below), nothing was
+  connected, or the plug-in is missing. Then `bool(io)` is False, and
+  `str(io)` is a sentence saying why, which names no node:
+  `cmds.select(io)` raises `TypeError: Object rig.fuse('arm') left no
+  rigExpression: ... rig built its own node: lerp1 (a lerp) is invalid`,
+  and `cmds.objExists(io)` is False.
 * As the block ends, a node of it whose network rig makes in one node
   becomes that node (the one-op rule): `dst.tx << a.tx + b.tx` alone in a
   block leaves a `sum`, `node << matrix` one `decomposeMatrix`,
