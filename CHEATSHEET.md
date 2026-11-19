@@ -4691,9 +4691,10 @@ A fused value is built when it is used, not when it is written, so:
   fusing (the one-op rule made rig's own node, below), nothing was
   connected, or the plug-in is missing. Then `bool(io)` is False, and
   `str(io)` is a sentence saying why, which names no node:
-  `cmds.select(io)` raises `TypeError: Object rig.fuse('arm') left no
-  rigExpression: ... rig built its own node: lerp1 (a lerp) is invalid`,
-  and `cmds.objExists(io)` is False.
+  after `with rig.fuse("arm") as io: out.rx << a.tx * 2`, `cmds.select(io)`
+  raises `TypeError: Object rig.fuse('arm') left no rigExpression: ...
+  rig built its own node: mul1 (a lerp) is invalid`, and
+  `cmds.objExists(io)` is False.
 * As the block ends, a node of it whose network rig makes in one node
   becomes that node (the one-op rule): `dst.tx << a.tx + b.tx` alone in a
   block leaves a `sum`, `node << matrix` one `decomposeMatrix`,
