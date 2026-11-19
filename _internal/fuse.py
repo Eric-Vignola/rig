@@ -40,6 +40,14 @@ Materializing compiles the value into a ``rigExpression`` node (rig's plug-in,
   ring through the node's other inputs. The value computes that part from its plugs
   (``d.tx << x`` or ``d.tx << x * 3``, when x's node reads ``d.tx``).
 
+After a block, its nodes' outputs are kept (`FUSE.ended`, `_keep_ended`), and so are the
+expressions' keys: the block's value connected later, and the same expression written in a
+later block, read the output that computes it (`_ended`). Only where rig sees where the
+value goes and that it does not lead back into the node (`_owner_for`, `_refusing`); an
+equal value written again, only in the top container the node was made in, as rig's memo
+shares a network. Elsewhere (``str()``, rig's own functions with fuse off) it is computed
+again. A new scene forgets them (`forget_scene`).
+
 A List's operator (``list0.tx + list1.tx``) and a vectorized function given a List
 (`VECTORIZED`, or `ELEMENTWISE`) fuse row by row, as rig broadcasts them, and every
 row's value is materialized together: in the block's node. A row that does not fuse
@@ -148,10 +156,11 @@ class _State:
     number of fused values in memory: while there is one, the hooks look for them in
     what rig is given (a value made in a block can be used after it), and once none is
     left they cost nothing; ``owners``: {expression key: (record, attr, index)}, the
-    outputs of the nodes of the open blocks (or of the session, with the option)."""
+    outputs of the nodes of the open blocks (or of the session, with the option);
+    ``ended``: those of the blocks that ended (`_keep_ended`, `_ended`)."""
 
     __slots__ = ("on", "alive", "depth", "names", "blocks", "option", "plugin", "warned", "owners", "serial",
-                 "leaves", "dirty", "last", "inlined", "warned_target", "tracing", "outputs", "frames", "rebuilt")
+                 "leaves", "dirty", "last", "inlined", "warned_target", "tracing", "outputs", "frames", "ended")
 
     def __init__(self) -> None:
         self.on      = False
@@ -166,9 +175,11 @@ class _State:
         # whether each open scope fuses, innermost last: a block (True as it opens), a
         # rig.run / rig.exec (as what runs it); set_options(fuse=...) sets the innermost
         self.frames  = []
-        # {expression key: (its owner, ...)} of the values the one-op rule made rig's
-        # network (`_one_op_rule`): kept after their block, read by `_owner` after `owners`
-        self.rebuilt = {}
+        # {expression key: (owner, attr, index, the value (weakly), its top container)}: the
+        # outputs of the nodes of the blocks that ended (`_keep_ended`: an `_Ended`), and the
+        # values the one-op rule made rig's network (`_one_op_rule`: a `_Rebuilt`). Read
+        # after `owners` (`_ended`); emptied with the scene (`forget_scene`)
+        self.ended   = {}
         self.option  = False
         self.plugin  = None
         self.warned  = False
@@ -201,12 +212,14 @@ def _refresh() -> None:
     FUSE.on = bool(wanted and FUSE.plugin and _for_this_maya())
     _watch(FUSE.on and FUSE.depth > 0)      # (the option alone: no message is watched)
     if not kept:
+        _keep_ended()
         FUSE.owners.clear()
         FUSE.outputs.clear()
         FUSE.leaves.clear()
         FUSE.inlined.clear()
         FUSE.last = None
-        _KEYS.clear()
+        # (_KEYS is kept: the same expression written in a later block has the same key,
+        # and reads the node of the block that ended, `_ended`)
     elif len(FUSE.leaves) > 100000:
         FUSE.leaves.clear()
     if len(_KEYS) > 1000000:
@@ -332,7 +345,7 @@ class Fused:
     of a fused value raises TypeError, as a plug's does (the ``==`` / ``!=`` of two plugs
     keeps rig's rule: whether they are the same plug)."""
 
-    __slots__ = ("kind", "op", "args", "extra", "key", "truth", "live")
+    __slots__ = ("kind", "op", "args", "extra", "key", "truth", "live", "__weakref__")
     __hash__ = object.__hash__
     __array_ufunc__ = None     # numpy defers to this class's reflected operators
     __iter__ = None            # not iterable (a vector's channels are .x / .y / .z)
@@ -2086,31 +2099,53 @@ def materialize_all(values: list, into=None) -> list:
     In a block (or with the option), a value a node already outputs, about to drive
     ``into`` that leads back to that node, is computed again in a loop node instead
     (`_refusing`, `_loop_copy`): driving it from the node would close a ring through the
-    node's other inputs."""
+    node's other inputs.
+
+    A value the node of a block that ended outputs (`_ended`) is read off it only when
+    it drives ``into``, and that does not lead back to the node; otherwise it is computed
+    again, in a node of its own, as if its block had not computed it."""
     if FUSE.tracing:
         raise _Untraceable("a fused value is made a plug")
     if len(_KEYS) > 1000000:
-        _KEYS.clear()            # (the option: an endless block; ints are never reused)
+        _KEYS.clear()            # (kept across blocks and the option: ints are never reused)
     out: list = [None] * len(values)
-    pending, seen, owned = [], set(), []
+    pending, seen, owned, ended = [], set(), [], {}
     for i, v in enumerate(values):
         if v.op.startswith("in_") or _constant_only(v):
             out[i] = v.extra if v.op in ("const_s",) or v.op.startswith("in_") else list(v.extra)
             continue
-        if _owner(v) is None:
+        owner = _owner(v)
+        if owner is None and into is not None and FUSE.ended:
+            owner = _ended(v, True)              # (checked below, against where it goes)
+            if owner is not None:
+                ended[i] = owner
+        if owner is None:
             if v.key not in seen:
                 seen.add(v.key)
                 pending.append(v)
-        elif into is not None and (FUSE.blocks or FUSE.option):
+        elif into is not None and (FUSE.blocks or FUSE.option or i in ended):
             owned.append(i)
+    dests = refuses = None
+    if pending or owned:
+        dests = _destinations(into) if into is not None else []
+        refuses = _refusing(dests)
+    copies = []
+    for i in owned:
+        v = values[i]
+        owner = ended.get(i)
+        if owner is None:
+            if refuses is not None and refuses(_owner(v)[0]):
+                copies.append(i)
+        elif refuses is not None and not refuses(owner[0]):
+            out[i] = owner[0].output(owner[1], owner[2])
+            FUSE.outputs[hash(out[i])] = v
+        elif v.key not in seen:
+            seen.add(v.key)
+            pending.append(v)                    # where it goes leads back, or is not known
     if pending:
-        _place(pending, into)
-    if owned:
-        refuses = _refusing(_destinations(into))
-        if refuses is not None:
-            for i in owned:
-                if refuses(_owner(values[i])[0]):
-                    out[i] = _loop_copy(values[i])
+        _place(pending, into, dests, refuses)
+    for i in copies:
+        out[i] = _loop_copy(values[i])
     for i, v in enumerate(values):
         if out[i] is None:
             record, attr, index = _owner(v)
@@ -2129,7 +2164,7 @@ class _Record:
     indices), the container scope it was made in, and its program so far, which each
     merge extends (`_compile`, `_commit`)."""
 
-    __slots__ = ("node", "handle", "serial", "scope", "outs", "inputs", "in_index", "plugs", "size",
+    __slots__ = ("node", "handle", "serial", "scope", "top", "outs", "inputs", "in_index", "plugs", "size",
                  "reg", "nreg", "body", "consts", "const_index", "loads", "out_regs", "looped", "__weakref__")
 
     def __init__(self, scope) -> None:
@@ -2137,6 +2172,7 @@ class _Record:
         FUSE.serial += 1
         self.serial   = FUSE.serial
         self.scope    = scope
+        self.top      = _top()          # (the outermost container: `_ended`'s scope)
         self.node     = None
         self.handle   = None
         self.outs     = {k: [] for k in OUT_KINDS}   # the output expressions by kind (their slots)
@@ -2165,16 +2201,54 @@ class _Record:
 
 
 def _owner(e: Fused):
-    # then FUSE.rebuilt: a value the one-op rule made rig's network, read off it after its
-    # block too (under the option, the fused node it deleted is still in FUSE.owners)
-    for table in (FUSE.owners, FUSE.rebuilt):
-        found = table.get(e.key)
-        if found is None:
-            continue
+    """(owner, attr, index) of the output that computes ``e``: a node of the open blocks
+    (or of the session, with the option), else rig's network the one-op rule made of a
+    block that ended (`_ended`; under the option, the fused node it deleted is still in
+    `FUSE.owners`, dead). None: no node computes it yet."""
+    found = FUSE.owners.get(e.key)
+    if found is not None:
         if found[0].alive():
             return found
-        del table[e.key]
-    return None
+        del FUSE.owners[e.key]
+    return _ended(e, False) if FUSE.ended else None
+
+
+def _owner_for(e: Fused, refuses):
+    """`_owner`, and, where the values' destinations are known (``refuses``, which the
+    caller asks of the owner found), the fused node of a block that ended"""
+    found = _owner(e)
+    if found is None and refuses is not None and FUSE.ended:
+        found = _ended(e, True)
+    return found
+
+
+def _ended(e: Fused, fused: bool):
+    """(owner, attr, index) of the output of a block that ended which computes ``e``
+    (`FUSE.ended`), or None. rig's network the one-op rule made is one node computing
+    that value: anything reads it. A fused node computes others too, from inputs ``e``
+    may not read: only a value whose destinations rig knows reads it (``fused``), and
+    only where they do not lead back to it (`_refusing`). The value itself (the one the
+    block made) reads it anywhere; an equal one written again, only in the top container
+    its node was made in, as rig's memo shares a network."""
+    found = FUSE.ended.get(e.key)
+    if found is None:
+        return None
+    owner, attr, index, ref, top = found
+    if not fused and type(owner) is _Ended:
+        return None
+    if not owner.alive():
+        del FUSE.ended[e.key]
+        return None
+    if ref() is not e and top != _top():
+        return None
+    return owner, attr, index
+
+
+def _top():
+    """the scope key of the outermost open container, as `memoize` keys its entries"""
+    from rig._internal.container import container
+    stack = container._stack
+    return stack[0]._scope_key if stack else None
 
 
 def _scope():
@@ -2271,7 +2345,7 @@ def _compile(record: _Record, new: dict, inline: bool = False, refuses=None) -> 
             continue
         if not expanded:
             if e.args:
-                owner = None if inline else _owner(e)
+                owner = None if inline else _owner_for(e, refuses)
                 if owner is not None and owner[0] is not record and not (refuses and refuses(owner[0])):
                     # read from the other node's output, through the input of its kind
                     other, attr, index = owner
@@ -2629,7 +2703,7 @@ def _reads(pending: list, refuses=None) -> list:
         if e.op.startswith("in_"):
             out.append(e.extra)
         elif e.args:
-            owner = _owner(e)
+            owner = _owner_for(e, refuses)
             if owner is not None and not (refuses and refuses(owner[0])):
                 out.append(owner[0].output(owner[1], owner[2]))
             else:
@@ -2693,6 +2767,8 @@ def _refusing(dests: list):
     destination, nothing refused."""
     if not dests:
         return None
+    if getattr(sys, "_rig_fuse_watch", None) is None:
+        _forget_graph()                   # not kept up to date (no block): from scratch
     known: dict = {}
 
     def refuses(owner) -> bool:
@@ -2949,12 +3025,12 @@ def _check_inputs(pending: list, refuses=None) -> None:
                 if not fn.hasAttribute(name) or not (fn.attribute(name) == attr):
                     raise _deleted_error(str.__str__(plug))
         elif e.args:
-            owner = _owner(e)
+            owner = _owner_for(e, refuses)
             if owner is None or (refuses and refuses(owner[0])):
                 stack.extend(e.args)
 
 
-def _place(pending: list, into=None) -> None:
+def _place(pending: list, into=None, dests=None, refuses=None) -> None:
     """In a block, pending values go into the block's first node that takes them: in
     this container, its program not longer than `MAX_INSTRUCTIONS`, and no input they
     add downstream of it (a cycle, at the node level); otherwise into a new node of the
@@ -2971,9 +3047,13 @@ def _place(pending: list, into=None) -> None:
 
     Either way, a part another node outputs is read from that output, and values join a
     node, unless where they go leads back to that node (`_refusing`): they compute that
-    part from its plugs, in another node."""
-    dests = _destinations(into) if into is not None else []
-    refuses = _refusing(dests)
+    part from its plugs, in another node. A part the node of a block that ended outputs
+    is read off it only when they drive ``into`` (`_owner_for`). ``dests`` and
+    ``refuses``: `_destinations` of ``into`` and its `_refusing`, when the caller has
+    them."""
+    if dests is None:
+        dests = _destinations(into) if into is not None else []
+        refuses = _refusing(dests)
     _check_inputs(pending, refuses)
     if FUSE.blocks:
         block = FUSE.blocks[-1]
@@ -3375,6 +3455,71 @@ class _Rebuilt:
         return self.out
 
 
+class _Ended:
+    """the fused node of a block that ended (`_keep_ended`): its outputs are read off it
+    where rig sees the value's destinations do not lead back to it (`_ended`). Its node,
+    not its program (the record and its values are freed)"""
+
+    __slots__ = ("node", "handle", "serial", "looped", "plugs")
+
+    def __init__(self, record: _Record) -> None:
+        self.node   = record.node
+        self.handle = record.handle
+        self.serial = record.serial
+        self.looped = record.looped
+        self.plugs  = record.plugs
+
+    def alive(self) -> bool:
+        return self.handle.isValid() and self.handle.isAlive()
+
+    def output(self, attr: str, index: int):
+        k = (attr, index)
+        p = self.plugs.get(k)
+        if p is None:
+            p = self.plugs[k] = getattr(self.node, attr)[index]
+        return p
+
+
+_KIND_OF_ATTR = {attr: kind for kind, attr in OUT_ATTR.items()}
+
+
+def _keep_ended() -> None:
+    """As the last open block ends (or the option goes off, `_refresh`): the outputs of
+    the nodes the blocks made, kept in `FUSE.ended` with the value each computes (weakly)
+    and the top container its node was made in, for `_ended`"""
+    if not FUSE.owners:
+        return
+    ended = FUSE.ended
+    made: dict = {}
+    for key, (owner, attr, index) in FUSE.owners.items():
+        if type(owner) is not _Record or key in ended:
+            continue                       # (a stand-in's node; a value the one-op rule rebuilt)
+        kept = made.get(owner.serial)
+        if kept is None:
+            kept = made[owner.serial] = _Ended(owner) if owner.alive() else False
+        if kept is False:
+            continue
+        value = owner.outs[_KIND_OF_ATTR[attr]][index]
+        ended[key] = (kept, attr, index, weakref.ref(value), owner.top)
+
+
+def _prune_ended() -> None:
+    """`FUSE.ended` without its dead entries; emptied when that is not enough"""
+    ended = FUSE.ended
+    for key in [k for k, entry in ended.items() if not entry[0].alive()]:
+        del ended[key]
+    if len(ended) > 100000:
+        ended.clear()
+
+
+def forget_scene() -> None:
+    """A new scene or a file opened (`memoize`'s scene callback): nothing of the scene that
+    goes away is read again, and the expression keys start over (outside a block)"""
+    FUSE.ended.clear()
+    if not FUSE.depth:
+        _KEYS.clear()
+
+
 _NOT_COMPUTING = frozenset(OP[k] for k in ("LOAD_S", "LOAD_V", "LOAD_A", "LOAD_E", "LOAD_Q", "LOAD_M", "CONST_S",
                                            "CONST_V", "CONST_Q", "CONST_M", "NOP", "EXT", "MOVE"))
 
@@ -3388,7 +3533,8 @@ def _computing(record: "_Record") -> int:
 def _one_op_rule(records: list) -> None:
     """As a block ends: each of its nodes that rig's network makes in at most
     `ONE_OP_NODES` nodes becomes that network (`rig._internal.unfuse.one_op`). A value
-    it computed, used after the block, reads that network."""
+    it computed, used after the block, reads that network, and so does the same value
+    written again in its top container (`_ended`)."""
     if not ONE_OP_RULE:
         return
     from rig._internal import unfuse
@@ -3404,7 +3550,8 @@ def _one_op_rule(records: list) -> None:
             continue
         for (kind, index), plug in (made or {}).items():
             if type(plug) in plugs and index < len(outs.get(kind, ())):
-                FUSE.rebuilt[outs[kind][index].key] = (_Rebuilt(plug), "plug", 0)
+                value = outs[kind][index]
+                FUSE.ended[value.key] = (_Rebuilt(plug), "plug", 0, weakref.ref(value), record.top)
 
 
 def _redirect(value: Fused, node, name: str) -> None:
@@ -3627,8 +3774,8 @@ class fuse:
         from rig._internal.undo import undo_chunk
         self.chunk = undo_chunk(f"rig.fuse {self.name}" if self.name else "rig.fuse")
         self.chunk.__enter__()
-        if not FUSE.alive or len(FUSE.rebuilt) > 100000:
-            FUSE.rebuilt.clear()       # (no value left to read one off)
+        if len(FUSE.ended) > 100000:
+            _prune_ended()
         FUSE.depth += 1
         FUSE.names.append(self.name)
         FUSE.blocks.append([])

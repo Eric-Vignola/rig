@@ -1499,6 +1499,8 @@ class TestUnfuse(_MatrixCase):
         with rig.fuse("two"):
             self.out.ty << x + self.b.ty                     # reads one's output
         self.assertEqual(sorted(self.fused_nodes()), ["one", "two"])
+        self.assertEqual(cmds.listConnections("two.scalarIn", source=True, plugs=True),
+                         ["one.scalarOut[0]", "b.translateY"])
         expected = cmds.getAttr("out.tx"), cmds.getAttr("out.ty")
         rig.unfuse("one")
         self.assertEqual(self.fused_nodes(), ["two"])
@@ -1843,6 +1845,121 @@ class TestRig(_Case):
             name = str(v)
         self.assertTrue(name.endswith("scalarOut[0]"), name)
         self.assertEqual(cmds.getAttr(name), 3.0)
+
+
+class TestReuse(_Case):
+    """A block's outputs after it ends: read where rig sees where the value goes, and it
+    does not lead back into the node (the node reads all its inputs for every output)."""
+
+    def inputs(self):
+        super().inputs()
+        for name in ("left", "right", "helper", "out1", "out2", "out3", "out4"):
+            setattr(self, name, Node.create("transform", name=name))
+        self.left.t << (1, 2, 3)
+        self.right.t << (4, 5, 6)
+        self.helper.t << (10, 20, 30)
+
+    def block(self):
+        with rig.fuse("calc"):
+            total = self.left.t + self.right.t
+            self.out1.t << total                       # calc.vectorOut[0]
+            self.out2.t << total + self.helper.t       # calc reads helper.t too
+        return total
+
+    def drivers(self, plug):
+        return cmds.listConnections(plug, source=True, destination=False, plugs=True)
+
+    def reads(self, node):
+        return sorted(cmds.listConnections(node, source=True, destination=False, plugs=True) or [])
+
+    def no_cycle(self):
+        self.assertFalse(cmds.cycleCheck(all=True, list=True) or [])
+
+    def test_the_value_connected_after_its_block_reads_its_node(self):
+        total = self.block()
+        self.out3.t << total
+        self.assertEqual(self.drivers("out3.t"), ["calc.vectorOut[0]"])
+        self.assertEqual(self.fused_nodes(), ["calc"])
+        self.no_cycle()
+
+    def test_the_value_going_back_into_its_node_is_computed_again(self):
+        total = self.block()
+        self.helper.t << total                         # calc reads helper.t: reading calc would loop
+        node = cmds.listConnections("helper.t", source=True, destination=False)[0]
+        self.assertNotEqual(node, "calc")
+        self.assertEqual(self.reads(node), ["left.translate", "right.translate"])
+        self.assertEqual(cmds.getAttr("helper.t")[0], (5.0, 7.0, 9.0))
+        self.no_cycle()
+
+    def test_the_same_expression_in_a_later_block_reads_the_node(self):
+        self.block()
+        with rig.fuse("later"):
+            self.out4.t << (self.left.t + self.right.t) * 2
+        self.assertEqual(self.reads("later"), ["calc.vectorOut[0]"])
+        self.assertEqual(cmds.getAttr("out4.t")[0], (10.0, 14.0, 18.0))
+        self.no_cycle()
+
+    def test_the_same_expression_going_back_is_computed_from_its_plugs(self):
+        self.block()
+        with rig.fuse("later"):
+            self.helper.t << (self.left.t + self.right.t) * 2
+        self.assertEqual(self.reads("later"), ["left.translate", "right.translate"])
+        self.assertEqual(cmds.getAttr("helper.t")[0], (10.0, 14.0, 18.0))
+        self.no_cycle()
+
+    def test_with_fuse_off_the_same_expression_is_rigs_network(self):
+        self.block()
+        self.out4.t << self.left.t + self.right.t      # built before rig knows where it goes
+        self.assertEqual(cmds.nodeType(cmds.listConnections("out4.t", source=True)[0]), "plusMinusAverage")
+
+    def test_a_plug_rig_cannot_follow_is_computed_again(self):
+        total = self.block()
+        name = str(total)                              # where the plug goes is not rig's to see
+        self.assertNotEqual(name, "calc.vectorOut[0]")
+        self.assertEqual(cmds.getAttr(name)[0], (5.0, 7.0, 9.0))
+
+    def test_the_value_itself_reads_its_node_from_another_top_container(self):
+        from rig import container
+        set_options(create_containers=True)
+        with container("armA"):
+            total = self.block()
+        with container("armB"):
+            self.out3.t << total                       # as its plug would
+        self.assertEqual(self.drivers("out3.t"), ["calc.vectorOut[0]"])
+
+    def test_an_equal_value_in_another_top_container_is_computed_again(self):
+        from rig import container
+        set_options(create_containers=True)
+        with container("armA"):
+            self.block()
+        with container("armB"):
+            with rig.fuse("later"):
+                self.out4.t << (self.left.t + self.right.t) * 2   # rig's memo shares no network either
+        self.assertEqual(self.reads("later"), ["left.translate", "right.translate"])
+
+    def test_a_node_gone_is_not_read(self):
+        total = self.block()
+        rig.unfuse("calc")
+        self.out3.t << total
+        self.assertNotIn("calc", cmds.listConnections("out3.t", source=True) or [])
+        self.assertEqual(cmds.getAttr("out3.t")[0], (5.0, 7.0, 9.0))
+
+    def test_a_new_scene_forgets_the_blocks(self):
+        self.block()
+        self.assertTrue(_fuse.FUSE.ended)
+        cmds.file(new=True, force=True)
+        self.assertEqual(_fuse.FUSE.ended, {})
+
+    def test_a_later_block_reads_the_node_the_one_op_rule_made(self):
+        _fuse.ONE_OP_RULE = True
+        with rig.fuse("one"):
+            self.out1.t << self.left.t + self.right.t            # one op: rig's plusMinusAverage
+        node = cmds.listConnections("out1.t", source=True, destination=False)[0]
+        self.assertEqual(cmds.nodeType(node), "plusMinusAverage")
+        with rig.fuse("later"):
+            self.out4.t << (self.left.t + self.right.t) * 2 + self.helper.t
+        self.assertEqual(self.reads("later"), sorted([f"{node}.output3D", "helper.translate"]))
+        self.assertEqual(cmds.getAttr("out4.t")[0], (20.0, 34.0, 48.0))
 
 
 class TestRigFunctions(_Case):

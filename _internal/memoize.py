@@ -916,6 +916,13 @@ def _clear_before_new_scene(*args: Any) -> None:
         _clear_gc_registry()
     except Exception:  # noqa: BLE001
         pass
+    try:
+        # rig.fuse() reads the nodes of the blocks that ended, as these caches do
+        fuse = sys.modules.get("rig._internal.fuse")
+        if fuse is not None:
+            fuse.forget_scene()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _prune_after_scene_change(*args: Any) -> None:

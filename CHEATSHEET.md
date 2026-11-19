@@ -4636,7 +4636,7 @@ A fused value is built when it is used, not when it is written, so:
   raises where the value is used: an input deleted in between raises
   rig's `"... already deleted!"`, before anything is built;
 * a fused call is not memoized: the same call twice gives two equal
-  values, which build to one output;
+  values, which build to one output (in a later block too, below);
 * rig's node counts and node types are not those of its network (one
   `rigExpression` node instead), and a value has no node name until it is
   built;
@@ -4670,9 +4670,24 @@ A fused value is built when it is used, not when it is written, so:
   block leaves a `sum`, `node << matrix` one `decomposeMatrix`. A node rig's
   network makes in more stays fused: two values of one op each, a vector
   clamp, a scalar written into an angle (rig's node needs a
-  `unitConversion`). A value of the block used after it reads the node. The
-  rule runs as a block ends, under `set_options(fuse=True)` too; what the
-  option alone fuses is in no block, and stays fused.
+  `unitConversion`). The rule runs as a block ends, under
+  `set_options(fuse=True)` too; what the option alone fuses is in no
+  block, and stays fused.
+* After the block, its nodes' outputs are reused wherever rig sees where a
+  value goes:
+  * The block's value, connected later (`out3.t << total`), reads the
+    output that computes it.
+  * So does the same expression written in a later block, in the same top
+    container. As with rig's memo, an equal value written in another top
+    container gets its own node.
+  * Not when where the value goes leads back into the node, which reads
+    all its inputs for every output (`helper.t << total`, when the node
+    reads `helper.t`). The value is then computed again, in a node of its
+    own.
+  * Not when rig cannot see where it goes: `str(total)`, or the same
+    expression written with fuse off, which is rig's network as always.
+  * A node the one-op rule made computes that value alone: anything reads
+    it.
 * `rig.set_options(fuse=True)` fuses everywhere, as one endless block (and
   `fuse = true` in `_defaults.toml`).
 * Inside a block, `rig.set_options(fuse=False)` turns fusing off for the
