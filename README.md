@@ -60,6 +60,9 @@ connections, in a scene file half the size.
 
 ![The same rig with rig.fuse() on](examples/images/fuse/after.png)
 
+*Both pictures show Maya's Node Editor for the same spine built with a
+single joint.*
+
 ```python
 import rig
 
