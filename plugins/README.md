@@ -68,9 +68,13 @@ session and builds its own nodes instead. `cmds.pluginInfo("rig", query=True, pa
 says which one is loaded: where `rig.mll` is also on `MAYA_PLUG_IN_PATH`, a build here is
 used only through `RIG_PLUGIN`.
 
-`MIN_VERSION` is the lowest version its programs run on (1.2: `Q_ARC`, angleBetween's turn as
-Maya's `MQuaternion(a, b)`; `TIME`, the scene's time; `RAND`, rig.random; eulers through
-Maya's own decompositions). The program format and every op are described at the top of
+`MIN_VERSION` is the lowest version its programs run on and give the documented results
+with (1.2: `Q_ARC`, angleBetween's turn as Maya's `MQuaternion(a, b)`; `TIME`, the scene's
+time; `RAND`, rig.random; eulers through Maya's own decompositions; 1.3: the three guards
+on numpy: `asin` / `acos` clamp their input, `normalize` of a zero vector is the zero vector,
+no output is nan or inf; and the outputs' raw twins, `scalarRaw[]` ..., which fused nodes read
+each other through, so that the third guard alters nothing between them). The program format
+and every op are described at the top of
 `src/rig.cpp`. Each op is checked against the Maya node it stands for by
 `rig_sequence_prototype\check_math_nodes.py`, and the whole of fusing by
 `_tests/test_rig/test_fuse.py`.

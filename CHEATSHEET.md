@@ -4663,9 +4663,27 @@ with rig.fuse():
 
 The fused node follows numpy, in doubles: `%` is floor modulo (`-1.25 % 3`
 is `1.75`), `round` is half to even, `sign(0)` is `0`, a division by zero is
-`inf` or `nan`, a test is true when it is not `0`. rig's network keeps
+`inf` or `nan`, a test is true when it is not `0`. Three guards keep a `nan`
+out of the scene (rig.mll 1.3):
+
+* `asin` and `acos` clamp their input to [-1, 1], as Maya's nodes do, and as
+  a plain number folds: the dot product of two unit vectors rounds to
+  `1.0000000000000002`, whose `acos` would be `nan`;
+* `normalize` of a zero vector is the zero vector;
+* no output is `nan` or `inf`: one that would be is `0` (a quaternion or a
+  matrix, the identity). Only what a Maya node is given: inside the node
+  `1 / 0` is `inf`, so `clamp(1 / x, 0, 10)` is `10` at `x = 0`, where
+  `1 / x` connected as it is gives `0`. Between fused nodes nothing is
+  altered either: one reads another's value off its raw twin (`scalarRaw[]`,
+  `vectorRaw[]` ... beside `scalarOut[]`, `vectorOut[]` ...), so that
+  `clamp` is `10` whichever block or node holds the division. A fused
+  output used as a plain plug after its block is what Maya reads: `0`.
+
+rig's network keeps
 Maya's node rules (see `rig_network_fixes_todo.md`), so the two can differ
-there, and in rig's float32 stages (under 1e-6). Matrices, quaternions and
+there, and in rig's float32 stages (under 1e-6): Maya's divide, modulo, log
+and normalize nodes hold the value they last gave when their input is one
+they refuse, and its power node gives `nan`. Matrices, quaternions and
 eulers follow Maya's nodes, in doubles: `decompose` gives `decomposeMatrix`'s
 euler (Maya's own decomposition: a half turn about y is `(0, 180, 0)`), its
 quaternion's sign and its negative scale (on z), `slerp` goes the shortest
@@ -4780,7 +4798,7 @@ A fused value is built when it is used, not when it is written, so:
   `vector2` (`MQuaternion(a, b)`), for parallel and opposite vectors too.
 * `constant([plug, ...])` fuses; `constant(numbers)` stays rig's node, a
   value to edit after the build.
-* rig's plug-in, `rig.mll` (1.2), is loaded on first use: already loaded, else
+* rig's plug-in, `rig.mll` (1.3), is loaded on first use: already loaded, else
   from `RIG_PLUGIN` (its path), else by name from `MAYA_PLUG_IN_PATH`, else its
   build for this Maya next to rig's source, `rig/plugins/<version>/rig.mll`
   (`plugins/build.bat` writes it there; `build.sh` writes `rig.bundle` on

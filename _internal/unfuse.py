@@ -31,8 +31,8 @@ from maya.api import OpenMaya as om
 from rig._internal import fuse as F
 from rig._internal import journal
 from rig._internal.fuse import (
-    BIN, FILE, IDENTITY_M, IDENTITY_Q, M_BIN_OPS, MAGIC, OP, OUT_ATTR, OUT_KINDS, Q_BIN_OPS, Q_UN_OPS, UN,
-    Fused, _SLOT_ATTR,
+    BIN, FILE, IDENTITY_M, IDENTITY_Q, M_BIN_OPS, MAGIC, OP, OUT_ATTR, OUT_KINDS, Q_BIN_OPS, Q_UN_OPS, RAW_ATTR,
+    UN, Fused, _SLOT_ATTR,
 )
 from rig._internal.journal import statement
 
@@ -89,6 +89,28 @@ def _parse(program: list, name: str) -> tuple:
     return instructions, registers
 
 
+_GUARDED = {raw: out for out, raw in RAW_ATTR.items()}      # a raw twin -> the output it is the twin of
+
+
+def _maya_side(src: om.MPlug) -> om.MPlug:
+    """``src``, or, when it is a fused node's raw twin (what the fused node being rebuilt
+    read: `rig._internal.fuse.RAW_ATTR`), the output it is the twin of: rig's network is
+    made of Maya's nodes, which read the guarded value"""
+    element, child = src, None
+    if element.isChild:
+        parent  = element.parent()
+        child   = next(c for c in range(parent.numChildren()) if parent.child(c) == element)
+        element = parent
+    if not element.isElement:
+        return src
+    fn  = om.MFnDependencyNode(src.node())
+    out = _GUARDED.get(om.MFnAttribute(element.array().attribute()).name)
+    if out is None or fn.typeName != F.NODE_TYPE:
+        return src
+    twin = fn.findPlug(out, False).elementByLogicalIndex(element.logicalIndex())
+    return twin if child is None else twin.child(child)
+
+
 class _Inputs:
     """the node's inputs as leaves: what drives an input, or the value it holds (a
     compound with channels of its own drivers is made of them)"""
@@ -116,7 +138,7 @@ class _Inputs:
         kind = _SLOT_KIND[slot]
         src = plug.source()
         if not src.isNull:
-            return Fused(kind, "in_" + slot, extra=Plug(src), key=("unfuse", self.name, slot, index))
+            return Fused(kind, "in_" + slot, extra=Plug(_maya_side(src)), key=("unfuse", self.name, slot, index))
         if slot == "s":
             return F._constant(plug.asDouble())
         if slot == "a":
@@ -134,7 +156,7 @@ class _Inputs:
             csrc = child.source()
             if not csrc.isNull:
                 angle = slot == "e"
-                parts.append(Fused("s", "in_a" if angle else "in_s", extra=Plug(csrc),
+                parts.append(Fused("s", "in_a" if angle else "in_s", extra=Plug(_maya_side(csrc)),
                                    key=("unfuse", self.name, slot, index, c)))
             elif slot == "e":
                 parts.append(F._constant(child.asMAngle().asDegrees()))
@@ -294,10 +316,12 @@ _FOLD_BIN = {
 _FOLD_UN = {
     "neg": np.negative, "abs": np.abs, "floor": np.floor, "ceil": np.ceil, "round": np.round, "trunc": np.trunc,
     "sign": np.sign, "rev": lambda x: 1.0 - x, "sqrt": np.sqrt, "exp": np.exp, "log": np.log,
-    "not": lambda x: x == 0, "sin": np.sin, "cos": np.cos, "tan": np.tan, "asin": np.arcsin, "acos": np.arccos,
+    "not": lambda x: x == 0, "sin": np.sin, "cos": np.cos, "tan": np.tan,
+    # (asin / acos clamp their input to [-1, 1], as the fused node and Maya's nodes do)
+    "asin": lambda x: np.arcsin(np.clip(x, -1.0, 1.0)), "acos": lambda x: np.arccos(np.clip(x, -1.0, 1.0)),
     "atan": np.arctan, "sind": lambda x: np.sin(np.radians(x)), "cosd": lambda x: np.cos(np.radians(x)),
-    "tand": lambda x: np.tan(np.radians(x)), "asind": lambda x: np.degrees(np.arcsin(x)),
-    "acosd": lambda x: np.degrees(np.arccos(x)), "atand": lambda x: np.degrees(np.arctan(x)),
+    "tand": lambda x: np.tan(np.radians(x)), "asind": lambda x: np.degrees(np.arcsin(np.clip(x, -1.0, 1.0))),
+    "acosd": lambda x: np.degrees(np.arccos(np.clip(x, -1.0, 1.0))), "atand": lambda x: np.degrees(np.arctan(x)),
 }
 
 
@@ -750,15 +774,18 @@ def _container_of(name: str):
 
 
 def _destinations(fn: om.MFnDependencyNode, kind: str, index: int) -> list:
-    """[(channel or None, the plug it drives)] of output ``kind``[index]"""
-    array = fn.findPlug(OUT_ATTR[kind], False)
-    if index not in array.getExistingArrayAttributeIndices():
-        return []
-    element = array.elementByLogicalIndex(index)
-    out = [(None, d) for d in element.destinations()]
-    if element.isCompound:
-        for c in range(element.numChildren()):
-            out += [(c, d) for d in element.child(c).destinations()]
+    """[(channel or None, the plug it drives)] of output ``kind``[index]: what the output
+    drives, and what its raw twin does (the inputs of other fused nodes)"""
+    out = []
+    for attr in (OUT_ATTR[kind], RAW_ATTR[OUT_ATTR[kind]]):
+        array = fn.findPlug(attr, False)
+        if index not in array.getExistingArrayAttributeIndices():
+            continue
+        element = array.elementByLogicalIndex(index)
+        out += [(None, d) for d in element.destinations()]
+        if element.isCompound:
+            for c in range(element.numChildren()):
+                out += [(c, d) for d in element.child(c).destinations()]
     return out
 
 

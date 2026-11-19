@@ -27,6 +27,10 @@
 //   eulerOut[]  double3 of doubleAngle: a rotation computed in degrees, written
 //               as an angle, so it drives a rotate without a unitConversion
 //   angleOut[]  doubleAngle: the same for one angle
+//   scalarRaw[] vectorRaw[] quatRaw[] matrixRaw[] eulerRaw[] angleRaw[]: each
+//               output's twin, as the program computed it, a nan or an inf too
+//               (guard 3 below): what another rigExpression reads. Written once
+//               one of them has been asked for
 //   timeIn      time: the scene's time (time1.outTime), in frames of the current
 //               unit for TIME (rig.functions.frame())
 //
@@ -45,10 +49,18 @@
 //   the sign of the divisor) and // np.floor_divide, both numpy's npy_divmod;
 //   round is np.round (half to even); sign is np.sign (0 at 0, nan at nan);
 //   sqrt / exp / log are np.sqrt / np.exp / np.log (log(0) = -inf, nan below);
-//   asin / acos are nan outside [-1, 1]; min / max / clamp are np.minimum /
-//   np.maximum / np.clip (a NaN propagates; clamp with lo > hi gives hi);
-//   and / or / xor / not are np.logical_* and condition is np.where: non-zero
-//   is true; normalize is v / np.linalg.norm(v) (nan for a zero vector).
+//   min / max / clamp are np.minimum / np.maximum / np.clip (a NaN propagates;
+//   clamp with lo > hi gives hi); and / or / xor / not are np.logical_* and
+//   condition is np.where: non-zero is true.
+// Three guards on numpy (rig.mll 1.3), so that a node never hands Maya a nan:
+//   1. asin / acos (and their degree forms) clamp their input to [-1, 1], as
+//      Maya's nodes do: the dot product of two unit vectors rounds past 1;
+//   2. normalize of a zero vector is the zero vector (numpy: nan);
+//   3. an output is never nan or inf: such a value is written as 0 (a
+//      quaternion or a matrix holding one, as the identity). Only what a Maya
+//      node reads: inside the program 1 / 0 is inf, so clamp(1 / x, 0, 10) is 10
+//      at x = 0, and between two rigExpression nodes too: rig connects one to
+//      the other's raw twins (scalarRaw[] ...), which are not guarded.
 // Matrices and quaternions: Maya's nodes' (decomposeMatrix, composeMatrix,
 // quatSlerp, aimMatrix, blendMatrix ...), see rig_math.h. Q_ARC is Maya's own
 // MQuaternion(a, b), angleBetween's turn: its rule for parallel, opposite and short
@@ -193,6 +205,21 @@ struct alignas(16) Reg16 {
 
 bool truthy(double x) { return x != 0.0; }  // non-zero is true (np.logical_*, np.where); nan is true
 
+// asin's and acos's input, clamped to [-1, 1] (guard 1; a nan stays one)
+double unit(double x) { return x < -1.0 ? -1.0 : x > 1.0 ? 1.0 : x; }
+
+// what an output plug is given (guard 3): never nan or inf, 0 instead
+double written(double x) { return std::isfinite(x) ? x : 0.0; }
+
+// true if every one of the n values can be written as it is
+bool all_finite(const double* v, int n)
+{
+    for (int k = 0; k < n; ++k)
+        if (!std::isfinite(v[k]))
+            return false;
+    return true;
+}
+
 // np.maximum / np.minimum: a NaN propagates
 double np_max(double a, double b) { return std::isnan(a) ? a : std::isnan(b) ? b : (a >= b ? a : b); }
 double np_min(double a, double b) { return std::isnan(a) ? a : std::isnan(b) ? b : (a <= b ? a : b); }
@@ -274,14 +301,14 @@ double unary(int f, double a)
     case SIN: return std::sin(a);
     case COS: return std::cos(a);
     case TAN: return std::tan(a);
-    case ASIN: return std::asin(a);
-    case ACOS: return std::acos(a);
+    case ASIN: return std::asin(unit(a));
+    case ACOS: return std::acos(unit(a));
     case ATAN: return std::atan(a);
     case SIND: return std::sin(a * RAD);
     case COSD: return std::cos(a * RAD);
     case TAND: return std::tan(a * RAD);
-    case ASIND: return std::asin(a) * DEG;
-    case ACOSD: return std::acos(a) * DEG;
+    case ASIND: return std::asin(unit(a)) * DEG;
+    case ACOSD: return std::acos(unit(a)) * DEG;
     case ATAND: return std::atan(a) * DEG;
     }
     return 0.0;
@@ -375,10 +402,17 @@ public:
     static const MTypeId id;
     static MObject aProgram, aConstants, aScalarIn, aVectorIn, aAngleIn, aEulerIn, aQuatIn, aMatrixIn, aScalarOut,
         aVectorOut, aQuatOut, aMatrixOut, aEulerOut, aAngleOut, aEvaluations, aTimeIn;
+    // the outputs' raw twins, in the outputs' order: scalar, vector, quaternion, matrix, euler, angle
+    static MObject aRaw[6];
 
     static void* creator() { return new RigExpression; }
     static MStatus initialize();
     MStatus compute(const MPlug& plug, MDataBlock& block) override;
+
+private:
+    // the raw twins another rigExpression has asked for: written from then on (a node no
+    // other fused node reads writes none)
+    bool raw_[6] = {false, false, false, false, false, false};
 };
 
 const MTypeId RigExpression::id(0x0007F010);
@@ -386,6 +420,7 @@ MObject RigExpression::aProgram, RigExpression::aConstants, RigExpression::aScal
     RigExpression::aAngleIn, RigExpression::aEulerIn, RigExpression::aQuatIn, RigExpression::aMatrixIn,
     RigExpression::aScalarOut, RigExpression::aVectorOut, RigExpression::aQuatOut, RigExpression::aMatrixOut,
     RigExpression::aEulerOut, RigExpression::aAngleOut, RigExpression::aEvaluations, RigExpression::aTimeIn;
+MObject RigExpression::aRaw[6];
 
 bool ExprBase::validate(const std::vector<int>& p, size_t constants) const
 {
@@ -567,9 +602,9 @@ void ExprBase::run()
                       r[dst] = {x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]};
                       break; }
         case LENGTH: { const Reg x = r[a]; r[dst] = {std::sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]), 0.0, 0.0}; break; }
-        case NORMALIZE: { const Reg x = r[a];     // v / np.linalg.norm(v): nan for a zero vector
+        case NORMALIZE: { const Reg x = r[a];     // v / |v|; a zero vector stays one (guard 2)
                           const double l = std::sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
-                          r[dst] = Reg{x[0] / l, x[1] / l, x[2] / l};
+                          r[dst] = l == 0.0 ? Reg{0.0, 0.0, 0.0} : Reg{x[0] / l, x[1] / l, x[2] / l};
                           break; }
         case DIST: { const Reg x = r[a], y = r[b];
                      const double dx = x[0] - y[0], dy = x[1] - y[1], dz = x[2] - y[2];
@@ -822,6 +857,40 @@ MStatus RigExpression::initialize()
     aAngleOut = unit.create("angleOut", "angleOut", MFnUnitAttribute::kAngle, 0.0);
     output_array(unit);
 
+    // the outputs' raw twins, each of its output's type: what another rigExpression reads
+    // (guard 3 is for Maya's nodes). Hidden: nothing else is meant to be wired to them
+    auto raw_array = [&output_array](MFnAttribute& fn) {
+        output_array(fn);
+        fn.setHidden(true);
+    };
+    aRaw[0] = num.create("scalarRaw", "scalarRaw", MFnNumericData::kDouble, 0.0);
+    raw_array(num);
+
+    MObject rvx = num.create("vectorRawX", "vectorRawX", MFnNumericData::kDouble, 0.0);
+    MObject rvy = num.create("vectorRawY", "vectorRawY", MFnNumericData::kDouble, 0.0);
+    MObject rvz = num.create("vectorRawZ", "vectorRawZ", MFnNumericData::kDouble, 0.0);
+    aRaw[1] = num.create("vectorRaw", "vectorRaw", rvx, rvy, rvz);
+    raw_array(num);
+
+    MObject rqx = num.create("quatRawX", "quatRawX", MFnNumericData::kDouble, 0.0);
+    MObject rqy = num.create("quatRawY", "quatRawY", MFnNumericData::kDouble, 0.0);
+    MObject rqz = num.create("quatRawZ", "quatRawZ", MFnNumericData::kDouble, 0.0);
+    MObject rqw = num.create("quatRawW", "quatRawW", MFnNumericData::kDouble, 1.0);
+    aRaw[2] = num.create("quatRaw", "quatRaw", rqx, rqy, rqz, rqw);
+    raw_array(num);
+
+    aRaw[3] = mat.create("matrixRaw", "matrixRaw", MFnMatrixAttribute::kDouble);
+    raw_array(mat);
+
+    MObject rex = unit.create("eulerRawX", "eulerRawX", MFnUnitAttribute::kAngle, 0.0);
+    MObject rey = unit.create("eulerRawY", "eulerRawY", MFnUnitAttribute::kAngle, 0.0);
+    MObject rez = unit.create("eulerRawZ", "eulerRawZ", MFnUnitAttribute::kAngle, 0.0);
+    aRaw[4] = num.create("eulerRaw", "eulerRaw", rex, rey, rez);
+    raw_array(num);
+
+    aRaw[5] = unit.create("angleRaw", "angleRaw", MFnUnitAttribute::kAngle, 0.0);
+    raw_array(unit);
+
     // how many times this node computed (diagnostics: written by compute, never dirtied)
     aEvaluations = num.create("evaluations", "evaluations", MFnNumericData::kInt, 0);
     num.setWritable(false);
@@ -832,7 +901,8 @@ MStatus RigExpression::initialize()
 
     const std::vector<MObject*> inputs = {&aProgram, &aConstants, &aScalarIn, &aVectorIn, &aAngleIn,
                                           &aEulerIn, &aQuatIn, &aMatrixIn, &aTimeIn};
-    const std::vector<MObject*> outputs = {&aScalarOut, &aVectorOut, &aQuatOut, &aMatrixOut, &aEulerOut, &aAngleOut};
+    const std::vector<MObject*> outputs = {&aScalarOut, &aVectorOut, &aQuatOut, &aMatrixOut, &aEulerOut, &aAngleOut,
+                                           &aRaw[0], &aRaw[1], &aRaw[2], &aRaw[3], &aRaw[4], &aRaw[5]};
     for (MObject* a : inputs)
         addAttribute(*a);
     for (MObject* a : outputs)
@@ -847,8 +917,14 @@ MStatus RigExpression::initialize()
 MStatus RigExpression::compute(const MPlug& plug, MDataBlock& block)
 {
     const MObject attr = top_attribute(plug);
-    if (attr != aScalarOut && attr != aVectorOut && attr != aQuatOut && attr != aMatrixOut && attr != aEulerOut &&
-        attr != aAngleOut)
+    const MObject* const guarded[6] = {&aScalarOut, &aVectorOut, &aQuatOut, &aMatrixOut, &aEulerOut, &aAngleOut};
+    bool known = false;
+    for (int kind = 0; kind < 6 && !known; ++kind) {
+        known = attr == *guarded[kind];
+        if (!known && attr == aRaw[kind])
+            known = raw_[kind] = true;      // a raw twin asked for: written from now on
+    }
+    if (!known)
         return MS::kUnknownParameter;
 
     // every input pulled before the registers are touched
@@ -897,37 +973,55 @@ MStatus RigExpression::compute(const MPlug& plug, MDataBlock& block)
     const int nq = field(8), nm = field(9), ne = field(10), na = field(11);
     const std::vector<Reg>& r = regs_;
     const int* outs = &program_[header() + n * 5];
-    write_outputs(block, aScalarOut, ns, [&](int k, MDataHandle& h) { h.setDouble(r[outs[k]][0]); });
-    write_outputs(block, aVectorOut, nv, [&](int k, MDataHandle& h) {
-        const Reg& v = r[outs[ns + k]];
-        h.set3Double(v[0], v[1], v[2]);
-    });
-    if (v2) {
-        const int* oq = outs + ns + nv;
-        const int* om = oq + nq;
-        const int* oe = om + nm;
-        const int* oa = oe + ne;
-        write_outputs(block, aQuatOut, nq, [&](int k, MDataHandle& h) {
-            const Reg4& x = regs4_[oq[k]];
-            h.set4Double(x[0], x[1], x[2], x[3]);
-        });
-        write_outputs(block, aMatrixOut, nm, [&](int k, MDataHandle& h) {
-            const double* x = regs16_[om[k]].v;
-            const double rows[4][4] = {{x[0], x[1], x[2], x[3]}, {x[4], x[5], x[6], x[7]},
-                                       {x[8], x[9], x[10], x[11]}, {x[12], x[13], x[14], x[15]}};
-            h.setMMatrix(MMatrix(rows));
-        });
-        write_outputs(block, aEulerOut, ne, [&](int k, MDataHandle& h) {
-            const Reg& v = r[oe[k]];
-            h.set3Double(v[0] * RAD, v[1] * RAD, v[2] * RAD);
-        });
-        write_outputs(block, aAngleOut, na, [&](int k, MDataHandle& h) {
-            h.setMAngle(MAngle(r[oa[k]][0] * RAD, MAngle::kRadians));
-        });
-    } else {
-        for (const MObject* a : {&aQuatOut, &aMatrixOut, &aEulerOut, &aAngleOut})
-            block.outputArrayValue(*a).setAllClean();
-    }
+    const int* oq = outs + ns + nv;
+    const int* om = oq + nq;
+    const int* oe = om + nm;
+    const int* oa = oe + ne;
+    // The six outputs of one family: the guarded ones (guard 3: nothing written is nan or
+    // inf: `written`, or the identity), then, of the raw twins, those asked for (as computed)
+    auto write_family = [&](const MObject* const* attrs, bool guard, const bool* wanted) {
+        auto value = [guard](double x) { return guard ? written(x) : x; };
+        if (!wanted || wanted[0])
+            write_outputs(block, *attrs[0], ns, [&](int k, MDataHandle& h) { h.setDouble(value(r[outs[k]][0])); });
+        if (!wanted || wanted[1])
+            write_outputs(block, *attrs[1], nv, [&](int k, MDataHandle& h) {
+                const Reg& v = r[outs[ns + k]];
+                h.set3Double(value(v[0]), value(v[1]), value(v[2]));
+            });
+        if (!v2) {
+            for (int kind = 2; kind < 6; ++kind)
+                if (!wanted || wanted[kind])
+                    block.outputArrayValue(*attrs[kind]).setAllClean();
+            return;
+        }
+        if (!wanted || wanted[2])
+            write_outputs(block, *attrs[2], nq, [&](int k, MDataHandle& h) {
+                const Reg4& x = regs4_[oq[k]];
+                if (!guard || all_finite(x.data(), 4))
+                    h.set4Double(x[0], x[1], x[2], x[3]);
+                else
+                    h.set4Double(0.0, 0.0, 0.0, 1.0);
+            });
+        if (!wanted || wanted[3])
+            write_outputs(block, *attrs[3], nm, [&](int k, MDataHandle& h) {
+                const double* x = !guard || all_finite(regs16_[om[k]].v, 16) ? regs16_[om[k]].v : IDENTITY;
+                const double rows[4][4] = {{x[0], x[1], x[2], x[3]}, {x[4], x[5], x[6], x[7]},
+                                           {x[8], x[9], x[10], x[11]}, {x[12], x[13], x[14], x[15]}};
+                h.setMMatrix(MMatrix(rows));
+            });
+        if (!wanted || wanted[4])
+            write_outputs(block, *attrs[4], ne, [&](int k, MDataHandle& h) {
+                const Reg& v = r[oe[k]];
+                h.set3Double(value(v[0]) * RAD, value(v[1]) * RAD, value(v[2]) * RAD);
+            });
+        if (!wanted || wanted[5])
+            write_outputs(block, *attrs[5], na, [&](int k, MDataHandle& h) {
+                h.setMAngle(MAngle(value(r[oa[k]][0]) * RAD, MAngle::kRadians));
+            });
+    };
+    const MObject* const raw[6] = {&aRaw[0], &aRaw[1], &aRaw[2], &aRaw[3], &aRaw[4], &aRaw[5]};
+    write_family(guarded, true, nullptr);
+    write_family(raw, false, raw_);
     count(block, aEvaluations);
     return MS::kSuccess;
 }
@@ -947,7 +1041,7 @@ const NodeType NODE_TYPES[] = {
 
 MStatus initializePlugin(MObject obj)
 {
-    MFnPlugin plugin(obj, "rig", "1.2", "Any");
+    MFnPlugin plugin(obj, "rig", "1.3", "Any");
     const int count = int(sizeof(NODE_TYPES) / sizeof(NODE_TYPES[0]));
     for (int i = 0; i < count; ++i) {
         const NodeType& t = NODE_TYPES[i];

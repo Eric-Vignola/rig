@@ -111,7 +111,10 @@ class TestValues(_Case):
             "min_max": (lambda: F.max([A.tx, B.tx, 1]) - F.min([A.tx, B.tx]), 1.5 - 0.5),
             "lerp": (lambda: rig.lerp(A.tx, B.tx, A.w), a[0] + (b[0] - a[0]) * w),
             "trig": (lambda: T.sind(A.tx * 20) + T.atan2(A.ty, B.ty), np.sin(np.deg2rad(30)) + np.arctan2(a[1], b[1])),
-            "div_zero": (lambda: A.tx / (B.tx - 0.5), np.inf),
+            # (inside the node a division by zero is inf, so a clamp of it is its bound; what
+            # leaves the node is never inf or nan: 0, `TestGuards`)
+            "div_zero": (lambda: A.tx / (B.tx - 0.5), 0.0),
+            "div_zero_clamped": (lambda: F.clamp(A.tx / (B.tx - 0.5), 0, 10), 10.0),
             "dot_length": (lambda: V.dot(A.t, B.t) + V.length(A.t - B.t), a @ b + np.linalg.norm(a - b)),
             "dist": (lambda: V.dist(A.t, B.t), np.linalg.norm(a - b)),
             "component": (lambda: (A.t * 2).y, a[1] * 2),
@@ -1023,6 +1026,9 @@ class TestEveryFunction(_MatrixCase):
                 with self.subTest(key, call=i):
                     network, fused, made = self.built(build)
                     self.assertEqual(made, ["rigExpression"])
+                    # (where rig's network gives nan or inf, a negative number to a fractional
+                    # power in elerp say, the fused node writes 0: none of its outputs is one)
+                    network = np.nan_to_num(network, nan=0.0, posinf=0.0, neginf=0.0)
                     np.testing.assert_allclose(fused, network, atol=1e-5, rtol=0)
 
     def calls(self) -> dict:
@@ -1421,7 +1427,7 @@ class TestUnfuse(_MatrixCase):
     def test_scalars_and_vectors(self):
         # Maya's nodes' rules, where the fused node computes numpy's: a mod of a negative
         # number, a round half, x / 0. Unfused, they are rig's network's
-        rules = ("mod", "round_half_even", "div_zero")
+        rules = ("mod", "round_half_even", "div_zero", "div_zero_clamped")
         for name in self.value_cases():
             if name in rules:
                 continue
@@ -1441,7 +1447,7 @@ class TestUnfuse(_MatrixCase):
                 rig.unfuse()
                 driver = cmds.listConnections("out.tx", source=True, destination=False)[0]
                 self.assertEqual(cmds.nodeType(driver), network[1])
-                if name == "div_zero":
+                if name in ("div_zero", "div_zero_clamped"):
                     continue    # Maya's divide leaves its output stale: what it held before
                 self.assertNotEqual(fused, network[0])
                 self.assertEqual(cmds.getAttr("out.tx"), network[0])
@@ -1500,7 +1506,7 @@ class TestUnfuse(_MatrixCase):
             self.out.ty << x + self.b.ty                     # reads one's output
         self.assertEqual(sorted(self.fused_nodes()), ["one", "two"])
         self.assertEqual(cmds.listConnections("two.scalarIn", source=True, plugs=True),
-                         ["one.scalarOut[0]", "b.translateY"])
+                         ["one.scalarRaw[0]", "b.translateY"])   # (a fused node reads the raw twin)
         expected = cmds.getAttr("out.tx"), cmds.getAttr("out.ty")
         rig.unfuse("one")
         self.assertEqual(self.fused_nodes(), ["two"])
@@ -1895,7 +1901,7 @@ class TestReuse(_Case):
         self.block()
         with rig.fuse("later"):
             self.out4.t << (self.left.t + self.right.t) * 2
-        self.assertEqual(self.reads("later"), ["calc.vectorOut[0]"])
+        self.assertEqual(self.reads("later"), ["calc.vectorRaw[0]"])     # (a fused node: the raw twin)
         self.assertEqual(cmds.getAttr("out4.t")[0], (10.0, 14.0, 18.0))
         self.no_cycle()
 
@@ -2445,6 +2451,164 @@ class TestHandle(_Case):
         self.assertFalse(io)
         self.assertAlmostEqual(cmds.getAttr("out.rx"), 6.5)
         self.assertAlmostEqual(cmds.getAttr("out.ry"), -4.0)
+
+
+class TestGuards(_Case):
+    """The three guards on numpy that keep a nan out of the scene (rig.mll 1.3): asin and
+    acos clamp their input to [-1, 1], as Maya's nodes do; normalize of a zero vector is the
+    zero vector; no output is nan or inf (0, or the identity for a quaternion and a matrix),
+    while inside the node the math stays numpy's"""
+
+    def inputs(self):
+        super().inputs()
+        cmds.addAttr("a", longName="zero", attributeType="double", keyable=True)
+        self.out2 = Node.create("transform", name="out2")
+
+    def test_asin_and_acos_clamp_their_input(self):
+        cases = {
+            "acosd": (T.acosd, lambda x: np.degrees(np.arccos(np.clip(x, -1, 1)))),
+            "asind": (T.asind, lambda x: np.degrees(np.arcsin(np.clip(x, -1, 1)))),
+            "acos":  (T.acos,  lambda x: np.arccos(np.clip(x, -1, 1))),
+            "asin":  (T.asin,  lambda x: np.arcsin(np.clip(x, -1, 1))),
+        }
+        with rig.fuse():
+            for name, (function, _) in cases.items():
+                Node.create("transform", name=name).tx << function(self.a.k)
+        self.assertEqual(len(self.fused_nodes()), 1)
+        # (1.0000000000000002: what the dot product of two unit vectors rounds to)
+        for x in (2.0, 1.0000000000000002, -1.0000000000000002, -2.0, 0.3):
+            cmds.setAttr("a.k", x)
+            for name, (_, reference) in cases.items():
+                with self.subTest(name, x=x):
+                    self.assertAlmostEqual(cmds.getAttr(f"{name}.tx"), reference(x), places=12)
+
+    def test_normalize_of_a_zero_vector_is_the_zero_vector(self):
+        cmds.setAttr("a.t", 0, 0, 0)
+        with rig.fuse():
+            self.out.t   << self.b.t + V.normalize(self.a.t) * 2
+            self.out2.tx << V.dot(self.a.t, self.b.t, normalize=True) + 1
+        np.testing.assert_allclose(cmds.getAttr("out.t")[0], [0.5, 4.0, -1.0], atol=1e-12)   # b.t, as it is
+        self.assertEqual(cmds.getAttr("out2.tx"), 1.0)
+        cmds.setAttr("a.t", 0, 3, 4)
+        np.testing.assert_allclose(cmds.getAttr("out.t")[0], [0.5, 5.2, 0.6], atol=1e-12)
+
+    def test_no_output_is_nan_or_inf(self):
+        zero, k = self.a.zero, self.a.k
+        builds = {
+            "x / 0": lambda: k / zero, "-x / 0": lambda: -k / zero, "0 / 0": lambda: zero / zero,
+            "x % 0": lambda: k % zero, "log(0)": lambda: F.log(zero), "sqrt(-1)": lambda: F.sqrt(zero - 1),
+            "exp(1000)": lambda: F.exp(k * 500),
+        }
+        compose = Node(cmds.createNode("composeMatrix", name="compose"))
+        with rig.fuse("guarded") as io:
+            for i, build in enumerate(builds.values()):
+                Node.create("transform", name=f"holder{i}").tx << build()
+            self.out.t                   << [k / zero, k, zero / zero]  # a vector: channel by channel
+            self.out2.rx                 << k / zero                    # an angle
+            self.out2.offsetParentMatrix << rig.matrix.compose(translate=[k / zero, 1, 2])
+            compose.inputQuat            << rig.quaternion.from_axis_angle(self.b.t, k / zero)
+        self.assertEqual(self.fused_nodes(), [str(io)])
+        for i, name in enumerate(builds):
+            with self.subTest(name):
+                self.assertEqual(cmds.getAttr(f"holder{i}.tx"), 0.0)
+        self.assertEqual(cmds.getAttr("out.t")[0], (0.0, 2.0, 0.0))
+        self.assertEqual(cmds.getAttr("out2.rx"), 0.0)
+        self.assertEqual(cmds.getAttr("out2.offsetParentMatrix"), [float(i % 5 == 0) for i in range(16)])
+        self.assertEqual(cmds.getAttr("compose.inputQuat")[0], (0.0, 0.0, 0.0, 1.0))
+        cmds.setAttr("a.zero", 4.0)                                    # and a number again once it can be
+        self.assertEqual(cmds.getAttr("holder0.tx"), 0.5)
+        self.assertEqual(cmds.getAttr("out.t")[0], (0.5, 2.0, 1.0))
+        self.assertEqual(cmds.getAttr("out2.offsetParentMatrix")[12:15], [0.5, 1.0, 2.0])
+
+    def test_inside_the_node_the_math_is_numpys(self):
+        zero, k = self.a.zero, self.a.k
+        with rig.fuse():
+            self.out.tx << F.clamp(k / zero, 0, 10)           # inf, clamped: its bound
+            self.out.ty << condition(zero == 0, 5, k / zero)  # the branch not taken is no matter
+            self.out.tz << T.atand(k / zero)                  # atan(inf)
+        self.assertEqual(len(self.fused_nodes()), 1)
+        np.testing.assert_allclose(cmds.getAttr("out.t")[0], [10.0, 5.0, 90.0], atol=1e-12)
+
+    def test_a_line_gives_the_same_alone_and_beside_another(self):
+        """alone in its block a line is Maya's own node (the one-op rule), which clamps; beside
+        another it is in the fused node, which clamps too (it gave nan before rig.mll 1.3)"""
+        _fuse.ONE_OP_RULE = True
+        with rig.fuse("alone"):
+            self.out.tx << T.acosd(self.a.k)                           # k is 2
+        with rig.fuse("beside"):
+            self.out2.tx << T.acosd(self.a.w + 1.75)                   # 2 as well
+            self.out2.ty << self.a.tx * 3 + 1
+
+        def driver(plug):
+            return cmds.nodeType(cmds.listConnections(plug, source=True, skipConversionNodes=True)[0])
+
+        self.assertNotEqual(driver("out.tx"), "rigExpression")
+        self.assertEqual(driver("out2.tx"), "rigExpression")
+        self.assertEqual((cmds.getAttr("out.tx"), cmds.getAttr("out2.tx")), (0.0, 0.0))
+
+    def linked(self):
+        """two blocks: ``first`` outputs x / zero, ``later`` builds on the same value and so
+        reads ``first`` (rig reuses a block's outputs after it)"""
+        zero, k = self.a.zero, self.a.k
+        with rig.fuse("first"):
+            self.out.tx << k / zero
+            self.out2.t << self.b.t / zero
+        with rig.fuse("later"):
+            self.out.ty << F.clamp(k / zero, 0, 10) + self.b.ty
+            self.out.tz << T.atand(k / zero)
+            self.out2.s << F.clamp(self.b.t / zero, -1, 1)
+
+    def test_between_fused_nodes_nothing_is_altered(self):
+        """a fused node reads another's value off its raw twin (``scalarRaw[]`` ...), which is
+        not guarded: an inf one node computes is an inf for the next, and a clamp of it its
+        bound, whichever node rig placed it in (the guarded output gave the next node 0)"""
+        self.linked()
+        self.assertEqual(sorted(self.fused_nodes()), ["first", "later"])
+        self.assertEqual(cmds.listConnections("later.scalarIn", source=True, plugs=True),
+                         ["first.scalarRaw[0]", "b.translateY"])
+        self.assertEqual(cmds.listConnections("later.vectorIn", source=True, plugs=True), ["first.vectorRaw[0]"])
+        self.assertEqual(cmds.getAttr("out.t")[0], (0.0, 14.0, 90.0))  # 0: what Maya is given
+        self.assertEqual(cmds.getAttr("out2.t")[0], (0.0, 0.0, 0.0))
+        self.assertEqual(cmds.getAttr("out2.s")[0], (1.0, 1.0, -1.0))  # b.t is (0.5, 4, -1)
+        cmds.setAttr("a.zero", 4.0)
+        self.assertEqual(cmds.getAttr("out.t")[0], (0.5, 4.5, np.degrees(np.arctan(0.5))))
+
+    def test_two_nodes_of_one_block_read_each_other_as_they_are(self):
+        from unittest import mock
+        zero, k = self.a.zero, self.a.k
+        with mock.patch.object(_fuse, "MAX_INSTRUCTIONS", 1):                  # a node per value
+            with rig.fuse("split") as io:
+                ratio = k / zero
+                self.out.tx << ratio
+                self.out.ty << F.clamp(ratio, 0, 10)
+        self.assertEqual(len(io.nodes), 2)
+        self.assertEqual((cmds.getAttr("out.tx"), cmds.getAttr("out.ty")), (0.0, 10.0))
+
+    def test_a_raw_link_is_saved_and_unfused(self):
+        raw = ("scalarRaw", "vectorRaw", "quatRaw", "matrixRaw", "eulerRaw", "angleRaw")
+        self.linked()
+        path = os.path.join(tempfile.mkdtemp(), "linked.ma")
+        cmds.file(rename=path)
+        cmds.file(save=True, type="mayaAscii", force=True)
+        cmds.file(new=True, force=True)
+        cmds.file(path, open=True, force=True)
+        self.assertEqual(cmds.getAttr("out.t")[0], (0.0, 14.0, 90.0))
+        self.assertEqual(cmds.getAttr("out2.s")[0], (1.0, 1.0, -1.0))
+        cmds.setAttr("a.zero", 4.0)                                           # (numbers Maya's nodes agree on)
+        expected = [cmds.getAttr(f"{n}.{a}")[0] for n in ("out", "out2") for a in ("t", "s")]
+        for order in (("first", "later"), ("later", "first")):
+            with self.subTest(order=order):
+                cmds.file(path, open=True, force=True)
+                cmds.setAttr("a.zero", 4.0)
+                for name in order:
+                    rig.unfuse(name)
+                    got = [cmds.getAttr(f"{n}.{a}")[0] for n in ("out", "out2") for a in ("t", "s")]
+                    np.testing.assert_allclose(got, expected, atol=1e-6)
+                    for node in self.fused_nodes():                           # no Maya node reads a raw twin
+                        for attr in raw:
+                            readers = cmds.listConnections(f"{node}.{attr}", source=False, destination=True) or []
+                            self.assertEqual([r for r in readers if cmds.nodeType(r) != "rigExpression"], [])
+                self.assertEqual(self.fused_nodes(), [])
 
 
 class TestNoPlugin(MayaTestCase):

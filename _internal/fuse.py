@@ -57,7 +57,13 @@ them by its layout (`call`).
 
 The semantics are numpy's, in doubles: ``%`` is floor modulo, ``round`` is half to
 even, a division by zero is inf or nan, a test is true when it is not 0. They may
-differ from rig's network where Maya's nodes have rules of their own.
+differ from rig's network where Maya's nodes have rules of their own. Three guards
+keep a nan out of the scene (rig.mll 1.3, the header of rig.cpp): ``asin`` / ``acos``
+clamp their input to [-1, 1], as Maya's nodes do; ``normalize`` of a zero vector is the
+zero vector; and no output is nan or inf: one that would be is 0 (a quaternion or a
+matrix, the identity). Inside a node the math is untouched: ``clamp(1 / x, 0, 10)`` is
+10 at ``x = 0``; and between two fused nodes too, as one reads the other's value off
+its raw twin (`RAW_ATTR`: ``scalarRaw[]`` ...), which is not guarded.
 
 rig's own functions fuse inside too (decision 5). A function in `TRACE` (the easing
 curves, ``interpolate.sequence`` / ``interp`` / ``smootherstep``, vector ``elerp`` /
@@ -107,6 +113,12 @@ OP = dict(LOAD_S=1, LOAD_V=2, LOAD_A=3, CONST_S=4, CONST_V=5, SPLAT=6, COMP=7, M
 FILE = {"s": 0, "a": 0, "v": 0, "e": 0, "q": 1, "m": 2}
 OUT_ATTR = {"s": "scalarOut", "v": "vectorOut", "q": "quatOut", "m": "matrixOut", "e": "eulerOut", "a": "angleOut"}
 OUT_KINDS = ("s", "v", "q", "m", "e", "a")          # the program's order
+# each output's raw twin: the same value as the program computed it, a nan or an inf too,
+# where the output itself is never one (rig.cpp's guard 3). A fused node reads another's
+# value there, so that between two fused nodes nothing is altered; a Maya plug is driven
+# by the output
+RAW_ATTR = {"scalarOut": "scalarRaw", "vectorOut": "vectorRaw", "quatOut": "quatRaw", "matrixOut": "matrixRaw",
+            "eulerOut": "eulerRaw", "angleOut": "angleRaw"}
 _LOAD = {"s": "LOAD_S", "v": "LOAD_V", "a": "LOAD_A", "e": "LOAD_E", "q": "LOAD_Q", "m": "LOAD_M"}
 MATH_TYPE = {"s": "scalar", "a": "scalar", "v": "vector", "e": "euler", "q": "quaternion", "m": "matrix"}
 SCALARS, VECTORS = frozenset("sa"), frozenset("ve")
@@ -145,8 +157,10 @@ _PLUGIN_EXT = {"win32": ".mll", "darwin": ".bundle"}.get(sys.platform, ".so")
 _BUILD_SCRIPT = {"win32": "plugins/build.bat", "darwin": "plugins/build.sh"}.get(sys.platform)
 NODE_TYPE   = "rigExpression"
 # rig.mll's lowest version this program format runs on (version 2: matrices and quaternions;
-# 1.2: Q_ARC, angleBetween's turn, TIME, rig.functions.frame(), and RAND, rig.random)
-MIN_VERSION = (1, 2)
+# 1.2: Q_ARC, angleBetween's turn, TIME, rig.functions.frame(), and RAND, rig.random), and
+# whose results are the ones documented (1.3: asin / acos clamp, normalize of a zero vector
+# is the zero vector, no output is nan or inf: the three guards of rig.cpp's header)
+MIN_VERSION = (1, 3)
 
 
 _ITERATOR = collections.abc.Iterator
@@ -2200,6 +2214,10 @@ class _Record:
             p = self.plugs[k] = getattr(self.node, attr)[index]
         return p
 
+    def raw(self, attr: str, index: int):
+        """the raw twin of ``output(attr, index)``: what another fused node reads (`RAW_ATTR`)"""
+        return self.output(RAW_ATTR[attr], index)
+
 
 def _owner(e: Fused):
     """(owner, attr, index) of the output that computes ``e``: a node of the open blocks
@@ -2351,7 +2369,7 @@ def _compile(record: _Record, new: dict, inline: bool = False, refuses=None) -> 
                     # read from the other node's output, through the input of its kind
                     other, attr, index = owner
                     slot = e.kind
-                    plug = other.output(attr, index)
+                    plug = other.raw(attr, index)        # (a fused node's value as it is)
                     i = load(slot, ("out", other.serial, attr, index), plug)
                     emit(OP[_LOAD[slot]], new_register(e), i)
                     loads[e.key] = str(plug)
@@ -2706,7 +2724,7 @@ def _reads(pending: list, refuses=None) -> list:
         elif e.args:
             owner = _owner_for(e, refuses)
             if owner is not None and not (refuses and refuses(owner[0])):
-                out.append(owner[0].output(owner[1], owner[2]))
+                out.append(owner[0].raw(owner[1], owner[2]))
             else:
                 stack.extend(e.args)
     return out
@@ -3435,6 +3453,8 @@ class _External:
     def output(self, attr: str, index: int):
         return getattr(self.node, attr)
 
+    raw = output           # (a Maya node: its plug is all there is)
+
 
 class _Rebuilt:
     """a value the one-op rule made rig's network (`_one_op_rule`): a value built on it
@@ -3454,6 +3474,8 @@ class _Rebuilt:
 
     def output(self, attr: str, index: int):
         return self.out
+
+    raw = output           # (rig's network: its plug is all there is)
 
 
 class _Ended:
@@ -3479,6 +3501,9 @@ class _Ended:
         if p is None:
             p = self.plugs[k] = getattr(self.node, attr)[index]
         return p
+
+    def raw(self, attr: str, index: int):
+        return self.output(RAW_ATTR[attr], index)
 
 
 _KIND_OF_ATTR = {attr: kind for kind, attr in OUT_ATTR.items()}
