@@ -2195,14 +2195,28 @@ class TestOneOpRule(_Case):
         self.assertEqual({self.driver(f"out.{c}") for c in ("t", "r", "s", "shear")}, {"decomposeMatrix"})
         np.testing.assert_allclose(cmds.getAttr("out.r")[0], [30, 45, 0], atol=1e-9)
 
-    def test_what_needs_a_unit_conversion_or_more_nodes_stays_fused(self):
+    def test_conversion_nodes_do_not_count(self):
+        # rig's node and the conversions Maya inserts play back as fast as a one-op
+        # rigExpression or faster: an angle out, an angle in and out, time in
+        cmds.setAttr("a.rx", 10)
         with rig.fuse():
             self.out.rx << self.a.tx * 10           # rig's node and a unitConversion
         with rig.fuse():
+            self.out.ry << self.a.rx * 2            # a unitConversion in and one out
+        with rig.fuse():
+            self.out.sx << Node("time1").outTime * 2   # a timeToUnitConversion in
+        self.assertEqual(self.fused_nodes(), [])
+        self.assertEqual(len(cmds.ls(type="unitConversion")), 3)
+        self.assertEqual(len(cmds.ls(type="timeToUnitConversion")), 1)
+        cmds.currentTime(5)
+        self.assertAlmostEqual(cmds.getAttr("out.rx"), 15.0)
+        self.assertAlmostEqual(cmds.getAttr("out.ry"), 20.0)
+        self.assertAlmostEqual(cmds.getAttr("out.sx"), 10.0)
+
+    def test_more_nodes_stay_fused(self):
+        with rig.fuse():
             self.out.t << F.clamp(self.a.t, 0, 1)   # rig's vector clamp: several nodes
-        self.assertEqual(self.driver("out.rx"), "rigExpression")
         self.assertEqual(self.driver("out.t"), "rigExpression")
-        self.assertEqual(cmds.ls(type="unitConversion"), [])
 
     def test_a_value_used_after_the_block_reads_the_node(self):
         with rig.fuse():

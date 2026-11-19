@@ -844,43 +844,35 @@ class _Added:
         om.MMessage.removeCallback(self.callback)
         return False
 
-    def names(self) -> list:
+    def names(self, conversions: bool = True) -> list:
+        """the names of the nodes added that still exist; ``conversions=False``: but the
+        conversion nodes Maya inserts on a connection (`CONVERSIONS`)"""
         out = []
         for h in self.handles:
             if h.isValid() and h.isAlive():
                 node = h.object()
+                if not conversions and om.MFnDependencyNode(node).typeName in CONVERSIONS:
+                    continue
                 out.append(om.MDagPath.getAPathTo(node).partialPathName() if node.hasFn(om.MFn.kDagNode)
                            else om.MFnDependencyNode(node).name())
         return out
 
 
-def _is_angle(value) -> bool:
-    """True for a plug of angles (a rotate, an rx, a decomposition's outputRotate ...)"""
-    mplug = getattr(value, "__dict__", {}).get("_mplug")
-    if mplug is None:
-        return False
-    attr = mplug.child(0).attribute() if mplug.isCompound else mplug.attribute()
-    return attr.hasFn(om.MFn.kUnitAttribute) and om.MFnUnitAttribute(attr).unitType() == om.MFnUnitAttribute.kAngle
-
-
-def _conversions(wired: dict, made: dict) -> int:
-    """the unitConversions the connections will make: an angle output (angleOut, eulerOut)
-    whose rebuilt value is a plug of no angles, one per destination"""
-    from rig._internal.plug import Plug
-    count = 0
-    for key, destinations in wired.items():
-        value = made[key]
-        if key[0] in "ae" and isinstance(value, Plug) and not _is_angle(value):
-            count += len(destinations)
-    return count
+# the nodes Maya inserts on its own on a connection between two units (angle, distance,
+# time), or between a unit and a plain number: each multiplies by a factor. The one-op
+# rule does not count them: rig's node and its conversions play back as fast as a
+# one-op rigExpression or faster (an angle written into a rotate: a lerp and a
+# unitConversion), and a rigExpression keeps a time plug's conversion anyway
+CONVERSIONS = frozenset(("unitConversion", "timeToUnitConversion", "unitToTimeConversion"))
 
 
 @statement
 def one_op(name: str, budget: int = 1):
     """The one-op rule (``rig.fuse()``, as its block ends): the rigExpression ``name``
-    back into rig's network when that network is at most ``budget`` nodes (and the
-    unitConversions its connections will make). ``{(kind, index): the value that drives
-    the output's destinations now}`` then; else None, and the node is as it was (what the
+    back into rig's network when that network is at most ``budget`` nodes, not counting
+    the conversion nodes Maya inserts on its connections (`CONVERSIONS`). ``({(kind,
+    index): the value that drives the output's destinations now}, the names of the nodes
+    made but those conversions)`` then; else None, and the node is as it was (what the
     trial made is deleted). A rebuild that fails keeps the node too: the rule never
     breaks a block."""
     fn, name = _node_fn(name)
@@ -892,7 +884,7 @@ def one_op(name: str, budget: int = 1):
         try:
             rebuild = _Rebuild([values[key] for key in wired])
             made = {key: rebuild.value(values[key]) for key in wired}
-            fits = len(added.names()) + _conversions(wired, made) <= budget
+            fits = len(added.names(conversions=False)) <= budget
         except Exception:  # noqa: BLE001 (the rule never breaks a block: the node stays)
             fits = False
         if fits:
@@ -903,7 +895,7 @@ def one_op(name: str, budget: int = 1):
             journal.cmds_edit.delete(trial)
         return None
     journal.cmds_edit.delete(name)
-    return made
+    return made, added.names(conversions=False)
 
 
 def unfuse(*nodes):

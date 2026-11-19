@@ -4667,12 +4667,15 @@ A fused value is built when it is used, not when it is written, so:
   nodes. A block with no name makes `fused1`, `fused2` ...
 * As the block ends, a node of it whose network rig makes in one node
   becomes that node (the one-op rule): `dst.tx << a.tx + b.tx` alone in a
-  block leaves a `sum`, `node << matrix` one `decomposeMatrix`. A node rig's
-  network makes in more stays fused: two values of one op each, a vector
-  clamp, a scalar written into an angle (rig's node needs a
-  `unitConversion`). The rule runs as a block ends, under
-  `set_options(fuse=True)` too; what the option alone fuses is in no
-  block, and stays fused.
+  block leaves a `sum`, `node << matrix` one `decomposeMatrix`,
+  `dst.rx << a.tx * 2` a `lerp` and the `unitConversion` Maya inserts into
+  the rotate. The conversion nodes Maya inserts on a connection
+  (`unitConversion`, `timeToUnitConversion`, `unitToTimeConversion`) do not
+  count: rig's node and its conversions play back as fast as a one-op
+  `rigExpression`, or faster. A node rig's network makes in more stays
+  fused: two values of one op each, a vector clamp. The rule runs as a
+  block ends, under `set_options(fuse=True)` too; what the option alone
+  fuses is in no block, and stays fused.
 * After the block, its nodes' outputs are reused wherever rig sees where a
   value goes:
   * The block's value, connected later (`out3.t << total`), reads the

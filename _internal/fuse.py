@@ -129,10 +129,11 @@ DEG, RAD = 57.29577951308232, 0.017453292519943295
 # parallel (100 riders: 4 nodes at 5,000, 13 at 1,000)
 MAX_INSTRUCTIONS = 10000
 # the one-op rule: as a block ends, a node of it whose network rig makes in at most
-# ONE_OP_NODES nodes (the unitConversions its connections need counted) becomes that
-# network: a one-op rigExpression is slower than Maya's own node in EM serial and no
-# faster anywhere, and the native node reads as rig's network does. A node of more than
-# _ONE_OP_INSTRUCTIONS computing instructions is not tried (one decomposition is five)
+# ONE_OP_NODES nodes (not counting the conversion nodes Maya inserts on its connections,
+# `rig._internal.unfuse.CONVERSIONS`) becomes that network: a one-op rigExpression is
+# slower than Maya's own node in EM serial and no faster anywhere, with the node's
+# unitConversions too, and the native node reads as rig's network does. A node of more
+# than _ONE_OP_INSTRUCTIONS computing instructions is not tried (one decomposition is five)
 ONE_OP_RULE = True
 ONE_OP_NODES = 1
 _ONE_OP_INSTRUCTIONS = 8
@@ -3530,28 +3531,35 @@ def _computing(record: "_Record") -> int:
     return sum(1 for j in range(0, len(body), 5) if body[j] not in _NOT_COMPUTING)
 
 
-def _one_op_rule(records: list) -> None:
+def _one_op_rule(records: list) -> list:
     """As a block ends: each of its nodes that rig's network makes in at most
     `ONE_OP_NODES` nodes becomes that network (`rig._internal.unfuse.one_op`). A value
     it computed, used after the block, reads that network, and so does the same value
-    written again in its top container (`_ended`)."""
+    written again in its top container (`_ended`). The names of the nodes it made (but
+    the conversion nodes Maya inserted)."""
     if not ONE_OP_RULE:
-        return
+        return []
     from rig._internal import unfuse
     plugs = _bind()[0]
+    rebuilt = []
     for record in records:
         if not record.alive() or _computing(record) > _ONE_OP_INSTRUCTIONS:
             continue
         outs = {k: list(v) for k, v in record.outs.items()}
         try:
-            made = unfuse.one_op(str(record.node), ONE_OP_NODES)
+            result = unfuse.one_op(str(record.node), ONE_OP_NODES)
         except Exception as error:  # noqa: BLE001 (the rule never breaks a block)
             cmds.warning(f"rig.fuse: the one-op rule could not rebuild {record.node}: {error}")
             continue
-        for (kind, index), plug in (made or {}).items():
+        if result is None:
+            continue
+        made, names = result
+        rebuilt += names
+        for (kind, index), plug in made.items():
             if type(plug) in plugs and index < len(outs.get(kind, ())):
                 value = outs[kind][index]
                 FUSE.ended[value.key] = (_Rebuilt(plug), "plug", 0, weakref.ref(value), record.top)
+    return rebuilt
 
 
 def _redirect(value: Fused, node, name: str) -> None:
