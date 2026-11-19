@@ -26,6 +26,8 @@ Usage::
     built = create_scene(scene)             # a Scene in memory
     again = create_scene(scene)             # a second copy beside the first
     found = create_scene(scene, uuids=True) # its nodes and shapes hold the data's uuids
+    with rig.uuids():                       # the same, for every create in the block
+        create_scene(other_scene)
 
 The word "scene" in these docstrings is the cgmath Scene; Maya's open file is "the Maya scene".
 """
@@ -56,7 +58,7 @@ _READERS = {
 }
 
 
-def create_scene(scene, parent=None, *, uuids: bool = False):
+def create_scene(scene, parent=None, *, uuids: bool | None = None):
     """Builds a cgmath Scene in the Maya scene: its nodes, meshes, blend shapes and skins, and
     its active take keyed (the module's steps).
 
@@ -64,9 +66,11 @@ def create_scene(scene, parent=None, *, uuids: bool = False):
         scene: A ``cgmath.render.Scene`` (``Scene.load_fbx(path)``), left as it was.
         parent: An existing node to build the roots under (``create_hierarchy``'s
             ``parent``); a mesh on no node goes under it too. None: the world.
-        uuids: By keyword only, a bool (anything else is a TypeError before anything is
-            made). False (the default): Maya's own uuids, so one scene builds any number
-            of times; the parts are joined by what this call made. True: every node and
+        uuids: By keyword only, a bool or None (anything else is a TypeError before
+            anything is made). None (the default): as ``with rig.uuids():`` or
+            ``rig.set_options(uuids=)`` says, False unless one does. False: Maya's own
+            uuids, so one scene builds any number of times; the parts are joined by what
+            this call made. True: every node and
             shape takes its data's uuid, so a later ``Node(uuid)`` finds them; a uuid the
             Maya scene holds already, or one the data holds twice, is then a ValueError
             before anything is made (a second copy takes ``scene.renew_uuids()`` first).
@@ -135,7 +139,7 @@ def create_scene(scene, parent=None, *, uuids: bool = False):
     return List(made)
 
 
-def load_scene(path, parent=None, *, uuids: bool = False, **flags):
+def load_scene(path, parent=None, *, uuids: bool | None = None, **flags):
     """Reads a cgmath Scene from `path` and builds it (`create_scene`).
 
     Args:

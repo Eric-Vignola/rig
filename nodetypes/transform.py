@@ -54,13 +54,14 @@ _HIERARCHY_LOAD_DOC = """Loads a hierarchy from a cgmath file (a HierarchyData):
             frame of a clip.
         container: Inside ``with container()``, whether the new nodes join the
             scope (None: yes), as for every typed create.
-        uuids: A bool (anything else is a TypeError, before the file is read),
-            as `create_hierarchy` takes it: False (the default), the nodes
-            keep the uuids Maya gives them, so a file loads any number of
-            times; True, every node made takes its data's uuid, so a file
-            loaded twice is a ValueError on the second load, before anything
-            is made (give the data fresh uuids first,
-            ``hierarchy.renew_uuids()``).
+        uuids: A bool or None (anything else is a TypeError, before the file
+            is read), as `create_hierarchy` takes it: None (the default), as
+            ``with rig.uuids():`` or ``rig.set_options(uuids=)`` says, False
+            unless one does; False, the nodes keep the uuids Maya gives them,
+            so a file loads any number of times; True, every node made takes
+            its data's uuid, so a file loaded twice is a ValueError on the
+            second load, before anything is made (give the data fresh uuids
+            first, ``hierarchy.renew_uuids()``).
 
     Returns:
         A List of the new nodes, typed (``Joint`` / ``Transform``), parents first:
@@ -454,7 +455,8 @@ def _walk_hierarchy(root: DAGNode) -> tuple[list, dict]:
 
 # what `key_hierarchy`'s flags say (`_key_flag`)
 _KEY_FLAGS = _MappingProxyType({
-    "uuids":  "True (a node of the data keys the node holding its uuid) or False (the default: by index)",
+    "uuids":  "True (a node of the data keys the node holding its uuid), False (by index) or None (the default: "
+              "as rig.uuids() or rig.set_options(uuids=) says, else False)",
     "index":  "True (the default: node i of the data keys node i, in order) or False (the one node of its name)",
     "strict": "True (the default: what cannot be keyed is a ValueError) or False (it is skipped, with a warning)",
 })
@@ -1115,7 +1117,7 @@ class Transform(DAGNode):
         parent:      Union[str, None] = None,
         *,
         world_space: bool             = False,
-        uuids:       bool             = False,
+        uuids:       bool | None      = None,
     ) -> List:
         """Creates a hierarchy from a HierarchyData object, and keys a ClipData.
 
@@ -1141,8 +1143,10 @@ class Transform(DAGNode):
                 and none is wired), and under a non-uniformly scaled one in any
                 case (it holds no shear); a ClipData's compensating joints hold
                 both, below.
-            uuids: By keyword only, a bool (anything else is a TypeError,
-                before anything is made). False (the default): every node
+            uuids: By keyword only, a bool or None (anything else is a
+                TypeError, before anything is made). None (the default): as
+                ``with rig.uuids():`` or ``rig.set_options(uuids=)`` says,
+                False unless one does. False: every node
                 keeps the uuid Maya gives it, so one hierarchy builds any
                 number of times, a twin of a live hierarchy too (below). True:
                 every node made takes its data's uuid (a recorded
@@ -1228,7 +1232,7 @@ class Transform(DAGNode):
         self,
         clip:   HierarchyData,
         *,
-        uuids:  bool          = False,
+        uuids:  bool | None   = None,
         index:  bool          = True,
         strict: bool          = True,
     ) -> List:
@@ -1248,7 +1252,9 @@ class Transform(DAGNode):
                 frame, ``start_frame + k``; a flat one a plain value, the
                 tangents Maya's global default), or a plain HierarchyData, which
                 poses the nodes, no key. It is left as it was.
-            uuids: By keyword only, a bool. False (the default): the nodes are
+            uuids: By keyword only, a bool or None. None (the default): as
+                ``with rig.uuids():`` or ``rig.set_options(uuids=)`` says,
+                False unless one does. False: the nodes are
                 paired as `index` says. True: each node of the data keys the
                 node holding its uuid, at or below this one (what a
                 `create_hierarchy` with ``uuids=True`` made, whatever its name
@@ -1316,7 +1322,7 @@ class Transform(DAGNode):
             raise TypeError(f"{method}() takes the data, not a file: ClipData.load(...) reads one")
         if not isinstance(clip, HierarchyData):
             raise TypeError(f"{method}() takes a ClipData or a HierarchyData, not a {type(clip).__name__}")
-        uuids  = _key_flag(method, "uuids",  uuids)
+        uuids  = _key_flag(method, "uuids",  _files.scoped_uuids() if uuids is None else uuids)
         index  = _key_flag(method, "index",  index)
         strict = _key_flag(method, "strict", strict)
 
@@ -1386,7 +1392,7 @@ class Transform(DAGNode):
         inputs:   tuple,
         name:     Any   = None,
         parent:   Any   = None,
-        uuids:    Any   = False,
+        uuids:    Any   = None,
         **kwargs: Any,
     ) -> DAGNode:
         """[Internal] ``Transform.create(transform_data)`` / ``Joint.create(
@@ -1396,11 +1402,14 @@ class Transform(DAGNode):
         The node the data describes (its ``node_type``: a transform, a joint, a
         locator's transform), named the data's name
         (``name=`` / ``n=`` overrides it), made at identity under ``parent=`` /
-        ``p=`` (None: the world; the data's own parent uuid is not used), given
-        the data's uuid with ``uuids=True`` (a checked bool, as
-        `create_hierarchy` takes it: a uuid a scene node holds is a ValueError
-        before anything is made; the default, ``uuids=False``, or data without
-        one, leaves the node the uuid Maya gives it), then given the data's
+        ``p=`` (None: the world; with the data's uuids, below, the scene node
+        holding the data's ``parent_uuid`` when there is one), given
+        the data's uuid with ``uuids=True`` (a checked bool or None, as
+        `create_hierarchy` takes it: None, the default, as ``with
+        rig.uuids():`` or ``rig.set_options(uuids=)`` says, False unless one
+        does; a uuid a scene node holds is a ValueError before anything is
+        made; ``uuids=False``, or data without one, leaves the node the uuid
+        Maya gives it), then given the data's
         values (as local values: scale, rotate, translate, rotate order and
         axis, visibility; a joint's orient, segment scale compensate, radius
         and draw style), its user-defined attributes, and last the attribute
@@ -1467,6 +1476,9 @@ class Transform(DAGNode):
         if kwargs:
             attrs = _attribute_keywords(made_cls.NATIVE_NODE_TYPE, kwargs, _DATA_CREATE_FLAGS, call)
         attrs.update(own)
+        if uuids and parent is None:
+            # with the data's uuids, the node goes under the node of its parent_uuid
+            parent = _files.node_of_uuid(getattr(data, "parent_uuid", None))
         parent = None if parent is None else _parent_path(parent)
         name   = data.name if name is None else name
         if uuids:
@@ -1675,7 +1687,7 @@ class Transform(DAGNode):
         parent:      Union[str, DAGNode, None] = None,
         world_space: bool                      = False,
         container:   bool | None               = None,
-        uuids:       bool                      = False,
+        uuids:       bool | None               = None,
     ):
         from cgmath.hierarchy import ClipData, HierarchyData
 

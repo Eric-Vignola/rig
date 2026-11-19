@@ -223,6 +223,7 @@ class ContainerOptions(metaclass=_ReadOnlyOptions):
     native_multi_publish:    bool = False          # if False (default), MULTI/array attrs are NOT natively published on the container -- they stay on the real functional / attributes node and ``ctn.<name>`` resolves via ``Container.__getattr__`` + the multi registry. Maya's Node Editor renders a published array alias WITHOUT indices and rejects interactive (bare-parent) fan-in connects, so publishing arrays degrades the surface. Set True once Autodesk fixes array publishing to flip multis to native publishName/bindAttr like single plugs.
     fuse:                    bool = False          # if True, everything fusable fuses, as inside ``with rig.fuse():`` (rig._internal.fuse): rig's scalar and vector math compiles into rigExpression nodes (rig's plug-in, rig.mll; without it, rig's nodes and one warning)
     constant_folding:        bool = True           # if True (default), math ops given only literal numbers return a Python value instead of building a Maya node (``abs(-5)`` -> ``5``). Set False (or use ``with force_nodes():``) so EVERY rig command materializes its node network even for all-literal inputs -- a debug/demo aid for inspecting the graph a literal call would build. Folds are never cached, so a node built under ``constant_folding=False`` and a folded scalar never collide, and dedupe of node-building calls is preserved in both modes.
+    uuids:                   bool = False          # if True, as inside ``with rig.uuids():`` (`uuids`), a create from cgmath data (``Transform.create_hierarchy``, ``Mesh.create`` ...) not given ``uuids=`` takes its data's uuids, and finds by uuid what it builds on when given no target. Off (default): Maya's own uuids, so one data builds any number of times (user decision 2026-11-13).
 
 
 def set_options(
@@ -238,6 +239,7 @@ def set_options(
     native_multi_publish:    Optional[bool] = None,
     constant_folding:        Optional[bool] = None,
     fuse:                    Optional[bool] = None,
+    uuids:                   Optional[bool] = None,
 ) -> None:
     """Set one or more global options. Unspecified args leave the current value
     unchanged. Always returns a snapshot dict of the current settings.
@@ -253,6 +255,7 @@ def set_options(
         rig.set_options(maya_version=None)         # revert to actual Maya version
         rig.set_options(constant_folding=False)    # debug: literal math builds nodes
         rig.set_options(cleanup_tags=True)         # tag nodes: cleanup() after save / reopen
+        rig.set_options(uuids=True)                # creates from data take its uuids (rig.uuids())
 
         vals = rig.get_options()                   # introspect current settings
 
@@ -287,6 +290,8 @@ def set_options(
         _write_option("native_multi_publish", native_multi_publish)
     if constant_folding is not None:
         _write_option("constant_folding", constant_folding)
+    if uuids is not None:
+        _write_option("uuids", _uuids_flag("rig.set_options", uuids))
     if fuse is not None:
         from rig._internal import fuse as _fuse
 
@@ -332,6 +337,7 @@ def get_options() -> dict:
         "native_multi_publish":    ContainerOptions.native_multi_publish,
         "constant_folding":        ContainerOptions.constant_folding,
         "fuse":                    ContainerOptions.fuse,
+        "uuids":                   ContainerOptions.uuids,
     }
 
 
@@ -390,6 +396,77 @@ def force_nodes() -> _ForceNodes:
         rig.set_options(constant_folding=False)   # ... then back to True
     """
     return _ForceNodes()
+
+
+def _uuids_flag(method: str, on: Any) -> bool:
+    """``on`` of `uuids` or ``set_options(uuids=)`` as a bool: anything else (None given to the
+    block, ``1``, ``"yes"``) is a TypeError naming `method`."""
+    import numpy as np
+
+    if not isinstance(on, (bool, np.bool_)):
+        raise TypeError(
+            f"{method}: uuids takes True (creates from data take its uuids) or False (Maya's own), not {on!r}"
+        )
+    return bool(on)
+
+
+class _Uuids:
+    """Context manager returned by :func:`uuids`: ``ContainerOptions.uuids`` set for the block,
+    the prior setting restored on exit (on an exception too), snapshotted per instance, so
+    blocks nest and compose with an outer ``set_options(uuids=...)``. Single-thread, as every
+    option."""
+
+    __slots__ = ("_on", "_previous")
+
+    def __init__(self, on: bool) -> None:
+        self._on = on
+
+    def __enter__(self) -> "_Uuids":
+        self._previous = ContainerOptions.uuids
+        _write_option("uuids", self._on)
+        return self
+
+    def __exit__(self, *exc: Any) -> bool:
+        _write_option("uuids", self._previous)
+        return False  # never suppress exceptions
+
+    def __repr__(self) -> str:
+        return f"rig.uuids({self._on!r})"
+
+
+def uuids(on: bool = True) -> _Uuids:
+    """``with rig.uuids():`` -- inside the block, rig's creates from cgmath data use the data's
+    uuids, as ``uuids=True`` on each would (``ContainerOptions.uuids``):
+
+    * the nodes a create makes take their data's uuids: ``Transform.create_hierarchy`` and
+      ``load_hierarchy``, ``Transform.create(data)`` / ``Joint.create(data)``, ``create`` and the
+      class-form ``load`` of ``Mesh``, ``NurbsCurve`` and ``NurbsSurface``, and
+      ``rig.create_scene`` / ``rig.load_scene``;
+    * a create given no target finds by uuid what it builds on: a node or a shape goes under
+      the node holding its data's ``parent_uuid`` (``parent=`` / ``transform=`` and
+      ``hierarchy=`` win), ``SkinCluster.create(skin)`` binds the shape holding
+      ``skin.mesh_uuid``, ``BlendShape.create(morphs)`` deforms the shape holding the morphs'
+      ``mesh_uuid``, and ``key_hierarchy(clip)`` keys each node of the clip onto the node
+      holding its uuid.
+
+    ``rig.uuids(False)`` turns it off for a block inside one, and an explicit ``uuids=`` on a
+    call always wins. The setting comes back as the block ends, on an exception too.
+    ``rig.set_options(uuids=True)`` sets it with no block (``uuids = true`` in
+    ``_defaults.toml``, for a studio), and a ``rig.run`` gives it back as it gives every option.
+
+    The checks stay: a uuid a node of the Maya scene holds, or one the data holds twice, is a
+    ValueError before anything is made, so a second build of one data takes fresh uuids
+    first (``scene.renew_uuids()``, ``hierarchy.renew_uuids()``)::
+
+        from rig.nodetypes import Mesh, SkinCluster, Transform
+
+        with rig.uuids():
+            Transform.create_hierarchy(scene.hierarchy)   # the nodes hold the data's uuids
+            Mesh.create(scene.meshes[0], scene.uvs[0])    # under the node its parent_uuid names
+            SkinCluster.create(scene.skins[0])            # on that shape, by its mesh_uuid
+
+    ``on`` is a bool (anything else is a TypeError)."""
+    return _Uuids(_uuids_flag("rig.uuids()", on))
 
 
 def _load_defaults_from_file() -> None:

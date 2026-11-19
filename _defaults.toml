@@ -53,6 +53,13 @@ publish_attributes = true
 # of that visual leak.
 absorb_unit_conversions = false
 
+# Creates from cgmath data (``Transform.create_hierarchy``, ``Mesh.create`` ...)
+# take the data's uuids, and find by uuid what they build on, as inside
+# ``with rig.uuids():``. Off by default: Maya's own uuids, so one piece of data
+# builds any number of times. Set true for a pipeline that builds each scene
+# once and finds its nodes by uuid; an explicit ``uuids=`` still wins.
+uuids = false
+
 
 # ---------------------------------------------------------------------------
 # Deliberately NOT exposed as committed team-wide defaults.

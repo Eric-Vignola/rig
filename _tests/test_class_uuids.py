@@ -13,8 +13,11 @@ user's decisions of 2026-11-10, "if a target is given, the target supersedes the
   (fresh uuids on the data, ``hierarchy.renew_uuids()`` or ``data.uuid = generate_uuid()``; or
   no ``uuids=True``).
 * Data without a uuid (a bare TransformData, a curve's points) leaves Maya's too.
-* The flag is a checked bool on every door, before anything is read or made; a node's own
-  ``load`` (an update) does not take it.
+* The flag is a checked bool or None on every door, before anything is read or made; a node's
+  own ``load`` (an update) does not take it.
+* None, the default, is what ``with rig.uuids():`` or ``rig.set_options(uuids=)`` says, False
+  unless one does (the user, 2026-11-18): inside the block every create takes its data's uuids,
+  and a create given no target finds it by uuid (TestTheBlock).
 * One undo step as before: undo frees the uuid, redo brings the node back holding it.
 
 Measured in Maya 2025 first (session 9f0b3bbf, eval/probe_uuid.py): ``rename -uuid`` adopts a
@@ -23,24 +26,28 @@ shape, is undoable and survives a .ma and a .mb.
 """
 
 import os
+import re
 import shutil
 import tempfile
 
 import numpy as np
+import rig
 from cgmath.hierarchy import ClipData, TransformData, generate_uuid
 from maya import cmds
 from rig import Node
 from rig._tests._base import MayaTestCase
 from rig._tests._undo import UndoWalk
-from rig.nodetypes import Joint, Mesh, NurbsCurve, NurbsSurface, Transform
+from rig._tests.test_scene import _scene
+from rig.nodetypes import BlendShape, Joint, Mesh, NurbsCurve, NurbsSurface, SkinCluster, Transform
 from rig.nodetypes import _files
 
 # the text of a refusal, after the method and the record
-_HELD      = r" has the uuid [0-9A-F-]{36}, which '%s' holds, and two nodes cannot hold one; for a second copy give the data fresh uuids first \(%s, or a Scene's renew_uuids\(\)\); without uuids=True the nodes keep Maya's own$"
+_HELD      = r" has the uuid [0-9A-F-]{36}, which '%s' holds, and two nodes cannot hold one; for a second copy give the data fresh uuids first \(%s, or a Scene's renew_uuids\(\)\); uuids=False keeps Maya's own$"
 _FRESH     = r"data\.uuid = cgmath\.hierarchy\.generate_uuid\(\)"
 _RENEW     = r"hierarchy\.renew_uuids\(\)"
-_FLAG      = r": uuids= is True \(a node made from data takes the data's uuid\) or False \(the default: Maya's own\), not %s$"
-_NOT_BOOLS = (None, 1, "yes")
+_FLAG      = (r": uuids= is True \(a node made from data takes the data's uuid\), False \(Maya's own\) or None \(the "
+              r"default: as rig\.uuids\(\) or rig\.set_options\(uuids=\) says, else False\), not %s$")
+_NOT_BOOLS = (1, "yes")   # None is the default: what rig.uuids() says (TestTheBlock)
 
 
 def _uuid(node):
@@ -446,7 +453,7 @@ class TestTheCheck(_Case):
         with self.assertRaisesRegex(
             ValueError,
             r"^X: the node 'a' and the node 'b' hold one uuid, " + uuid + r", which two nodes cannot; give the data "
-            r"fresh uuids \(r\(\)\), or leave uuids=True out to keep Maya's own$",
+            r"fresh uuids \(r\(\)\), or uuids=False keeps Maya's own$",
         ):
             _files.free_uuids("X", [("the node 'a'", uuid), ("the node 'b'", uuid)], "r()")
 
@@ -468,3 +475,177 @@ class TestTheCheck(_Case):
         self.assertEqual(cmds.ls(node, uuid=True), [uuid])
         cmds.undo()
         self.assertEqual(cmds.ls(uuid), [])
+
+
+# ---------------------------------------------------------------------------------------------
+class TestTheBlock(_Case):
+    """``with rig.uuids():`` (the user, 2026-11-18: "some sort of context trigger that would force
+    uuids on on Mesh.create and other rig.nodetypes"): every create from data not given
+    ``uuids=`` takes its data's uuids, and a create given no target finds it by uuid. The
+    default stays False (the user, 2026-11-13)."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(rig.set_options, uuids=rig.get_options()["uuids"])
+
+    def test_inside_the_block_every_create_takes_its_data_s_uuid(self):
+        data   = _skeleton()
+        lone   = TransformData("lone", uuid=generate_uuid())
+        shapes = {cls: _shape_data(cls) for cls in CLASSES}
+        with rig.uuids():
+            made  = Transform.create_hierarchy(data)
+            node  = Transform.create(lone)
+            built = {cls: cls.create(shape, name=f"made_{cls.__name__}") for cls, shape in shapes.items()}
+        self.assertEqual([_uuid(n) for n in made], [n.uuid for n in data])
+        self.assertEqual(_uuid(node), lone.uuid)
+        for cls, shape in built.items():
+            self.assertEqual(_uuid(shape), shapes[cls].uuid)
+        # out of the block, Maya's own again: one data builds any number of copies
+        twin = Transform.create(lone, name="twin")
+        self.assertNotEqual(_uuid(twin), lone.uuid)
+
+    def test_load_hierarchy_and_create_scene_too(self):
+        folder = self.folder()
+        data   = _skeleton()
+        path   = data.save(os.path.join(folder, "skeleton.npz"))
+        with rig.uuids():
+            loaded = Joint.load_hierarchy(path)
+        self.assertEqual([_uuid(n) for n in loaded], [n.uuid for n in data])
+        cmds.file(new=True, force=True)
+        scene = _scene(take=False)
+        with rig.uuids():
+            rig.create_scene(scene)
+        self.assertEqual([Node(n.uuid).get_short_name() for n in scene.hierarchy], ["root", "tip", "geo"])
+        self.assertEqual(Node(scene.meshes[0].uuid).get_short_name(), "geoShape")
+
+    def test_an_explicit_flag_wins(self):
+        data, _ = _mesh_data()
+        with rig.uuids():
+            kept = Mesh.create(data, name="kept", uuids=False)
+        self.assertNotEqual(_uuid(kept), data.uuid)
+        with rig.uuids(False):
+            taken = Mesh.create(data, name="taken", uuids=True)
+        self.assertEqual(_uuid(taken), data.uuid)
+
+    def test_blocks_nest_and_give_the_setting_back(self):
+        self.assertFalse(rig.get_options()["uuids"])
+        with rig.uuids() as block:
+            self.assertEqual(repr(block), "rig.uuids(True)")
+            self.assertTrue(rig.get_options()["uuids"])
+            with rig.uuids(False):
+                self.assertFalse(rig.get_options()["uuids"])
+            self.assertTrue(rig.get_options()["uuids"])
+        self.assertFalse(rig.get_options()["uuids"])
+        with self.assertRaises(ZeroDivisionError):
+            with rig.uuids():
+                1 / 0
+        self.assertFalse(rig.get_options()["uuids"])    # on an exception too
+
+    def test_the_option_and_a_run(self):
+        lone = TransformData("lone", uuid=generate_uuid())
+        rig.set_options(uuids=True)                      # with no block
+        self.assertEqual(_uuid(Transform.create(lone)), lone.uuid)
+        rig.set_options(uuids=False)
+        rig.exec("import rig\nrig.set_options(uuids=True)")
+        self.assertFalse(rig.get_options()["uuids"])     # a run gives its options back
+        with rig.uuids():
+            rig.exec("import rig\nrig.set_options(uuids=False)")
+            self.assertTrue(rig.get_options()["uuids"])
+
+    def test_the_setting_is_a_checked_bool(self):
+        for value in (None, 1, "yes"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(TypeError, r"^rig\.uuids\(\): uuids takes True \(creates from data take "
+                                            r"its uuids\) or False \(Maya's own\), not " + re.escape(repr(value)) + "$"):
+                    rig.uuids(value)
+        with self.assertRaisesRegex(TypeError, r"^rig\.set_options: uuids takes True"):
+            rig.set_options(uuids=1)
+        self.assertFalse(rig.get_options()["uuids"])
+        self.assertIs(rig.uuids, rig._internal.container.uuids)
+        self.assertIn("uuids", rig.__all__)
+
+    def test_a_node_goes_under_the_node_of_its_parent_uuid(self):
+        geo  = TransformData("geo", translate=(3, 0, 0), uuid=generate_uuid())
+        tip  = TransformData("tip", uuid=generate_uuid(), parent_uuid=geo.uuid)
+        mesh = _mesh_data()[0]
+        curve = _curve_data()
+        mesh.parent_uuid = curve.parent_uuid = geo.uuid
+        with rig.uuids():
+            node  = Transform.create(geo)
+            child = Transform.create(tip)                # under geo, by parent_uuid
+            shape = Mesh.create(mesh)                    # geo's shape: no transform made
+            crv   = NurbsCurve.create(curve)
+        for made in (child, shape, crv):
+            self.assertEqual(made.get_parent().get_long_name(), node.get_long_name())
+        self.assertEqual(shape.get_short_name(), "geoShape")
+        self.assertEqual(cmds.getAttr("geo.tx"), 3.0)
+
+    def test_what_is_given_wins_and_a_missing_node_is_no_error(self):
+        mesh = _mesh_data()[0]
+        geo  = TransformData("geo", uuid=generate_uuid())
+        mesh.parent_uuid = geo.uuid
+        with rig.uuids():
+            Transform.create(geo)
+            ctl  = Transform.create(name="ctl")
+            here = Mesh.create(mesh, transform=ctl)                       # transform= wins
+            mesh.uuid = generate_uuid()
+            held = Mesh.create(mesh, name="held", hierarchy=_skeleton())  # hierarchy= says where it sits
+            mesh.uuid, mesh.parent_uuid = generate_uuid(), generate_uuid()
+            alone = Mesh.create(mesh, name="alone")                       # no node of its parent_uuid
+        self.assertEqual(here.get_parent().get_short_name(), "ctl")
+        self.assertEqual(held.get_parent().get_short_name(), "held")
+        self.assertEqual(alone.get_parent().get_short_name(), "alone")
+        # out of the block, a shape never goes under the node of its parent_uuid
+        mesh.uuid, mesh.parent_uuid = generate_uuid(), geo.uuid
+        self.assertEqual(Mesh.create(mesh, name="beside").get_parent().get_short_name(), "beside")
+
+    def test_the_snippet(self):
+        # the user's: the nodes, the mesh, its skin and its targets, each found by uuid
+        scene = _scene(take=False)
+        with rig.uuids():
+            nodes = Transform.create_hierarchy(scene.hierarchy)
+            mesh  = Mesh.create(scene.meshes[0])
+            skin  = SkinCluster.create(scene.skins[0])
+            blend = BlendShape.create(scene.morphs)
+        self.assertEqual([_uuid(n) for n in nodes], [n.uuid for n in scene.hierarchy])
+        self.assertEqual((mesh.get_parent().get_short_name(), _uuid(mesh)), ("geo", scene.meshes[0].uuid))
+        self.assertEqual(skin.get_short_name(), "geo_skin")                    # the SkinData's name
+        self.assertEqual([g.get_long_name() for g in skin.get_geometries()], [mesh.get_long_name()])
+        self.assertEqual(sorted(j.get_short_name() for j in skin.get_influence_objects()), ["root", "tip"])
+        np.testing.assert_allclose(skin.get_weights(), scene.skins[0].weights, atol=1e-6)
+        self.assertEqual([g.get_long_name() for g in blend.get_geometries()], [mesh.get_long_name()])
+        self.assertEqual(blend.get_target_count(), 1)
+        self.assertEqual(blend.get_short_name(), "face_bs")                    # the morphs' deformer
+
+    def test_a_skin_or_morphs_alone_need_the_block_and_their_mesh(self):
+        scene = _scene(take=False)
+        with rig.uuids():
+            Transform.create_hierarchy(scene.hierarchy)
+        with self.assertRaisesRegex(TypeError, r"and so does a SkinData inside rig\.uuids\(\): SkinCluster\.create\(skin\)$"):
+            SkinCluster.create(scene.skins[0])
+        with rig.uuids():
+            with self.assertRaisesRegex(ValueError, r"^SkinCluster\.create: no scene node holds the uuid [0-9A-F-]+ of "
+                                        r"the SkinData 'geo_skin''s mesh: a Mesh\.create of its mesh inside rig\.uuids\(\)"):
+                SkinCluster.create(scene.skins[0])
+            with self.assertRaisesRegex(ValueError, r"^BlendShape\.create: no scene node holds the uuid [0-9A-F-]+ of "
+                                        r"the morphs' mesh"):
+                BlendShape.create(scene.morphs)
+            two = scene.morphs.copy()
+            two[0].mesh_uuid = generate_uuid()
+            with self.assertRaisesRegex(ValueError, r"^BlendShape\.create: inside rig\.uuids\(\) morphs alone deform "
+                                        r"the mesh of their mesh_uuid; these name 2 meshes"):
+                BlendShape.create(two)
+        self.assertEqual(cmds.ls(type=("skinCluster", "blendShape")), [])
+
+    def test_key_hierarchy_keys_by_uuid_in_the_block(self):
+        data = _skeleton()
+        clip = ClipData(data, frames=3, start_frame=1)
+        clip.frames["spine"].translate_y = np.array([5.0, 6.0, 7.0])
+        with rig.uuids():
+            nodes = Transform.create_hierarchy(data)
+        extra = Joint.create(name="extra", parent=nodes[0])
+        cmds.reorder(extra.get_long_name(), front=True)   # by order, spine's keys would go to extra
+        with rig.uuids():
+            nodes[0].key_hierarchy(clip)
+        self.assertEqual(cmds.keyframe("spine.ty", query=True, valueChange=True), [5.0, 6.0, 7.0])
+        self.assertIsNone(cmds.keyframe(extra.get_long_name() + ".ty", query=True, valueChange=True))

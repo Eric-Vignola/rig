@@ -36,7 +36,7 @@ of rig names the cgmath commit it was verified on here and in
 | 9 | [Logic, comparisons, `condition`, `constant`](#9-logic-comparisons-condition-constant) | `& \| ^ ~`, `== != < <= > >=`, per-channel fan-out, `condition(...)`, `constant(...)`, Python's `if` and DSL comparisons (no truth value, no folding) |
 | 10 | [Components](#10-components) | `vtx` / `cv` / `pt` handles, `f` / `e`, `Components(...)`, `get_indices()` / `get_count()` / `get_names()`, `>> None`, a lattice `pt[s]` refused |
 | 11 | [Containers](#11-containers) | `with container(...)`, nesting and flattening, `container.add`, `container=False`, typed creators, publishing, `Container`, locking a container, when a new node joins |
-| 12 | [Options, `force_nodes`, `cleanup`](#12-options-force_nodes-cleanup) | `set_options` / `get_options` / `ContainerOptions`, constant folding, garbage collection, a locked container kept |
+| 12 | [Options, `force_nodes`, `cleanup`](#12-options-force_nodes-cleanup) | `set_options` / `get_options` / `ContainerOptions`, constant folding, the data's uuids (`uuids`), garbage collection, a locked container kept |
 | 13 | [`memoize`, `vectorize`, `prune_memoize_caches`](#13-memoize-vectorize-prune_memoize_caches) | the two decorators and the cache sweep |
 | 14 | [`sequences` and `arguments`](#14-sequences-and-arguments) | two asymmetric generators, for scripts (rig's broadcasts are strict) |
 | 15 | [`NodeOp` and the target Maya version](#15-nodeop-and-the-target-maya-version) | version-keyed impls, `set_options(maya_version=...)`, `set_target_version` |
@@ -66,7 +66,7 @@ of rig names the cgmath commit it was verified on here and in
 | 39 | [Animation curves](#39-animation-curves) | `plug << AnimCurve([...])`: the curve type the plug takes, units, shapes, per-channel lists, `List` broadcasts and pairs, tangents / slopes / weights / infinity, the re-run, what each statement returns, a driven plug (Maya against rig), the refusals; `AnimCurve("x")`, `AnimCurveTL` / `TA` / `TU` / `TT` `.create` / `.define`, `AnimCurve.of`, `get_keys` / `set_keys` / `get_key_count` / `evaluate`; a `ClipData` built and keyed |
 | 40 | [`rig.run`: a file as if in a fresh Python](#40-rigrun-a-file-as-if-in-a-fresh-python) | `rig.run(path, inputs, argv=, shared=)`: the file as `__main__`, several files in one namespace, your modules read from disk again on every run, what is shared, the `Run` mapping and `run.call`, one undo step, what comes back after a run, errors and `sys.exit`, the paths, the limits |
 | 41 | [`rig.exec`: a string of code as if in a fresh Python](#41-rigexec-a-string-of-code-as-if-in-a-fresh-python) | `rig.exec(source, inputs, argv=, shared=)`: the code as `python -c` runs it, dedented first, the session's `sys.path`, `rig.run`'s imports and `Run`, one undo step named after the first line, outside `__all__` |
-| 42 | [A cgmath Scene in Maya](#42-a-cgmath-scene-in-maya) | `rig.load_scene(path)` and `rig.create_scene(scene)`: the nodes, each mesh, its blendShape and its skin, then the take; any number of copies, `uuids=True` for the data's uuids; the steps by hand (`Mesh` / `BlendShape` / `SkinCluster.create(item)`, `node.key_hierarchy(clip)`), what is left out |
+| 42 | [A cgmath Scene in Maya](#42-a-cgmath-scene-in-maya) | `rig.load_scene(path)` and `rig.create_scene(scene)`: the nodes, each mesh, its blendShape and its skin, then the take; any number of copies, `uuids=True` for the data's uuids, `with rig.uuids():` for every create of a block; the steps by hand (`Mesh` / `BlendShape` / `SkinCluster.create(item)`, `node.key_hierarchy(clip)`), what is left out |
 | 43 | [`rig.fuse()`: math in one node](#43-rigfuse-math-in-one-node) | `with rig.fuse():` and `set_options(fuse=True)`: scalar, vector, euler, quaternion and matrix math as a `Fused` value, compiled into `rigExpression` nodes when it is connected or used; what joins a node, what fuses (rig's own functions and its type shorthand too), numpy's rules and Maya's nodes', rig's plug-in `rig.mll`, one undo step; `rig.unfuse()`, back into rig's network |
 
 ---
@@ -1752,7 +1752,7 @@ print(get_options())
 # {'create_containers': True, 'use_shorthand': True, 'skip_selection': True, 'cleanup_on_exit': False,
 #  'cleanup_tags': False, 'maya_version': None, 'flatten_containers': True, 'publish_attributes': True,
 #  'absorb_unit_conversions': False, 'native_multi_publish': False, 'constant_folding': True,
-#  'fuse': False}
+#  'fuse': False, 'uuids': False}
 set_options(create_containers=False)          # every with container(): becomes scope-only
 with container("ghost") as ghost:
     Node.create("transform", name="free")
@@ -1777,6 +1777,7 @@ except AttributeError as err:
 | `absorb_unit_conversions` | `False` | pull auto-inserted `unitConversion` nodes into the container |
 | `native_multi_publish` | `False` | publish multi attrs natively (Maya renders them badly today) |
 | `constant_folding` | `True` | all-literal math returns a Python value instead of a node |
+| `uuids` | `False` | `True`: a create from cgmath data not given `uuids=` takes the data's uuids, and finds by uuid what it builds on (`rig.uuids()`, section 42) |
 
 Constant folding: a function given only numbers returns a number.
 `force_nodes()` turns that off for a block so you can inspect the network
@@ -4457,6 +4458,35 @@ for item in scene.renderables():
     if item.skin is not None:
         SkinCluster.create(item)                                  # each influence the joint of its node's uuid
 nodes[0].key_hierarchy(scene.clip.active, uuids=True)             # the take, by uuid: the first root and what is below it
+```
+
+`with rig.uuids():` does it for a block: every create from data in it that is
+not given `uuids=` takes its data's uuids (`uuids=None`, every create's
+default, is what the block says; outside one, `rig.set_options(uuids=)`,
+False unless set), and a create given no target finds it by uuid, plain data
+as well as a `Renderable`: a node or a shape goes under the node holding its
+data's `parent_uuid` (`parent=`, `transform=` and `hierarchy=` win),
+`SkinCluster.create(skin)` binds the shape holding `skin.mesh_uuid`,
+`BlendShape.create(morphs)` deforms the shape holding the morphs'
+`mesh_uuid`, `key_hierarchy(clip)` keys by uuid. An explicit `uuids=` wins,
+`rig.uuids(False)` turns it off inside a block, the setting comes back as the
+block ends (on an exception too), and a `rig.run` gives it back as every
+option. The checks stay: a second build of the same data inside a block is
+refused before anything is made (`scene.renew_uuids()` first).
+
+<!-- notest -->
+```python
+import rig
+from cgmath.render import Scene
+from rig.nodetypes import BlendShape, Mesh, SkinCluster, Transform
+
+scene = Scene.load_fbx("hero.fbx")
+with rig.uuids():
+    Transform.create_hierarchy(scene.hierarchy)    # every node holds its data's uuid
+    Mesh.create(scene.meshes[0], scene.uvs[0])     # the shape under the node its parent_uuid names
+    SkinCluster.create(scene.skins[0])             # on that shape (its mesh_uuid), the joints by name
+    BlendShape.create(scene.morphs)                # one mesh's targets, on the shape of their mesh_uuid
+    rig.create_scene(scene2)                       # or a whole scene: create_scene(scene2, uuids=True)
 ```
 
 Left out, each with one warning naming the count: cameras and lights (rig

@@ -252,6 +252,7 @@ from rig._internal.container import (
     force_nodes,
     get_options,
     set_options,
+    uuids,
 )
 from rig._internal.generators import arguments, sequences
 from rig._internal.fuse import Fused, fuse
@@ -337,6 +338,7 @@ __all__ = [
     "get_options",
     "ContainerOptions",
     "force_nodes",
+    "uuids",
     # Lifting
     "lift",
     # Undo

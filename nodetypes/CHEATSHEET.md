@@ -611,7 +611,8 @@ name (`name=` overrides it; Maya renames a taken one), its values as local
 values, its user-defined attributes and a joint's orient, segment scale
 compensate, radius and draw style. `parent=` and the attribute keywords
 are `create`'s (a keyword may also name one of the data's own attributes);
-the data's parent is not used, and its uuid only with `uuids=True` (below).
+the data's parent and uuid are used only with the data's uuids (`uuids=True`
+or `with rig.uuids():`, below).
 `Joint.create(joint_data)` is the same, and refuses a transform's data.
 Every refusal comes before anything is made; one undo step; the selection
 is kept.
@@ -656,6 +657,25 @@ copy.renew_uuids()                                                 # fresh uuids
 print([new.uuid == old.uuid for new, old in zip(copy, skeleton)])  # [False, False, False]
 print(copy[1].parent_uuid == copy[0].uuid)                         # True
 cmds.delete("made", "again")
+```
+
+`with rig.uuids():` gives every create from data in the block the data's
+uuids, as `uuids=True` on each would (None, every create's default, is what
+the block or `rig.set_options(uuids=)` says, False outside one; an explicit
+`uuids=` wins), and a create given no target finds it by uuid: a node goes
+under the node holding its data's `parent_uuid`, a shape under the node of
+its data's `parent_uuid`, `SkinCluster.create(skin)` binds the shape holding
+`skin.mesh_uuid`, `BlendShape.create(morphs)` deforms the shape of their
+`mesh_uuid`, `key_hierarchy(clip)` keys by uuid. The setting comes back as
+the block ends, on an exception too.
+
+```python
+import rig
+
+with rig.uuids():                                               # every create from data: the data's uuids
+    held = Transform.create(fresh, name="held")
+print(held.get_uuid() == fresh.uuid, rig.get_options()["uuids"])   # True False
+cmds.delete("held")
 ```
 
 `create_hierarchy` rebuilds it and returns the new nodes as a `List`, typed as

@@ -126,7 +126,10 @@ def space_flag(method: str, world_space, meaning: str = "the space the file was 
 
 
 # what ``uuids=`` says on a create from data and its class-form load (`uuid_flag`)
-UUIDS_MEAN = "True (a node made from data takes the data's uuid) or False (the default: Maya's own)"
+UUIDS_MEAN = (
+    "True (a node made from data takes the data's uuid), False (Maya's own) or None (the default: "
+    "as rig.uuids() or rig.set_options(uuids=) says, else False)"
+)
 
 # how a shape's data takes a fresh uuid (`free_uuids`' advice for a mesh, a curve, a surface)
 FRESH_UUID = "data.uuid = cgmath.hierarchy.generate_uuid()"
@@ -134,13 +137,25 @@ FRESH_UUID = "data.uuid = cgmath.hierarchy.generate_uuid()"
 
 def uuid_flag(method: str, uuids) -> bool:
     """``uuids=`` of a create from data or its class-form load (`method`, ``"Mesh.create()"``) as a
-    bool: anything but a bool (None, ``1``) is a TypeError naming it, before anything is read or
-    made."""
+    bool: None, the default, is `scoped_uuids` (what ``with rig.uuids():`` or
+    ``rig.set_options(uuids=)`` says, False unless one does); anything but a bool or None
+    (``1``, ``"yes"``) is a TypeError naming it, before anything is read or made."""
     import numpy as np
 
+    if uuids is None:
+        return scoped_uuids()
     if not isinstance(uuids, (bool, np.bool_)):
         raise TypeError(f"{method}: uuids= is {UUIDS_MEAN}, not {uuids!r}")
     return bool(uuids)
+
+
+def scoped_uuids() -> bool:
+    """Whether rig uses the data's uuids where a call does not say: inside ``with rig.uuids():``,
+    or after ``rig.set_options(uuids=True)`` (``ContainerOptions.uuids``). A create given no
+    target then finds what it builds on by uuid (`node_of_uuid`)."""
+    from rig._internal.container import ContainerOptions
+
+    return bool(ContainerOptions.uuids)
 
 
 def free_uuids(method: str, named: Iterable[tuple], renew: str) -> None:
@@ -149,8 +164,9 @@ def free_uuids(method: str, named: Iterable[tuple], renew: str) -> None:
     'spine'"``; a uuid of None is Maya's own, not checked). A uuid a scene node holds, or one the
     data holds twice (two nodes cannot hold one uuid: Maya's ``rename -uuid`` refuses it) is a
     ValueError naming them, `renew` (how the data takes fresh uuids: ``"hierarchy.renew_uuids()"``)
-    and the default, which keeps Maya's own. Only a call with ``uuids=True`` comes here. Maya spells
-    a uuid upper-case: the check reads the data's so."""
+    and ``uuids=False``, which keeps Maya's own (inside ``with rig.uuids():`` too). Only a call
+    using the data's uuids comes here. Maya spells a uuid upper-case: the check reads the data's
+    so."""
     from maya import cmds
 
     seen = {}
@@ -161,7 +177,7 @@ def free_uuids(method: str, named: Iterable[tuple], renew: str) -> None:
         if key in seen:
             raise ValueError(
                 f"{method}: {seen[key]} and {what} hold one uuid, {key}, which two nodes cannot; give the data "
-                f"fresh uuids ({renew}), or leave uuids=True out to keep Maya's own"
+                f"fresh uuids ({renew}), or uuids=False keeps Maya's own"
             )
         seen[key] = what
         found     = cmds.ls(key, long=True)
@@ -169,7 +185,7 @@ def free_uuids(method: str, named: Iterable[tuple], renew: str) -> None:
             raise ValueError(
                 f"{method}: {what} has the uuid {key}, which {found[0]!r} holds, and two nodes cannot hold one; "
                 f"for a second copy give the data fresh uuids first ({renew}, or a Scene's renew_uuids()); "
-                f"without uuids=True the nodes keep Maya's own"
+                f"uuids=False keeps Maya's own"
             )
 
 

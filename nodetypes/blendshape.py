@@ -140,7 +140,12 @@ class BlendShape(Deformer):
                 and its mesh when no geometry is given: the scene node holding
                 ``item.mesh.uuid`` (the shape a ``Mesh.create(item,
                 uuids=True)`` made). A geometry given wins over the uuid (the
-                user's rule: an explicit target supersedes it).
+                user's rule: an explicit target supersedes it). Inside ``with
+                rig.uuids():`` (or after ``rig.set_options(uuids=True)``),
+                morphs given with no geometry deform the scene shape holding
+                their ``mesh_uuid`` (a ``Mesh.create`` of it in the block
+                made it); morphs naming no mesh, two, or one no node holds
+                are a ValueError before anything is made.
             kwargs: the ``_CREATE_FLAGS`` given to ``create``, for
                 cmds.blendShape(); ``deformer=``, rig's, takes the targets of
                 that deformer alone, of morphs naming two or more, and names the
@@ -185,6 +190,9 @@ class BlendShape(Deformer):
                     f"is empty): nothing to make"
                 )
         morphs = _one_deformer(method, morphs, deformer)
+        if not items and not geoms and morphs and _files.scoped_uuids():
+            # with the data's uuids (rig.uuids()), morphs alone deform the shape of their mesh_uuid
+            geoms = _morphs_base(method, morphs, args)
         _check_morph_names(method, morphs)
         _check_ats(method, morphs)
         _check_target_names(method, [m.name for m in morphs], OpenMaya.MNodeClass(cls.NATIVE_NODE_TYPE))
@@ -802,6 +810,32 @@ def _renderable_base(method: str, items: list, geoms: list) -> list:
             f"{method}: no scene node holds the uuid {getattr(item.mesh, 'uuid', None)} of the Renderable "
             f"{item.name!r}'s mesh: Mesh.create(item, uuids=True) builds it, or give the mesh: "
             f"BlendShape.create(mesh, item)"
+        )
+    return [node]
+
+
+def _morphs_base(method: str, morphs, args: tuple) -> list:
+    """The geometry morphs given alone deform, with the data's uuids (``with rig.uuids():``): the
+    scene shape holding their ``mesh_uuid``, one for all of `morphs` (a record naming none takes
+    its MorphList's, among `args`). Morphs naming no mesh, two meshes, or one no node holds are a
+    ValueError from `method` before anything is made."""
+    from cgmath.geometry import MorphList
+
+    held = {m.mesh_uuid for m in morphs if getattr(m, "mesh_uuid", None)}
+    if not held:
+        held = {a.mesh_uuid for a in args if isinstance(a, MorphList) and getattr(a, "mesh_uuid", None)}
+    if len(held) != 1:
+        said = "no mesh (their mesh_uuid is None)" if not held else f"{len(held)} meshes"
+        raise ValueError(
+            f"{method}: inside rig.uuids() morphs alone deform the mesh of their mesh_uuid; these name {said}: "
+            f"give the mesh, BlendShape.create(mesh, morphs), or a create a mesh"
+        )
+    uuid = held.pop()
+    node = _files.node_of_uuid(uuid)
+    if node is None:
+        raise ValueError(
+            f"{method}: no scene node holds the uuid {uuid} of the morphs' mesh: a Mesh.create of it inside "
+            f"rig.uuids() makes it, or give the mesh: BlendShape.create(mesh, morphs)"
         )
     return [node]
 

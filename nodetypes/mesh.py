@@ -47,7 +47,7 @@ from scipy.spatial import cKDTree
 _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
 
     ``Mesh.load(mesh, uvs=None, *, name=None, container=None, normals=True,
-    colors=True, transform=None, world_space=False, hierarchy=None, uuids=False,
+    colors=True, transform=None, world_space=False, hierarchy=None, uuids=None,
     **attrs)``, from the class, CREATES a new mesh, always (as `create` does: a
     second load of one file makes ``body1``; with ``transform=``, a new shape
     under that transform)::
@@ -107,13 +107,16 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
         hierarchy: (both forms) By keyword only, as `create` takes it: the
             HierarchyData or ClipData holding the transform the data sits
             under. None: the scene's node of that UUID, else the identity.
-        uuids: (creating) By keyword only, a bool (anything else is a
-            TypeError, before the files are read), as `create` takes it: False
-            (the default), the new shape keeps the uuid Maya gives it, so a
-            file loads any number of times; True, it takes the file's uuid, so
-            a file loaded twice is a ValueError on the second load, before
-            anything is made (give the data a fresh uuid first). An updated
-            mesh keeps its own uuid.
+        uuids: (creating) By keyword only, a bool or None (anything else is
+            a TypeError, before the files are read), as `create` takes it:
+            None (the default), as ``with rig.uuids():`` or
+            ``rig.set_options(uuids=)`` says, False unless one does; False, the
+            new shape keeps the uuid Maya gives it, so a file loads any number
+            of times; True, it takes the file's uuid (and goes under the node
+            of its ``parent_uuid``, as `create` puts it), so a file loaded
+            twice is a ValueError on the second load, before anything is made
+            (give the data a fresh uuid first). An updated mesh keeps its own
+            uuid.
 
     Returns:
         The new Mesh (creating), or this Mesh (updating).
@@ -353,7 +356,7 @@ class Mesh(Geometry):
         transform:   str      | DAGNode | None                = None,
         world_space: bool                                     = False,
         hierarchy:   Any                                      = None,
-        uuids:       bool                                     = False,
+        uuids:       bool     | None                          = None,
         **kwargs,
     ) -> "Mesh":
         """Creates a mesh object from a mesh data object, or from one mesh of a
@@ -411,7 +414,10 @@ class Mesh(Geometry):
             transform: By keyword only: an existing transform (or any node
                 derived from one: a joint, an ikHandle, a constraint ...), by
                 name or node, that the new shape goes under; no transform is
-                made (see below). None, the default: a new transform.
+                made (see below). None, the default: a new transform; with
+                `uuids` (inside ``with rig.uuids():``, or ``uuids=True``) and
+                no ``hierarchy=``, the scene node holding the data's
+                ``parent_uuid`` when there is one, as ``transform=`` puts it.
             world_space: By keyword only, a bool (anything else is a
                 TypeError). False (the default): the data's points and normals
                 become the shape's own, as they are: a new transform goes where
@@ -431,17 +437,20 @@ class Mesh(Geometry):
                 when the scene has none (data from another scene: save it in
                 world space, or give its hierarchy). An instanced scene node
                 is a ValueError.
-            uuids: By keyword only, a bool (anything else is a TypeError
-                before anything is made). False (the default): the new shape
-                keeps the uuid Maya gives it, so one MeshData builds any
-                number of times, a twin of a mesh that is in the scene too
+            uuids: By keyword only, a bool or None (anything else is a
+                TypeError before anything is made). None (the default): as
+                ``with rig.uuids():`` or ``rig.set_options(uuids=)`` says,
+                False unless one does. False: the new shape keeps the uuid
+                Maya gives it, so one MeshData builds any number of times, a
+                twin of a mesh that is in the scene too
                 (``Mesh.create(*m.serialize())``). True: the new shape takes
                 the data's ``uuid`` (a recorded ``rename -uuid``, in the
                 create's undo step), so `serialize` reads the mesh back with
                 the same uuid, and a scene built from data is found by its
                 uuids (``Node(uuid)``; `BlendShape.create` and
-                `SkinCluster.create` of a Renderable find the mesh so). A uuid
-                a scene node already holds is then a ValueError before
+                `SkinCluster.create` find the mesh so), and the shape goes
+                under the node of its ``parent_uuid`` (``transform=``, above).
+                A uuid a scene node already holds is then a ValueError before
                 anything is made, naming both: give the data a fresh uuid
                 first (``data.uuid = cgmath.hierarchy.generate_uuid()``; a
                 Scene's ``renew_uuids()``).
@@ -577,6 +586,9 @@ class Mesh(Geometry):
         placed      = None
         if _files.is_renderable(mesh_data):
             mesh_data, uvs, name, transform, placed = _renderable_inputs(mesh_data, uvs, name, transform, hierarchy)
+        elif uuids and transform is None and hierarchy is None:
+            # with the data's uuids, the shape goes under the node of its parent_uuid
+            transform = _files.node_of_uuid(getattr(mesh_data, "parent_uuid", None))
         if transform is not None:
             transform = _shape_target("Mesh.create()", transform, world_space)
         if uvs:
@@ -1264,7 +1276,7 @@ class Mesh(Geometry):
     @_statement
     def _load_new(
         cls, mesh, uvs=None, *, name=None, container=None, normals=True, colors=True, transform=None,
-        world_space=False, hierarchy=None, uuids=False, **kwargs
+        world_space=False, hierarchy=None, uuids=None, **kwargs
     ):
         normals     = _restore_flag("Mesh.load", "normals", normals)
         colors      = _restore_flag("Mesh.load", "colors", colors)

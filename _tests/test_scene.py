@@ -596,9 +596,11 @@ class TestKeyHierarchy(_KeyCase):
         root = Transform("root")
         for flag, value in (("uuids", 1), ("index", None), ("strict", "no")):
             with self.subTest(flag=flag):
+                # (uuids= takes None too, its default: what rig.uuids() says)
+                said = r"True \(.+\), False \(.+\) or None \(.+\)" if flag == "uuids" else r"True \(.+\) or False \(.+\)"
                 self.assert_nothing_made(
                     TypeError,
-                    rf"^Joint\.key_hierarchy: {flag}= is True \(.+\) or False \(.+\), not {re.escape(repr(value))}$",
+                    rf"^Joint\.key_hierarchy: {flag}= is {said}, not {re.escape(repr(value))}$",
                     lambda: root.key_hierarchy(clip, **{flag: value}),
                 )
         with self.assertRaises(TypeError):   # by keyword only
@@ -662,8 +664,8 @@ class TestCreateScene(_Case):
         self.assert_nothing_made(
             ValueError,
             r"^create_scene\(\): the node 'root' has the uuid .*, which '\|root' holds, and two nodes cannot hold one; for a "
-            r"second copy give the data fresh uuids first \(scene\.renew_uuids\(\), or a Scene's renew_uuids\(\)\); without "
-            r"uuids=True the nodes keep Maya's own$",
+            r"second copy give the data fresh uuids first \(scene\.renew_uuids\(\), or a Scene's renew_uuids\(\)\); "
+            r"uuids=False keeps Maya's own$",
             lambda: create_scene(scene, uuids=True),
         )
         scene.renew_uuids()
