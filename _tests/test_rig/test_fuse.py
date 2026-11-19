@@ -1496,6 +1496,26 @@ class TestUnfuse(_MatrixCase):
         cmds.setAttr("a.k", 4.0)                            # and it is live
         np.testing.assert_allclose(cmds.getAttr("out.t")[0], np.array(expected[0]) * 2, atol=1e-6)
 
+    def test_a_referenced_node_is_refused(self):
+        """Maya deletes no referenced node: its network would be made and wired in and the
+        node left, so the scene would still need the plug-in. Refused before any change."""
+        cmds.file(new=True, force=True)
+        self.inputs()
+        with rig.fuse("calc"):
+            self.out.t << V.normalize(self.a.t - self.b.t) * self.a.k
+        path = os.path.join(tempfile.mkdtemp(), "fused.ma")
+        cmds.file(rename=path)
+        cmds.file(save=True, type="mayaAscii", force=True)
+        cmds.file(new=True, force=True)
+        cmds.file(path, reference=True, namespace="R")
+        before = sorted(cmds.ls())
+        wired  = cmds.listConnections("R:out.t", source=True, destination=False, plugs=True)
+        with self.assertRaisesRegex(RuntimeError, "R:calc.*referenced"):
+            rig.unfuse()
+        self.assertEqual(sorted(cmds.ls()), before)
+        self.assertEqual(cmds.listConnections("R:out.t", source=True, destination=False, plugs=True), wired)
+        self.assertEqual(self.fused_nodes(), ["R:calc"])
+
     def test_a_node_reading_another(self):
         cmds.file(new=True, force=True)
         self.inputs()

@@ -938,7 +938,8 @@ def unfuse(*nodes):
     List of the nodes made.
 
     Raises TypeError for a node that is not a rigExpression, RuntimeError inside a
-    ``rig.fuse()`` block (the block would fuse the network again)."""
+    ``rig.fuse()`` block (the block would fuse the network again) and for a referenced
+    node (Maya deletes none: unfuse it in its own file), before anything is changed."""
     from rig._internal.undo import undo_chunk
     # (the chunk around the statement: its last edits, sent as it ends, are in the step)
     with undo_chunk("rig.unfuse"):
@@ -968,6 +969,11 @@ def _unfuse(nodes: tuple):
         # its turn comes: an earlier one rewires what it reads)
         values = list(decompile(n).values())
         _Rebuild(values).check(values)
+        if cmds.referenceQuery(_node_fn(n)[1], isNodeReferenced=True):
+            # Maya deletes no referenced node: its network would be made and wired in, and
+            # the node left, so the scene would still need the plug-in
+            raise RuntimeError(f"rig.unfuse: {n!r} is a referenced node, which Maya cannot delete: "
+                               f"unfuse it in the file it comes from")
     made: list = []
     for n in names:
         made += _unfuse_one(n)
