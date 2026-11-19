@@ -68,6 +68,10 @@ session and builds its own nodes instead. `cmds.pluginInfo("rig", query=True, pa
 says which one is loaded: where `rig.mll` is also on `MAYA_PLUG_IN_PATH`, a build here is
 used only through `RIG_PLUGIN`.
 
+rig asks Maya whether the plug-in is loaded each time fusing starts: unloaded by hand, it is
+loaded again from the list above; loaded by hand after a lookup that found none, it is used
+(the lookup itself is not run twice: it is slow).
+
 `MIN_VERSION` is the lowest version its programs run on and give the documented results
 with (1.2: `Q_ARC`, angleBetween's turn as Maya's `MQuaternion(a, b)`; `TIME`, the scene's
 time; `RAND`, rig.random; eulers through Maya's own decompositions; 1.3: the three guards

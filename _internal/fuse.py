@@ -222,7 +222,10 @@ def _refresh() -> None:
     # block's state is kept while it is open, also when its code turned fusing off
     wanted = FUSE.frames[-1] if FUSE.frames else FUSE.option
     kept = FUSE.depth > 0 or FUSE.option
-    if wanted and FUSE.plugin is None:
+    if wanted and (FUSE.plugin is not False or cmds.pluginInfo(PLUGIN, query=True, loaded=True)):
+        # asked of Maya each time fusing starts, not remembered: the plug-in can be unloaded
+        # by hand between two blocks (it is loaded again), or loaded by hand after a lookup
+        # that found none (only then: a lookup that failed is not run again, it is slow)
         FUSE.plugin = _load_plugin()
     FUSE.on = bool(wanted and FUSE.plugin and _for_this_maya())
     _watch(FUSE.on and FUSE.depth > 0)      # (the option alone: no message is watched)

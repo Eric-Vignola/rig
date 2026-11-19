@@ -2611,6 +2611,65 @@ class TestGuards(_Case):
                 self.assertEqual(self.fused_nodes(), [])
 
 
+class TestThePluginComesAndGoes(MayaTestCase):
+    """rig asks Maya whether rig.mll is loaded each time fusing starts: unloaded by hand, it is
+    loaded again; loaded by hand after a lookup that found none, it is used"""
+
+    TEST_START_NEW_SCENE = True
+
+    def setUp(self):
+        super().setUp()
+        if not _plugin_loads():
+            self.skipTest("the rig plug-in (rig.mll) is not available")
+        self.path = cmds.pluginInfo("rig", query=True, path=True)
+        state     = _fuse.FUSE
+        warned    = state.warned
+        self.addCleanup(lambda: setattr(state, "plugin", None) or setattr(state, "warned", warned))
+        self.addCleanup(self.loaded_again)
+        self.addCleanup(setattr, _fuse, "ONE_OP_RULE", _fuse.ONE_OP_RULE)
+        _fuse.ONE_OP_RULE = False
+
+    def loaded_again(self):
+        if not cmds.pluginInfo("rig", query=True, loaded=True):
+            cmds.loadPlugin(self.path, quiet=True)
+
+    def unload(self):
+        cmds.file(new=True, force=True)                # (no node of it left, nor in the undo queue)
+        cmds.flushUndo()
+        cmds.unloadPlugin("rig")
+        self.assertFalse(cmds.pluginInfo("rig", query=True, loaded=True))
+
+    def block(self, name):
+        a, out = Node.create("transform", name="a"), Node.create("transform", name="out")
+        with rig.fuse(name) as io:
+            out.t << (a.t + 1) * 2 - a.s
+        return io
+
+    def test_unloaded_by_hand_it_is_loaded_again(self):
+        self.assertTrue(self.block("warm"))            # loaded, and rig knows it
+        self.unload()
+        io = self.block("cold")
+        self.assertTrue(io)
+        self.assertEqual(cmds.nodeType(str(io)), "rigExpression")
+        self.assertEqual(cmds.ls(type="unknown"), [])
+
+    def test_loaded_by_hand_after_a_miss_it_is_used(self):
+        from unittest import mock
+        self.unload()
+        _fuse.FUSE.plugin, _fuse.FUSE.warned = None, False
+        with mock.patch.object(_fuse, "_plugin_candidates", lambda: []), \
+                mock.patch.object(_fuse.cmds, "warning") as warning:
+            self.assertFalse(self.block("first"))  # none found: rig's network, one warning
+            self.assertFalse(self.block("again"))  # and no second lookup, no second warning
+        self.assertEqual(warning.call_count, 1)
+        self.assertIs(_fuse.FUSE.plugin, False)
+        cmds.loadPlugin(self.path, quiet=True)
+        cmds.file(new=True, force=True)
+        io = self.block("second")
+        self.assertTrue(io)
+        self.assertEqual(cmds.nodeType(str(io)), "rigExpression")
+
+
 class TestNoPlugin(MayaTestCase):
     TEST_START_NEW_SCENE = True
 

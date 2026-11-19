@@ -4798,12 +4798,14 @@ A fused value is built when it is used, not when it is written, so:
   `vector2` (`MQuaternion(a, b)`), for parallel and opposite vectors too.
 * `constant([plug, ...])` fuses; `constant(numbers)` stays rig's node, a
   value to edit after the build.
-* rig's plug-in, `rig.mll` (1.3), is loaded on first use: already loaded, else
-  from `RIG_PLUGIN` (its path), else by name from `MAYA_PLUG_IN_PATH`, else its
-  build for this Maya next to rig's source, `rig/plugins/<version>/rig.mll`
+* rig's plug-in, `rig.mll` (1.3), is loaded when fusing starts: already loaded,
+  else from `RIG_PLUGIN` (its path), else by name from `MAYA_PLUG_IN_PATH`, else
+  its build for this Maya next to rig's source, `rig/plugins/<version>/rig.mll`
   (`plugins/build.bat` writes it there; `build.sh` writes `rig.bundle` on
   macOS); one that is not there or does not load is skipped.
-  Without it, the block builds rig's nodes, with one warning per session.
+  Without it, the block builds rig's nodes, with one warning per session. rig
+  asks Maya each time a block opens: a plug-in unloaded by hand is loaded
+  again, and one loaded by hand after that warning is used.
 * A saved scene needs only the plug-in: the program is an int array and the
   constants a double array on the node.
 * `set_options(maya_version=...)` targeting another Maya turns fusing off
