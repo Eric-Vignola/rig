@@ -56,6 +56,9 @@ from maya import mel as _mel
 from maya.api.OpenMaya import MDGModifier as _MDGModifier
 from maya.api.OpenMaya import MObjectHandle as _MObjectHandle
 
+from rig._internal.units import CHECKED as _UNITS_CHECKED
+from rig._internal.units import check as _check_units
+
 # The API fast paths (`rig._internal.api_edits`: the connects and the single numeric value
 # sets) read it at every edit: False
 # sends every edit through cmds (the scopes, barriers and call-outs stay, and change nothing
@@ -332,6 +335,11 @@ def run_statement(func: Callable[..., Any], args: tuple, kwargs: dict) -> Any:
     `one_step` opened is closed after that registration."""
     if _S.open:
         return func(*args, **kwargs)
+    if not _UNITS_CHECKED[0]:
+        # rig's working units, cm and degrees: one warning in a scene set to others
+        # (`rig._internal.units`), checked again once a scene is made or opened or its
+        # units change
+        _check_units()
     if LIST_TYPE:
         # the List rule: a List argument holding a deleted or freed element raises
         # before anything is built (see `check_lists`)

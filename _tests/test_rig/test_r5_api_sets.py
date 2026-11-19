@@ -302,6 +302,9 @@ class TestTheCoercionMatrix(_SetCase):
         for linear, angle in (("cm", "deg"), ("m", "rad"), ("in", "deg")):
             cmds.file(new=True, force=True)
             cmds.currentUnit(linear=linear, angle=angle)
+            # rig's one warning in a scene not in cm and degrees (rig._internal.units), before
+            # the routes' printed lines are compared
+            _statement(lambda: None)
             with self.subTest(units=(linear, angle)):
                 self.assertEqual(self.compare(_MORE, values, attrs={"qdl", "qda", "qfli", "qfa"}), 32)
                 # a transform's translate and rotate (internal cm / rad, read in the UI unit)

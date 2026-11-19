@@ -106,6 +106,22 @@ opened again. With a literal operand, `x * 2` builds a `lerp`
 `f.min([x, 0])` a `clampRange` bounded by the literal. `x + 0` keeps the
 `sum` node, which adds a lost 0 just the same.
 
+rig works in Maya's default units, centimetres and degrees (at any frame
+rate): its math is built and checked in them. In a scene set to others,
+some of it gives other values:
+
+* in radians, `rig.fuse()`'s nodes (section 43) read and write angles in
+  degrees, where rig's network works in the scene's unit:
+  `node1.tx + node2.rx` differs between the two;
+* in another linear unit, on Maya 2024 to 2026, whose math nodes take
+  distances and compute in centimetres, rig's network multiplies and
+  divides distances in centimetres: `a.tx * 2` with `a.tx` at 1 m gives
+  200 m (fused math, and Maya 2027, give 2 m). Sums are right.
+
+rig warns once in such a scene, at its first statement (`Warning: rig:
+this scene works in m and deg: ...`), and again once a scene is made or
+opened or its units change.
+
 ---
 
 ## 1. Node

@@ -319,6 +319,12 @@ print(repr(Transform.create(name="rig")))                    # Transform("rig1")
   works without it).
   `with rig.undo_chunk("build arm"):`, or `@rig.undo_chunk` on a function,
   makes a whole build one named step.
+- **rig works in cm and degrees.** Maya's default units (at any frame
+  rate) are the ones its math is built and checked in. In a scene set to
+  others some of it gives other values (in radians, `rig.fuse()`'s angles;
+  in another linear unit on Maya 2024 to 2026, products and quotients of
+  distances in rig's network), so rig warns once in such a scene
+  ([CHEATSHEET, Setup](CHEATSHEET.md#setup)).
 
 ```python
 from rig import set_options, lerp, functions as f
