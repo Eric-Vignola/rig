@@ -172,7 +172,7 @@ class TestNodes(_Case):
                 self.out.tz << self.a.tz * 2 + 1
         with rig.fuse():
             self.out.sx << self.a.sx * 2 + 1
-        self.assertEqual(sorted(self.fused_nodes()), ["calc", "calc2", "fused1", "inner"])
+        self.assertEqual(sorted(self.fused_nodes()), ["calc", "calc2", "inner", "rigExpression1"])
         with mock.patch.object(_fuse, "MAX_INSTRUCTIONS", 1):    # a node a value: two nodes
             with rig.fuse("arm"):
                 self.out.rx << self.a.tx * 3 + 2
@@ -432,8 +432,8 @@ class TestNodes(_Case):
             u = self.a.tx * 2
             self.out.tx << u * u + 1
             far.t << self.a.t * u
-        self.assertEqual(self.fused_nodes(), ["fused1"])
-        self.assertEqual(cmds.getAttr("fused1.notes"), "\n".join([   # Markdown
+        self.assertEqual(self.fused_nodes(), ["rigExpression1"])
+        self.assertEqual(cmds.getAttr("rigExpression1.notes"), "\n".join([   # Markdown
             "# rig.fuse",
             "",
             "One `rigExpression` node computes these expressions.",
@@ -1562,7 +1562,7 @@ class TestUnfuse(_MatrixCase):
         self.assertEqual(self.fused_nodes(), [])
         cmds.undo()
         self.assertEqual(set(cmds.ls()), nodes)
-        self.assertEqual(self.fused_nodes(), ["fused1"])
+        self.assertEqual(self.fused_nodes(), ["rigExpression1"])
         np.testing.assert_allclose(cmds.getAttr("out.t")[0], expected)
         cmds.redo()
         self.assertEqual(self.fused_nodes(), [])
@@ -1687,11 +1687,11 @@ class TestUnfuse(_MatrixCase):
         with rig.fuse():
             self.out.tx << self.a.tx * 2
         with self.assertRaisesRegex(TypeError, "is a transform, not a rigExpression"):
-            rig.unfuse("fused1", "a")
+            rig.unfuse("rigExpression1", "a")
         with self.assertRaisesRegex(RuntimeError, "inside rig.fuse"):
             with rig.fuse():
                 rig.unfuse()
-        self.assertEqual(self.fused_nodes(), ["fused1"])
+        self.assertEqual(self.fused_nodes(), ["rigExpression1"])
         self.assertEqual(cmds.getAttr("out.tx"), 3.0)
 
     def test_describe_reads_the_program(self):
@@ -1700,7 +1700,7 @@ class TestUnfuse(_MatrixCase):
         self.inputs()
         with rig.fuse():
             self.out.tx << (self.a.tx + self.b.ty) * 2
-        text = unfuse.describe("fused1")
+        text = unfuse.describe("rigExpression1")
         self.assertIn("- `scalarIn[0] <- a.translateX`", text)
         self.assertIn("- `scalarOut[0] = ((a.translateX + b.translateY) * 2)`", text)
 
@@ -2410,7 +2410,7 @@ class TestHandle(_Case):
         self.assertEqual(io.name, "calc")             # the name the block was given
         with rig.fuse() as unnamed:
             self.out.sx << self.a.sx * 2 + 1
-        self.assertEqual(str(unnamed), "fused1")
+        self.assertEqual(str(unnamed), "rigExpression1")
 
     def test_no_node_before_the_first_connection(self):
         with rig.fuse("calc") as io:

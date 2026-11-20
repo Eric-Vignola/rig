@@ -4728,10 +4728,10 @@ A fused value is built when it is used, not when it is written, so:
 * The block is one undo step. `rig.fuse("arm")` names its node `arm`:
   `arm1`, `arm2` ... when a node has the name (above, the block's node
   is `rider1`: the transform is `rider`), and for the block's next
-  nodes. A block with no name makes `fused1`, `fused2` ... Name a block
-  unlike the nodes built in it: Maya numbers both in one series (a block
-  `rider` in a loop that makes the joints `rider1`, `rider2` ... takes
-  some of their numbers).
+  nodes. A block with no name makes `rigExpression1`, `rigExpression2`
+  ... Name a block unlike the nodes built in it: Maya numbers both in one
+  series (a block `rider` in a loop that makes the joints `rider1`,
+  `rider2` ... takes some of their numbers).
 * `with rig.fuse("arm") as io:` gives the block, which stands in for its
   node once it made one: `str(io)` is the node's name, so
   `cmds.select(io)` selects it; `io.notes`, `io.vectorOut[0]`,

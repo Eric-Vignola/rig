@@ -3116,8 +3116,9 @@ def _place(pending: list, into=None, dests=None, refuses=None) -> None:
 
 
 def _node_name() -> str:
-    # the innermost named block's name: Maya numbers it when a node has it (``arm1`` ...)
-    return next((n for n in reversed(FUSE.names) if n), None) or "fused1"
+    # the innermost named block's name: Maya numbers it when a node has it (``arm1`` ...);
+    # no name: the node type's, as Maya names a node given none (``rigExpression1`` ...)
+    return next((n for n in reversed(FUSE.names) if n), None) or NODE_TYPE + "1"
 
 
 def _commit(record: _Record, c: _Compiled, own: bool = True) -> None:
@@ -3790,8 +3791,8 @@ class fuse:
     """``with rig.fuse():`` -- fuse rig's scalar and vector math in the block into
     ``rigExpression`` nodes (see `rig._internal.fuse`). ``rig.fuse("arm")`` names its node
     ``arm`` (``arm1`` ... when a node has the name, or for the block's next node; no name:
-    ``fused1`` ...). The block is one undo step. Without the rig plug-in (rig.mll), the
-    block builds rig's nodes, with one warning per session. Inside it,
+    ``rigExpression1`` ...). The block is one undo step. Without the rig plug-in (rig.mll),
+    the block builds rig's nodes, with one warning per session. Inside it,
     ``rig.set_options(fuse=False)`` turns fusing off for the rest of the block (a block
     opened after it fuses); code a ``rig.run`` / ``rig.exec`` runs fuses as the block does.
 
