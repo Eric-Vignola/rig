@@ -6,7 +6,7 @@ the rig it describes.
 
 ![Three cubes and a lerp](examples/ye_olde_lerp.gif)
 
-## A taste
+## Example
 
 The script in the GIF, with the cubes made first so it runs in an empty scene:
 
@@ -46,7 +46,7 @@ cube and the third one stays halfway between.
   opens anywhere, with or without rig. The one exception is opt-in:
   `rig.fuse()`, next.
 
-## rig.fuse(): fusing many nodes into a few
+## rig.fuse() and rig.unfuse(): many nodes into a few, and back
 
 Complex, elegant rigs can lead to large node networks. The provided
 [rail_spine.py](examples/rail_spine.py) example builds 1,721 nodes and
