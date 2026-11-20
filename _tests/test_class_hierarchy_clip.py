@@ -15,8 +15,14 @@
 * ``parent=`` with ``world_space=True``: the roots are solved on every frame.
 * A clip's joints evaluate what its world matrices hold: one whose segment scale compensate is on
   takes its parent's scale out, wired from a joint of the clip as ``cmds.parent`` wires it.
-* A plain HierarchyData (``clip.rest_pose``) builds a clip without keys.
+* The pose of one frame (``clip.frames[i]``, ``clip.at(n)``), a plain HierarchyData, builds
+  without keys.
 * ``create_hierarchy(world_space=)`` takes a bool, as ``load_hierarchy`` does.
+
+On cgmath 4a9a226 (the user's decisions of 2026-11-19): a clip holds every frame and has no
+current one, so what gets no key (a flat channel, a node's visibility, a keyable user attribute)
+takes the first frame's value; a part of a clip (frames cut, nodes picked) is a clip and builds
+as one; one node of a clip is no TransformData.
 
 Each test failed against the source files of 39a3dbb, the commit before the feature (negative
 control), except the guards.
@@ -26,7 +32,6 @@ import os
 import pathlib
 import shutil
 import tempfile
-import unittest
 from unittest import mock
 
 import numpy as np
@@ -88,7 +93,7 @@ def _clip(frames=6, start_frame=1001, fps=24.0):
     for name, columns in _MOVING.items():
         for column in columns:
             values = np.cumsum(rng.uniform(-9, 9, frames))
-            setattr(clip.frames[name], column, 1 + np.abs(values) / 9 if "scale" in column else values)
+            setattr(clip[name], column, 1 + np.abs(values) / 9 if "scale" in column else values)
     cmds.delete("root")
     return clip
 
@@ -202,7 +207,7 @@ class TestOnlyWhatChanges(_Case):
             for column in columns:
                 with self.subTest(f"{name}.{column}"):
                     keys = cmds.keyframe(f"{name}_{_attr(column)}", query=True, valueChange=True)
-                    np.testing.assert_allclose(keys, getattr(clip.frames[name], column).ravel(), atol=1e-9)
+                    np.testing.assert_allclose(keys, getattr(clip[name], column).ravel(), atol=1e-9)
 
     def test_a_flat_column_is_a_plain_value_that_holds(self):
         Transform.create_hierarchy(_clip())
@@ -222,24 +227,24 @@ class TestOnlyWhatChanges(_Case):
         self.assertAlmostEqual(cmds.getAttr("grp.rotateAxisZ", time=1003),    30.0, places=12)
 
     def test_any_difference_is_a_key_on_every_frame(self):
-        clip                         = _two_transforms(frames=5)
-        clip.frames["a"].translate_x = [1, 1, 1, 1, 1 + 1e-12]
-        clip.frames["b"].scale_z     = [1, 2, 1, 1, 1]
+        clip                  = _two_transforms(frames=5)
+        clip["a"].translate_x = [1, 1, 1, 1, 1 + 1e-12]
+        clip["b"].scale_z     = [1, 2, 1, 1, 1]
         Transform.create_hierarchy(clip)
         self.assertEqual(_curves(), ["a_translateX", "b_scaleZ"])
         self.assertEqual(_frames("a_translateX"), [1, 2, 3, 4, 5])
         self.assertEqual(_frames("b_scaleZ"), [1, 2, 3, 4, 5])
 
     def test_a_transform_has_no_joint_orient_to_key(self):
-        clip                            = _two_transforms(frames=3)
-        clip.frames["b"].joint_orient_y = [0, 10, 20]
-        clip.frames["b"].rotate_y       = [0, 10, 20]
+        clip                     = _two_transforms(frames=3)
+        clip["b"].joint_orient_y = [0, 10, 20]
+        clip["b"].rotate_y       = [0, 10, 20]
         Transform.create_hierarchy(clip)
         self.assertEqual(_curves(), ["b_rotateY"])
 
     def test_two_frames_are_enough(self):
-        clip                         = _two_transforms(frames=2)
-        clip.frames["a"].translate_x = [1, 2]
+        clip                  = _two_transforms(frames=2)
+        clip["a"].translate_x = [1, 2]
         Transform.create_hierarchy(clip)
         self.assertEqual(_curves(), ["a_translateX"])
         self.assertEqual(_frames("a_translateX"), [1, 2])
@@ -301,8 +306,8 @@ class TestNames(_Case):
             Transform.create(name="hand", parent=Transform.create(name=side, parent=body))
         clip = ClipData(body.serialize_hierarchy(), frames=3, start_frame=1)
         self.assertEqual(clip.name, ["body", "L", "hand", "R", "hand"])
-        clip.frames[[2]].translate_x = [1, 2, 3]
-        clip.frames[[4]].translate_x = [7, 8, 9]
+        clip[[2]].translate_x = [1, 2, 3]
+        clip[[4]].translate_x = [7, 8, 9]
         cmds.delete("body")
         nodes = Transform.create_hierarchy(clip)
         self.assertEqual(len(_curves()), 2)
@@ -336,12 +341,45 @@ class TestWorldMatrices(_Case):
         cmds.delete([str(top) for top in tops])
         self.assert_worlds(Transform.create_hierarchy(clip), clip)
 
-    def test_on_the_frame_the_clip_is_bound_to_or_any_other(self):
-        clip       = _clip()
-        clip.frame = 4
-        nodes      = Transform.create_hierarchy(clip)
+    def test_a_clip_has_no_current_frame(self):
+        """Whatever frame was read last, the build is the same: every frame's world matrix is the
+        clip's, and a flat channel its one value."""
+        clip = _clip()
+        clip.frames[4].world_matrix  # the pose of a frame, read: the clip is not moved
+        nodes = Transform.create_hierarchy(clip)
         self.assert_worlds(nodes, clip)
         self.assertEqual(cmds.getAttr("root.ty"), 2.0)
+
+    def test_what_gets_no_key_takes_the_first_frame_s_value(self):
+        """A clip holds a node's visibility and its keyable user attributes frame by frame, and
+        rig keys neither: each is a plain value, the first frame's (the user's decision of
+        2026-11-19), from `create_hierarchy` and `load_hierarchy`. `key_hierarchy` sets the
+        visibility so too; it writes no user attribute, a clip's or a hierarchy's."""
+        top = Transform.create(name="a")
+        cmds.addAttr("a", longName="amount", attributeType="double", keyable=True)
+        Transform.create(name="b", parent=top)
+        clip                 = ClipData(top.serialize_hierarchy(), frames=4, start_frame=1001)
+        clip["a"].amount     = [0.25, 1.0, 1.5, 1.8]
+        clip["b"].visibility = [False, True, True, True]
+        clip["b"].rotate_y   = [0, 10, 20, 30]
+        for label, call, amount in (
+            ("create_hierarchy", lambda: Transform.create_hierarchy(clip), 0.25),
+            ("load_hierarchy", lambda: Transform.load_hierarchy(clip), 0.25),
+            ("key_hierarchy", lambda: Transform("a").key_hierarchy(clip), 5.0),
+        ):
+            with self.subTest(label):
+                if label != "key_hierarchy":  # which keys the two nodes the scene holds
+                    self.new_scene()
+                else:
+                    cmds.delete(_curves())
+                    cmds.setAttr("a.amount", 5.0)
+                    cmds.setAttr("b.visibility", True)
+                call()
+                self.assertEqual(_curves(), ["b_rotateY"])
+                for frame in (1001, 1004):
+                    self.assertEqual(cmds.getAttr("a.amount", time=frame), amount)
+                    self.assertFalse(cmds.getAttr("b.visibility", time=frame))
+        np.testing.assert_array_equal(np.ravel(clip["a"].amount), [0.25, 1.0, 1.5, 1.8])
 
     def test_the_scene_evaluates_them_at_its_current_time(self):
         clip  = _clip()
@@ -362,9 +400,9 @@ class TestFrameForFrame(_Case):
         for start in (1001, 0, -5):
             with self.subTest(start=start):
                 self.new_scene()
-                clip                         = _two_transforms(frames=3)
-                clip.start_frame             = start
-                clip.frames["a"].translate_x = [1, 2, 3]
+                clip                  = _two_transforms(frames=3)
+                clip.start_frame      = start
+                clip["a"].translate_x = [1, 2, 3]
                 Transform.create_hierarchy(clip)
                 self.assertEqual(_frames("a_translateX"), [start, start + 1, start + 2])
 
@@ -394,7 +432,7 @@ class TestFrameForFrame(_Case):
         still  = _two_transforms()
         one    = _two_transforms(frames=1)
         orient = _two_transforms(frames=3)
-        orient.frames["b"].joint_orient_y = [0, 10, 20]  # a transform has none to key
+        orient["b"].joint_orient_y = [0, 10, 20]  # a transform has none to key
         for label, clip in (("flat", still), ("one frame", one), ("no plug to key", orient)):
             with self.subTest(label):
                 clip.fps = 30.0
@@ -500,9 +538,9 @@ class TestOneStatement(_Case):
         self.assertEqual(_curves(), _moving_curves())
 
     def test_a_nan_refuses_with_nothing_made(self):
-        clip                        = _clip()
-        clip.frames["arm"].rotate_x = [0, 1, np.nan, 3, 4, 5]
-        nodes                       = sorted(cmds.ls())
+        clip                 = _clip()
+        clip["arm"].rotate_x = [0, 1, np.nan, 3, 4, 5]
+        nodes                = sorted(cmds.ls())
         with self.assertRaisesRegex(ValueError, "AnimCurve values must be finite"):
             Transform.create_hierarchy(clip)
         self.assertEqual(sorted(cmds.ls()), nodes)
@@ -689,10 +727,10 @@ class TestParent(_Case):
         """cgmath lines a new node up in a clip's blocks when a solve first reads it, and that read
         takes its scale from the blocks before the line-up: a stand-in left to it loses the
         parent's scale on the first root's solve."""
-        clip                         = _two_transforms(frames=3)
-        clip.frames["a"].rotate_y    = [0, 40, 80]
-        clip.frames["b"].translate_x = [1, 2, 3]
-        nodes                        = Transform.create_hierarchy(clip, parent=self._rig_grp(scale=2), world_space=True)
+        clip                  = _two_transforms(frames=3)
+        clip["a"].rotate_y    = [0, 40, 80]
+        clip["b"].translate_x = [1, 2, 3]
+        nodes                 = Transform.create_hierarchy(clip, parent=self._rig_grp(scale=2), world_space=True)
         self.assert_worlds(nodes, clip)
         self.assertAlmostEqual(cmds.getAttr(f"{nodes[0].get_long_name()}.sy", time=2), 0.5, places=9)
 
@@ -705,32 +743,32 @@ class TestParent(_Case):
         self.assertEqual(len(_curves()), 17)
 
     def test_world_space_keys_the_channels_as_they_were_solved(self):
-        clip                      = _two_transforms(frames=3)
-        clip.frames["a"].rotate_y = [0, 40, 80]
-        nodes                     = Transform.create_hierarchy(clip, parent=self._rig_grp(), world_space=True)
+        clip               = _two_transforms(frames=3)
+        clip["a"].rotate_y = [0, 40, 80]
+        nodes              = Transform.create_hierarchy(clip, parent=self._rig_grp(), world_space=True)
         self.assert_worlds(nodes, clip)
         self.assertEqual(_curves(), ["a_rotateX", "a_rotateY", "a_rotateZ"])
         self.assertEqual(cmds.getAttr(f"{nodes[1].get_long_name()}.ty"), 2.0)
 
     def test_world_space_leaves_a_solve_s_round_off_flat(self):
         """A root that turns comes back with its scale 1 give or take 1e-15: no curve."""
-        clip                    = _two_transforms(frames=40)
-        clip.frames["a"].rotate = np.cumsum(np.random.default_rng(8).uniform(-30, 30, (40, 1, 3)), axis=0)
-        nodes                   = Transform.create_hierarchy(clip, parent=self._rig_grp(scale=2), world_space=True)
+        clip             = _two_transforms(frames=40)
+        clip["a"].rotate = np.cumsum(np.random.default_rng(8).uniform(-30, 30, (40, 1, 3)), axis=0)
+        nodes            = Transform.create_hierarchy(clip, parent=self._rig_grp(scale=2), world_space=True)
         self.assertEqual(_curves(), ["a_rotateX", "a_rotateY", "a_rotateZ"])
         self.assert_worlds(nodes, clip)
 
     def test_world_space_still_keys_what_really_changes(self):
-        clip                     = _two_transforms(frames=3)
-        clip.frames["a"].scale_x = [1, 1 + 1e-9, 1]
+        clip              = _two_transforms(frames=3)
+        clip["a"].scale_x = [1, 1 + 1e-9, 1]
         Transform.create_hierarchy(clip, parent=self._rig_grp(), world_space=True)
         self.assertEqual(_curves(), ["a_scaleX"])
 
     def test_the_round_off_of_a_large_value_is_flat_too(self):
         """A root under a scale of 1e-5 holds a scale of 1e5, its round-off above 1e-12."""
-        clip                    = _two_transforms(frames=40)
-        clip.frames["a"].rotate = np.cumsum(np.random.default_rng(8).uniform(-30, 30, (40, 1, 3)), axis=0)
-        nodes                   = Transform.create_hierarchy(clip, parent=self._rig_grp(scale=1e-5), world_space=True)
+        clip             = _two_transforms(frames=40)
+        clip["a"].rotate = np.cumsum(np.random.default_rng(8).uniform(-30, 30, (40, 1, 3)), axis=0)
+        nodes            = Transform.create_hierarchy(clip, parent=self._rig_grp(scale=1e-5), world_space=True)
         self.assertEqual(_curves(), ["a_rotateX", "a_rotateY", "a_rotateZ"])
         self.assert_worlds(nodes, clip)
 
@@ -740,8 +778,8 @@ class TestParent(_Case):
         for label, name, world_space in (("the root, as it is", "a", False), ("below a solved root", "b", True)):
             with self.subTest(label):
                 self.new_scene()
-                clip                          = _two_transforms(frames=3)
-                clip.frames[name].translate_z = [0, 1e-13, 0]
+                clip                   = _two_transforms(frames=3)
+                clip[name].translate_z = [0, 1e-13, 0]
                 Transform.create_hierarchy(clip, parent=self._rig_grp(), world_space=world_space)
                 self.assertEqual(_curves(), [f"{name}_translateZ"])
 
@@ -754,10 +792,10 @@ class TestParent(_Case):
 
     def test_two_roots(self):
         one, two = _two_transforms(("a", "b")), _two_transforms(("c", "d"))
-        data = HierarchyData([node.copy() for node in (*one, *two)])
+        data = HierarchyData([node.copy() for node in (*one.frames[0], *two.frames[0])])
         clip = ClipData(data, frames=3, start_frame=1)
-        clip.frames["a"].rotate_y    = [0, 40, 80]
-        clip.frames["d"].translate_x = [1, 2, 3]
+        clip["a"].rotate_y    = [0, 40, 80]
+        clip["d"].translate_x = [1, 2, 3]
         nodes = Transform.create_hierarchy(clip, parent=self._rig_grp(scale=3), world_space=True)
         self.assertEqual([n.get_long_name() for n in nodes[:2]], ["|rig_grp|a", "|rig_grp|a|b"])
         self.assert_worlds(nodes, clip)
@@ -765,8 +803,8 @@ class TestParent(_Case):
     def test_a_parent_the_clip_was_taken_from(self):
         """The node keeps its uuid in the clip: the stand-in does not take the column it holds."""
         _skeleton()
-        clip                          = ClipData(Node("root").serialize_hierarchy(), frames=4, start_frame=1)
-        clip.frames["spine"].rotate_y = [0, 30, 60, 90]
+        clip                   = ClipData(Node("root").serialize_hierarchy(), frames=4, start_frame=1)
+        clip["spine"].rotate_y = [0, 30, 60, 90]
         clip.add_prefix("b_")
         cmds.setAttr("root.tx", 5)
         nodes = Transform.create_hierarchy(clip, parent="spine", world_space=True, uuids=False)
@@ -774,9 +812,9 @@ class TestParent(_Case):
         self.assert_worlds(nodes, clip)
 
     def test_a_parent_that_moves_is_taken_where_it_is_at_the_build(self):
-        clip                      = _two_transforms(frames=5)
-        clip.frames["a"].rotate_y = [0, 20, 40, 60, 80]
-        grp                       = self._rig_grp()
+        clip               = _two_transforms(frames=5)
+        clip["a"].rotate_y = [0, 20, 40, 60, 80]
+        grp                = self._rig_grp()
         cmds.setKeyframe("rig_grp", attribute="translateX", time=1, value=0)
         cmds.setKeyframe("rig_grp", attribute="translateX", time=5, value=8)
         cmds.currentTime(3)
@@ -815,14 +853,14 @@ class TestCompensation(UndoWalk, _Case):
         arm.t.set(3, 0, 1)
         hand.t.set(2, 0, 0)
         spine.jointOrient.set(10, 20, 30)
-        clip                          = ClipData(root.serialize_hierarchy(), frames=frames, start_frame=1)
-        line                          = np.linspace(0, 1, frames)
-        clip.frames["root"].rotate_y  = 120 * line
-        clip.frames["spine"].rotate_x = 40 * line
-        clip.frames["spine"].scale_x  = 1 + line
-        clip.frames["spine"].scale_y  = 1 + 2 * line
-        clip.frames["arm"].rotate_y   = 70 * line
-        clip.frames["arm"].scale_z    = 1 - 0.5 * line
+        clip                   = ClipData(root.serialize_hierarchy(), frames=frames, start_frame=1)
+        line                   = np.linspace(0, 1, frames)
+        clip["root"].rotate_y  = 120 * line
+        clip["spine"].rotate_x = 40 * line
+        clip["spine"].scale_x  = 1 + line
+        clip["spine"].scale_y  = 1 + 2 * line
+        clip["arm"].rotate_y   = 70 * line
+        clip["arm"].scale_z    = 1 - 0.5 * line
         cmds.delete("root")
         return clip
 
@@ -918,10 +956,10 @@ class TestCompensation(UndoWalk, _Case):
 
     def test_its_scale_is_keyed_on_the_joints_that_take_it_out(self):
         """A flat scale is a plain value there too, and its keys go in the one statement."""
-        clip                        = self._chain_without_its_root_s_compensation()
-        clip.frames["root"].scale_y = 2.0
-        clip.frames["root"].scale_x = 1 + np.linspace(0, 1, 6)
-        up                          = Transform.create(name="up", sx=2, sy=2, sz=2)
+        clip                 = self._chain_without_its_root_s_compensation()
+        clip["root"].scale_y = 2.0
+        clip["root"].scale_x = 1 + np.linspace(0, 1, 6)
+        up                   = Transform.create(name="up", sx=2, sy=2, sz=2)
         with mock.patch.object(anim_keys, "inject_rows", wraps=anim_keys.inject_rows) as rows:
             nodes = Joint.create_hierarchy(clip, parent=up, world_space=True)
         rows.assert_called_once()
@@ -932,7 +970,7 @@ class TestCompensation(UndoWalk, _Case):
         self.assertNotIn("spine_inverseScaleY", keys)
         self.assertEqual(cmds.getAttr(f"{spine}.inverseScaleY"), 2.0)
         held = cmds.keyframe("spine_inverseScaleX", query=True, valueChange=True)
-        np.testing.assert_allclose(held, clip.frames["root"].scale_x.ravel())
+        np.testing.assert_allclose(held, clip["root"].scale_x.ravel())
 
     def test_a_held_scale_that_moves_late_takes_the_global_tangents(self):
         """Keyed on every frame, the held ones too, with the tangents every key takes."""
@@ -943,7 +981,7 @@ class TestCompensation(UndoWalk, _Case):
         self.addCleanup(cmds.keyTangent, g=True, **kept)
         cmds.keyTangent(g=True, inTangentType="flat", outTangentType="step")
         clip = self._chain_without_its_root_s_compensation()
-        clip.frames["root"].scale_x = [1, 1, 1, 1, 1, 2]
+        clip["root"].scale_x = [1, 1, 1, 1, 1, 2]
         up    = Transform.create(name="up", sx=2, sy=2, sz=2)
         nodes = Joint.create_hierarchy(clip, parent=up, world_space=True)
         self.assert_worlds(nodes, clip)
@@ -1005,20 +1043,28 @@ class TestCompensation(UndoWalk, _Case):
 
 # ---------------------------------------------------------------------------------------------
 class TestTheClipIsLeftAsItWas(_Case):
-    """The build works on a copy: the clip's blocks, frame and names are as they were."""
+    """The build works on a copy: the clip's blocks and names are as they were."""
 
     def test_after_a_build_under_a_parent(self):
-        clip       = _clip()
-        clip.frame = 3
-        channels   = ("scale", "rotate", "translate", "rotate_axis", "joint_orient")
-        blocks     = {channel: np.array(getattr(clip.frames, channel)) for channel in channels}
+        clip     = _clip()
+        channels = ("scale", "rotate", "translate", "rotate_axis", "joint_orient")
+        blocks   = {channel: np.array(getattr(clip.frames, channel)) for channel in channels}
         Transform.create_hierarchy(clip, parent=Transform.create(name="grp1"), world_space=True)
         self.assertEqual(len(_curves()), len(_moving_curves()))
-        self.assertEqual(clip.frame,     3)
-        self.assertEqual(clip.name,      _NAMES)
+        self.assertEqual(clip.name, _NAMES)
         self.assertIsNone(clip[0].parent_uuid)
         for channel in channels:
             np.testing.assert_array_equal(getattr(clip.frames, channel), blocks[channel], channel)
+
+    def test_after_a_keying(self):
+        """`key_hierarchy` too: the names of its copy hold the Maya nodes, the clip's its own."""
+        clip   = _clip()
+        nodes  = Transform.create_hierarchy(clip.frames[0])
+        blocks = np.array(clip.frames.rotate)
+        nodes[0].key_hierarchy(clip)
+        self.assertEqual(clip.name, _NAMES)
+        self.assertTrue(all(type(node.name) is str for node in clip.list))
+        np.testing.assert_array_equal(clip.frames.rotate, blocks)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1035,26 +1081,141 @@ class TestWithoutKeys(_Case):
         self.assertEqual(cmds.getAttr("probe.shear")[0], (0.0, 0.0, 0.0))
         self.assertEqual(cmds.getAttr("probe.t")[0], (0.0, 1.0, 1.0))
 
-    @unittest.skipUnless(hasattr(ClipData, "rest_pose"), "a ClipData of this cgmath holds no rest pose")
-    def test_the_rest_pose(self):
-        """guard: a plain HierarchyData, as ever."""
-        root = _skeleton()
-        rest = root.serialize_hierarchy()
-        clip = ClipData(rest, frames=3)
-        clip.frames["root"].translate_x = [1, 2, 3]
-        clip.rest_pose                  = rest
+    def test_the_pose_of_one_frame(self):
+        """The pose of one frame of a clip is a plain HierarchyData, by its index or by its frame
+        number: the nodes as on that frame, no key, from `create_hierarchy` and `load_hierarchy`.
+        The pose is a live view of the clip, and the build works on a copy: the clip is as it
+        was."""
+        root                     = _skeleton()
+        clip                     = ClipData(root.serialize_hierarchy(), frames=3, start_frame=1001)
+        clip["root"].translate_x = [1, 2, 3]
         cmds.delete("root")
-        nodes = Transform.create_hierarchy(clip.rest_pose)
-        self.assertEqual(_curves(), [])
-        self.assertEqual(nodes[0].tx.get(), 1.0)
+        for label, pose, want in (("frames[i]", clip.frames[2], 3.0), ("at(n)", clip.at(1002), 2.0)):
+            for build in (Transform.create_hierarchy, Transform.load_hierarchy):
+                with self.subTest(label, build=build.__name__):
+                    self.new_scene()
+                    self.assertIsInstance(pose, HierarchyData)
+                    nodes = build(pose)
+                    self.assertEqual([n.get_short_name() for n in nodes], _NAMES)
+                    self.assertEqual(_curves(), [])
+                    self.assertEqual(nodes[0].tx.get(), want)
+        self.assertEqual(clip.name, _NAMES)
+        np.testing.assert_array_equal(np.ravel(clip["root"].translate_x), [1, 2, 3])
 
     def test_one_frame_of_the_clip(self):
         """guard: a cut of one frame is a one-frame clip."""
-        clip                         = _two_transforms(frames=3)
-        clip.frames["a"].translate_x = [1, 2, 3]
-        nodes                        = Transform.create_hierarchy(clip.frames[1:2])
+        clip                  = _two_transforms(frames=3)
+        clip["a"].translate_x = [1, 2, 3]
+        nodes                 = Transform.create_hierarchy(clip.frames[1:2])
         self.assertEqual(_curves(), [])
         self.assertEqual(nodes[0].tx.get(), 2.0)
+
+
+# ---------------------------------------------------------------------------------------------
+class TestAPartOfAClip(_Case):
+    """A part of a clip is a clip (a view of it; the user's decision of 2026-11-19): frames cut
+    or nodes picked build and key as a whole clip does, and the clip is left as it was."""
+
+    def _moving(self):
+        clip = _clip(frames=6)
+        return clip, np.array(clip.frames.rotate)
+
+    def test_frames_cut_keep_their_frame_numbers(self):
+        clip, blocks = self._moving()
+        part = clip.frames[2:5]
+        self.assertIsInstance(part, ClipData)
+        nodes = Transform.create_hierarchy(part)
+        self.assertEqual(_curves(), _moving_curves())
+        for curve in _curves():
+            self.assertEqual(_frames(curve), [1003.0, 1004.0, 1005.0], curve)
+        self.assertLessEqual(np.abs(_worlds(nodes, part) - clip.frames.world_matrix[2:5]).max(), 1e-9)
+        np.testing.assert_array_equal(clip.frames.rotate, blocks)
+        self.assertEqual((clip.frame_count, clip.start_frame), (6, 1001))
+
+    def test_nodes_picked_build_alone_and_one_whose_parent_is_left_out_is_a_root(self):
+        for label, pick in (("names", lambda clip: clip[["spine", "arm"]]), ("match", lambda clip: clip.match("*p*"))):
+            with self.subTest(label):
+                self.new_scene()
+                clip, blocks = self._moving()
+                part = pick(clip)
+                self.assertIsInstance(part, ClipData)
+                nodes = Transform.create_hierarchy(part)
+                names = [node.get_long_name() for node in nodes]
+                self.assertEqual(names, {"names": ["|spine", "|spine|arm"], "match": ["|spine", "|grp", "|grp|probe"]}[label])
+                kept = [name.rsplit("|", 1)[-1] for name in names]
+                self.assertEqual(_curves(), sorted(c for c in _moving_curves() if c.split("_")[0] in kept))
+                for name in kept:
+                    for column in _MOVING[name]:
+                        keys = cmds.keyframe(f"{name}_{_attr(column)}", query=True, valueChange=True)
+                        np.testing.assert_allclose(keys, np.ravel(getattr(clip[name], column)), atol=1e-9)
+                np.testing.assert_array_equal(clip.frames.rotate, blocks)
+                self.assertEqual(clip.name, _NAMES)
+
+    def test_a_part_keys_the_nodes_it_names(self):
+        """`key_hierarchy` takes a part as it takes a clip: by name, the picked nodes alone."""
+        clip, _ = self._moving()
+        nodes = Transform.create_hierarchy(clip.frames[0])
+        keyed = nodes[0].key_hierarchy(clip[["spine", "arm"]], index=False)
+        self.assertEqual([node.get_short_name() for node in keyed], ["spine", "arm"])
+        self.assertEqual(_curves(), sorted(c for c in _moving_curves() if c.split("_")[0] in ("spine", "arm")))
+
+
+# ---------------------------------------------------------------------------------------------
+class TestOneNodeOfAClip(_Case):
+    """``clip["hips"]`` is that node on every frame, no TransformData (the user's decision of
+    2026-11-19): ``Transform.create`` refuses it naming the node on one frame, which it builds;
+    ``List(clip)`` finds a clip's nodes as it finds a hierarchy's."""
+
+    def _clip(self):
+        clip                  = _two_transforms(frames=3)
+        clip["b"].translate_x = [1, 2, 3]
+        return clip
+
+    def test_create_refuses_it_naming_the_node_on_one_frame(self):
+        clip = self._clip()
+        refusal = (
+            r"^Transform\.create\(\) takes name= and parent= as keywords, or one TransformData "
+            r"\(got <'b' on 3 frames of a clip>\): a node of a clip holds every frame; give it on one frame, "
+            r"clip\.frames\[i\]\['b'\], or clip\.at\(n\)\['b'\] by frame number$"
+        )
+        before = cmds.ls()
+        for label, node in (("by name", clip["b"]), ("by index", clip[1])):
+            with self.subTest(label), self.assertRaisesRegex(TypeError, refusal):
+                Transform.create(node)
+        self.assertEqual(cmds.ls(), before)
+
+    def test_what_is_no_node_of_a_clip_keeps_the_plain_refusal(self):
+        """guard: a clip, a part of one, the pose of a frame and a number get no hint."""
+        clip = self._clip()
+        for label, given in (("clip", clip), ("part", clip[["b"]]), ("pose", clip.frames[0]), ("number", 3)):
+            with self.subTest(label):
+                with self.assertRaises(TypeError) as caught:
+                    Transform.create(given)
+                self.assertRegex(str(caught.exception), r"or one TransformData \(got .+\)$")
+                self.assertNotIn("a node of a clip", str(caught.exception))
+
+    def test_the_node_on_one_frame_builds(self):
+        clip = self._clip()
+        for label, node, want in (
+            ("frames[i][name]", clip.frames[2]["b"], 3.0),
+            ("[name].frames[i]", clip["b"].frames[1], 2.0),
+            ("at(n)[name]", clip.at(1)["b"], 1.0),
+        ):
+            with self.subTest(label):
+                self.new_scene()
+                made = Transform.create(node)
+                self.assertEqual(made.get_short_name(), "b")
+                self.assertEqual(made.tx.get(),         want)
+                self.assertEqual(_curves(),             [])
+
+    def test_a_list_of_a_clip_is_its_nodes(self):
+        clip  = self._clip()
+        nodes = Transform.create_hierarchy(clip.frames[0])
+        for label, given in (("clip", clip), ("part", clip[["b"]]), ("pose", clip.frames[1])):
+            with self.subTest(label):
+                found = List(given)
+                self.assertEqual([str(node) for node in found], [str(node) for node in nodes][-len(found):])
+                self.assertEqual(len(found), len(given))
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1084,18 +1245,42 @@ class TestSkippedNodes(_Case):
 
     def test_the_keys_stay_lined_up(self):
         top               = _two_transforms(frames=3)
-        data              = HierarchyData([node.copy() for node in top])
+        data              = top.frames[0].copy()
         data[1].node_type = "parentConstraint"
         data.append(Transform.create(name="c").serialize())
         cmds.delete("c")
-        clip                         = ClipData(data, frames=3, start_frame=1)
-        clip.frames["a"].translate_x = [1, 2, 3]
-        clip.frames["b"].translate_x = [4, 5, 6]
-        clip.frames["c"].translate_x = [7, 8, 9]
+        clip                  = ClipData(data, frames=3, start_frame=1)
+        clip["a"].translate_x = [1, 2, 3]
+        clip["b"].translate_x = [4, 5, 6]
+        clip["c"].translate_x = [7, 8, 9]
         with self.assertLogs("rig.nodetypes.transform", level="WARNING"):
             Transform.create_hierarchy(clip)
         self.assertEqual(_curves(), ["a_translateX", "c_translateX"])
         self.assertEqual(cmds.keyframe("c_translateX", query=True, valueChange=True), [7, 8, 9])
+
+    def test_under_a_parent_in_world_space(self):
+        """The node dropped and the roots solved in one build: what is left keeps its own keys,
+        solved against the parent, and its plain values (read while the parent stands in the
+        data) are its own too."""
+        top               = _two_transforms(frames=3)
+        data              = top.frames[0].copy()
+        data[1].node_type = "parentConstraint"
+        data.append(Transform.create(name="c", ty=4).serialize())
+        cmds.delete("c")
+        clip                  = ClipData(data, frames=3, start_frame=1)
+        clip["a"].translate_x = [1, 2, 3]
+        clip["b"].translate_x = [4, 5, 6]
+        clip["c"].translate_x = [7, 8, 9]
+        with self.assertLogs("rig.nodetypes.transform", level="WARNING"):
+            nodes = Transform.create_hierarchy(clip, parent=Transform.create(name="up", tx=10, ty=1), world_space=True)
+        self.assertEqual([node.get_long_name() for node in nodes], ["|up|a", "|up|c"])
+        self.assertEqual(_curves(), ["a_translateX", "c_translateX"])
+        self.assertEqual(cmds.keyframe("a_translateX", query=True, valueChange=True), [-9, -8, -7])
+        self.assertEqual(cmds.keyframe("c_translateX", query=True, valueChange=True), [-3, -2, -1])
+        self.assertEqual((cmds.getAttr("a.ty"), cmds.getAttr("c.ty")), (-1.0, 3.0))
+        for frame, (a, c) in zip((1, 2, 3), ((1, 7), (2, 8), (3, 9))):
+            self.assertAlmostEqual(cmds.getAttr("a.worldMatrix[0]", time=frame)[12], a, places=9)
+            self.assertAlmostEqual(cmds.getAttr("c.worldMatrix[0]", time=frame)[12], c, places=9)
 
     def test_a_clip_with_no_node_left(self):
         """guard: every node skipped, nothing to key."""
@@ -1114,9 +1299,9 @@ class TestUnits(_Case):
     def test_a_scene_in_millimetres(self):
         self.addCleanup(cmds.currentUnit, linear="cm")
         cmds.currentUnit(linear="mm")
-        clip                         = _two_transforms(frames=3)
-        clip.frames["a"].translate_x = [10, 20, 30]
-        clip.frames["a"].translate_y = [5, 5, 5]
+        clip                  = _two_transforms(frames=3)
+        clip["a"].translate_x = [10, 20, 30]
+        clip["a"].translate_y = [5, 5, 5]
         Transform.create_hierarchy(clip)
         self.assertEqual(_curves(), ["a_translateX"])
         self.assertAlmostEqual(cmds.getAttr("a.tx", time=2), 20.0, places=9)

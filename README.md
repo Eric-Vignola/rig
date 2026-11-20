@@ -89,7 +89,8 @@ rig is a plain Python package. There is nothing to compile unless you want
 3. In Maya: `import rig`
 
 It is tested on Maya 2025 and 2027, and needs numpy and scipy in Maya's
-Python. Saving and loading geometry also needs cgmath (4.0.0rc1 or later).
+Python. Saving and loading geometry also needs cgmath (4.0.0rc1, commit
+`4a9a226` or later).
 `rig.fuse()` needs rig's plug-in, built once with `plugins/build.bat`
 (`build.sh` on macOS): see [plugins](plugins/README.md). The fine print is
 in the [Guide](GUIDE.md#requirements).

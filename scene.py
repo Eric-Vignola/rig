@@ -231,12 +231,14 @@ def _warn_left_out(scene) -> None:
 
 def _kept(hierarchy) -> list:
     """The nodes of `hierarchy` `create_hierarchy` makes, in its order: a node of a type it
-    cannot make (`SUPPORTED_NODE_TYPES`) is dropped with all under it, as it drops them."""
+    cannot make (`SUPPORTED_NODE_TYPES`) is dropped with all under it, as it drops them. Each
+    is the data's own node object (its ``.list``'s): a take hands out a new one per node on
+    every pass, whose id tells nothing."""
     from cgmath.hierarchy import SUPPORTED_NODE_TYPES
 
     dropped = set()
     kept    = []
-    for node in hierarchy:
+    for node in hierarchy.list:
         parent = node.get_parent()
         if node.node_type not in SUPPORTED_NODE_TYPES or (parent is not None and id(parent) in dropped):
             dropped.add(id(node))

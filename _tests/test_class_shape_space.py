@@ -20,7 +20,8 @@ shapes; the transforms are in test_class_xform.
   new transform where the data sits, the update in place puts the CVs there with
   ``world_space=True``, and a surface update refuses data that holds other knots.
 * Where data sits (`TestPlacement`): the world matrix of the transform its ``parent_uuid``
-  names, in ``hierarchy=`` when given (a ClipData at its frame), else in the scene by its UUID,
+  names, in ``hierarchy=`` when given (a HierarchyData: of a clip, the pose of one frame; a
+  ClipData itself is refused, the user's decision of 2026-11-19), else in the scene by its UUID,
   else the identity (a file from another scene); an instanced scene transform is refused.
 * rig's own callers that sample across meshes keep world space by keyword: transfer_from_meshes
   and a follicle's UV at a world position (the transfers' resampler: test_class_comptags).
@@ -359,8 +360,10 @@ class TestAMeshsDataIsObjectSpace(_Case):
 class TestPlacement(_Case):
     """Where data sits (the user's decision of 2026-11-09, on cgmath's shape model): the world
     matrix of the transform its ``parent_uuid`` names, found in ``hierarchy=`` when given (a
-    ClipData at the frame it is on), else in the scene by its UUID, else the identity (a file from
-    another scene); an instanced scene transform is refused."""
+    HierarchyData; of a clip, the pose of one frame), else in the scene by its UUID, else the
+    identity (a file from another scene); an instanced scene transform is refused. A ClipData
+    holds every frame and has no current one: ``hierarchy=clip`` is refused, on every create and
+    load, before anything is read or made (the user's decision of 2026-11-19)."""
 
     def setUp(self):
         super().setUp()
@@ -409,16 +412,56 @@ class TestPlacement(_Case):
         np.testing.assert_allclose(_xyz(copy.get_points(world_space=True)), _local(self.cube) + (0.0, 10.0, 0.0),
                                    rtol=0, atol=1e-5)
 
-    def test_a_clip_places_at_the_frame_it_is_on(self):
+    def _moving(self, data, frames=3):
+        """A clip of the one transform `data` sits under, at y = 0, 5, 9 on its frames 10, 11, 12."""
         from cgmath.hierarchy import ClipData, HierarchyData, TransformData
 
-        data  = self.curve.serialize()
-        under = TransformData("under", uuid=data.parent_uuid)
-        clip  = ClipData(HierarchyData([under]), frames=3, start_frame=0)
-        clip.frames.translate = np.array([[(0.0, 0.0, 0.0)], [(0.0, 5.0, 0.0)], [(0.0, 9.0, 0.0)]])
-        clip.frame            = 2
-        made = NurbsCurve.create(data, hierarchy=clip, uuids=False)
-        np.testing.assert_allclose(_world_matrix(made.get_parent())[3, :3], (0.0, 9.0, 0.0), rtol=0, atol=1e-12)
+        clip                  = ClipData(HierarchyData([TransformData("under", uuid=data.parent_uuid)]), frames=frames, start_frame=10)
+        clip.frames.translate = np.array([[(0.0, 0.0, 0.0)], [(0.0, 5.0, 0.0)], [(0.0, 9.0, 0.0)]])[:frames]
+        return clip
+
+    def test_the_pose_of_one_frame_of_a_clip_places(self):
+        """One frame of a clip is a HierarchyData: by its index, or by its frame number."""
+        for label, node in (("cube", self.cube), ("curve", self.curve)):
+            data = node.serialize(uvs=False)
+            clip = self._moving(data)
+            for pick, pose, height in (("frames[i]", clip.frames[2], 9.0), ("at(n)", clip.at(11), 5.0)):
+                with self.subTest(label, pose=pick):
+                    made = type(node).create(data, hierarchy=pose, uuids=False)
+                    np.testing.assert_allclose(_world_matrix(made.get_parent())[3, :3], (0.0, height, 0.0), rtol=0, atol=1e-12)
+                    frozen = type(node).create(data, world_space=True, hierarchy=pose, uuids=False)
+                    np.testing.assert_allclose(_local(frozen), _local(node) + (0.0, height, 0.0), rtol=0, atol=1e-5)
+
+    def test_a_clip_is_refused_before_anything_is_read_or_made(self):
+        """``hierarchy=clip`` gives no one place, whatever the clip holds (three frames, one,
+        none) and whether the call would have placed anything: a new shape, one under
+        ``transform=``, a file that is not there, an update in place in either space."""
+        from cgmath.hierarchy import ClipData
+
+        srf     = NurbsSurface(self.shapes["surface"])
+        target  = cmds.createNode("transform", name="target")
+        missing = self.path("none.npz")
+        tail    = (r": hierarchy= takes one pose, a HierarchyData, not a ClipData, which holds every frame "
+                   r"\(%d here\): give the pose of one, clip\.frames\[i\], or clip\.at\(n\) by frame number$")
+        for label, node, cls in (("cube", self.cube, Mesh), ("curve", self.curve, NurbsCurve), ("surface", srf, NurbsSurface)):
+            data = node.serialize(uvs=False) if cls is Mesh else node.serialize()
+            name = cls.__name__
+            for frames in (3, 1, 0):
+                clip = self._moving(data, frames) if frames else ClipData(self._moving(data).frames[0].copy())
+                self.assertEqual(clip.frame_count, frames)
+                for call, head, run in (
+                    ("create", rf"^{name}\.create\(\)", lambda: cls.create(data, hierarchy=clip, uuids=False)),
+                    ("create in world space", rf"^{name}\.create\(\)", lambda: cls.create(data, world_space=True, hierarchy=clip)),
+                    ("create under a transform", rf"^{name}\.create\(\)", lambda: cls.create(data, transform=target, hierarchy=clip)),
+                    ("load", rf"^{name}\.load", lambda: cls.load(missing, hierarchy=clip)),
+                    ("load in place", rf"^{name}\('[^']+'\)\.load", lambda: node.load(missing, hierarchy=clip)),
+                    ("load in place, world", rf"^{name}\('[^']+'\)\.load", lambda: node.load(missing, world_space=True, hierarchy=clip)),
+                ):
+                    with self.subTest(label, call=call, frames=frames):
+                        before = cmds.ls()
+                        with self.assertRaisesRegex(TypeError, head + tail % frames):
+                            run()
+                        self.assertEqual(cmds.ls(), before)
 
     def test_an_instanced_transform_is_refused(self):
         grp = cmds.group(self.cube.get_parent().get_long_name(), name="grp")

@@ -662,14 +662,17 @@ print(cmds.listConnections("ctl.ty", source=True))   # ['ctl_parentConstraint1']
 Autodesk Maya (the suite runs on 2025; version-keyed dispatch builds the
 legacy networks on older releases), with numpy and scipy installed for
 mayapy, and, for the data paths (`serialize`, `save` / `load`,
-`create(data)`), cgmath 4.0.0rc1 (`02b8b75`, 2026-11-11) or
+`create(data)`), cgmath 4.0.0rc1 (`4a9a226`, 2026-11-19) or
 later: its shape model (a `ShapeData`'s `uuid` and `parent_uuid`, no matrix),
 a `MeshData`'s vertex colours (`colors` / `color_indices`) and its
 `hard_edges`, a `NurbsCurveData`'s and a `NurbsSurfaceData`'s `weights`,
 `renew_uuids()` on
-a hierarchy, a clip and a `Scene`, and a `MaterialData`'s `uuid`. cgmath is
+a hierarchy, a clip and a `Scene`, a `MaterialData`'s `uuid`, and a `ClipData`
+that holds every frame and has no current one (the pose of one frame is
+`clip.frames[i]`). cgmath is
 imported lazily, so `rig` loads without it; an older cgmath (3.0.1, 3.2.0, a
-commit before those landed) raises `ImportError` naming that pin on the first
+commit before those landed: the cgmath before this pin says 4.0.0rc1 too, so
+the commit is what tells) raises `ImportError` naming that pin on the first
 data path. Each round of rig names here the cgmath commit it was verified on.
 
 `rig.fuse()` also needs rig's plug-in, `rig.mll` 1.3 or later, built for your

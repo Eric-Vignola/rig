@@ -61,9 +61,10 @@ _CURVE_LOAD_DOC ="""Loads a curve from a cgmath file (a NurbsCurveData): one nam
             they land where the data sits in the world: under ``transform=``,
             or else frozen there, the new transform at the origin.
         hierarchy: (both forms) By keyword only, as `create` takes it: the
-            HierarchyData or ClipData (at the frame it is on) holding the
-            transform the data sits under. None: the scene's node of that
-            UUID, else the identity.
+            HierarchyData (a rig, or one frame of a clip, ``clip.frames[i]``)
+            holding the transform the data sits under; a ClipData itself is
+            a TypeError, before the file is read. None: the scene's node of
+            that UUID, else the identity.
         uuids: (creating) By keyword only, a bool or None (anything else is
             a TypeError, before the file is read), as `create` takes it: None
             (the default), as ``with rig.uuids():`` or
@@ -269,10 +270,12 @@ class NurbsCurve(Geometry):
                 the CVs and the new transform at the origin with identity
                 channels.
             hierarchy: By keyword only, as `Mesh.create` takes it: the
-                HierarchyData or ClipData (at the frame it is on) holding the
-                transform the data's ``parent_uuid`` names, where the data
-                sits. None, the default: the scene's node of that UUID, else
-                the identity.
+                HierarchyData holding the transform the data's
+                ``parent_uuid`` names, where the data sits (of a clip, the
+                pose of one frame: ``clip.frames[i]``, or ``clip.at(n)`` by
+                frame number; a ClipData itself is a TypeError before
+                anything is made). None, the default: the scene's node of
+                that UUID, else the identity.
             uuids: By keyword only, a bool or None, as `Mesh.create` takes
                 it: None (the default), as ``with rig.uuids():`` or
                 ``rig.set_options(uuids=)`` says, False unless one does; False,
@@ -314,6 +317,7 @@ class NurbsCurve(Geometry):
             raise named
         world_space = _files.space_flag("NurbsCurve.create()", world_space, _files.CREATING_SPACE)
         uuids       = _files.uuid_flag("NurbsCurve.create()", uuids)
+        _files.one_pose("NurbsCurve.create()", hierarchy)
         if uuids and transform is None and hierarchy is None:
             # with the data's uuids, the shape goes under the node of its parent_uuid
             transform = _files.node_of_uuid(getattr(points, "parent_uuid", None))
@@ -454,6 +458,7 @@ class NurbsCurve(Geometry):
 
         world_space = _files.space_flag("NurbsCurve.load", world_space, _files.CREATING_SPACE)
         uuids       = _files.uuid_flag("NurbsCurve.load", uuids)
+        _files.one_pose("NurbsCurve.load", hierarchy)
         if transform is not None:
             transform = _shape_target("NurbsCurve.load", transform, world_space)  # before the file is read
         data = _files.read(curve, (NurbsCurveData,), "NurbsCurve.load", "the curve")
@@ -471,6 +476,7 @@ class NurbsCurve(Geometry):
         from cgmath.geometry import NurbsCurveData
 
         _updates_only(method, kwargs, "NurbsCurve.load(path, ...) makes a new curve")
+        _files.one_pose(method, hierarchy)
         world_space = _files.space_flag(method, world_space)
         data        = _files.read(curve, (NurbsCurveData,), method, "the curve")
         points, weights = _curve_update(self, method, curve, data, world_space, hierarchy)
@@ -573,8 +579,10 @@ class NurbsSurface(Geometry):
                 world, taken into the space of ``transform=``, or without it
                 frozen there, the new transform at the origin.
             hierarchy: By keyword only, as for `NurbsCurve.create`: the
-                HierarchyData or ClipData holding the transform the data sits
-                under. None: the scene's node of that UUID, else the identity.
+                HierarchyData (a rig, or one frame of a clip,
+                ``clip.frames[i]``) holding the transform the data sits
+                under; a ClipData itself is a TypeError. None: the scene's
+                node of that UUID, else the identity.
             uuids: By keyword only, a bool or None, as `Mesh.create` takes
                 it: None (the default), as ``with rig.uuids():`` or
                 ``rig.set_options(uuids=)`` says, False unless one does; False,
@@ -610,6 +618,7 @@ class NurbsSurface(Geometry):
             raise named
         world_space = _files.space_flag("NurbsSurface.create()", world_space, _files.CREATING_SPACE)
         uuids       = _files.uuid_flag("NurbsSurface.create()", uuids)
+        _files.one_pose("NurbsSurface.create()", hierarchy)
         if uuids and transform is None and hierarchy is None:
             # with the data's uuids, the shape goes under the node of its parent_uuid
             transform = _files.node_of_uuid(getattr(data, "parent_uuid", None))
@@ -778,6 +787,7 @@ class NurbsSurface(Geometry):
 
         world_space = _files.space_flag("NurbsSurface.load", world_space, _files.CREATING_SPACE)
         uuids       = _files.uuid_flag("NurbsSurface.load", uuids)
+        _files.one_pose("NurbsSurface.load", hierarchy)
         if transform is not None:
             transform = _shape_target("NurbsSurface.load", transform, world_space)  # before the file is read
         data = _files.read(surface, (NurbsSurfaceData,), "NurbsSurface.load", "the surface")
@@ -795,6 +805,7 @@ class NurbsSurface(Geometry):
         from cgmath.geometry import NurbsSurfaceData
 
         _updates_only(method, kwargs, "NurbsSurface.load(path, ...) makes a new surface")
+        _files.one_pose(method, hierarchy)
         world_space = _files.space_flag(method, world_space)
         data        = _files.read(surface, (NurbsSurfaceData,), method, "the surface")
         points, weights = _surface_update(self, method, surface, data, world_space, hierarchy)

@@ -170,13 +170,16 @@ def _data_ids(shape, world_space: bool) -> dict:
 def _data_placement(method: str, data: Any, hierarchy: Any = None) -> np.ndarray:
     """Where `data` (a shape's, with a ``parent_uuid``; points have none) puts its points in the
     world, ``(4, 4)`` with row vectors as Maya's: cgmath's rule, the world matrix of the transform
-    its ``parent_uuid`` names, the identity when it names none. With `hierarchy` (a HierarchyData,
-    or a ClipData at the frame it is on) the transform is looked for there, and cgmath's own
-    ``world_matrix`` answers (the identity for one the hierarchy lacks); without, in the scene,
-    the node of that UUID, under which data serialized and created in one scene sits as its
-    source did, and the identity when the scene has none. A scene node that is instanced is a
-    ValueError naming `method`: the points would have no one place in the world."""
+    its ``parent_uuid`` names, the identity when it names none. With `hierarchy` (a HierarchyData:
+    a rig, or the pose of one frame of a clip, ``clip.frames[i]``) the transform is looked for
+    there, and cgmath's own ``world_matrix`` answers (the identity for one the hierarchy lacks);
+    without, in the scene, the node of that UUID, under which data serialized and created in one
+    scene sits as its source did, and the identity when the scene has none. A ClipData itself
+    gives no one place: it is a TypeError (`_files.one_pose`), which the shape's create and load
+    raise first, before anything is read or made. A scene node that is instanced is a ValueError
+    naming `method`: the points would have no one place in the world."""
     _files.require_pinned_cgmath(method)
+    _files.one_pose(method, hierarchy)
     parent = getattr(data, "parent_uuid", None)
     if parent is None:
         return np.eye(4)

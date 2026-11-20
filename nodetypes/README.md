@@ -1008,7 +1008,7 @@ one) build the hierarchy and key it, with no keyword: the type decides.
 | | |
 |---|---|
 | What gets keys | only what changes: a column (x, y or z) of a node's scale, rotate, translate, rotate axis or joint orient with any difference across the frames gets one curve, with a key on every frame. A flat column is a plain value, with no curve and no key, so a one-frame clip makes no curve. A channel the node has not (a transform's joint orient) is left out, as its plain value is. Rotate axis and joint orient plugs are not keyable, so Maya's node-wide key tools pass over their curves (`cmds.keyframe("root", query=True, name=True)` leaves them out, `cmds.cutKey("root", clear=True)` leaves them on): name the plug (`cmds.keyframe("root.jointOrientY", ...)`), or use `AnimCurve.of(...)` |
-| Which frame | frame for frame: key k lands on frame `start_frame + k` whatever the scene's rate. A clip at another fps logs one warning naming both, keys or none; the scene's time unit and playback range are not touched |
+| Which frame | frame for frame: key k lands on frame `start_frame + k` whatever the scene's rate. A clip at another fps logs one warning naming both, keys or none; the scene's time unit and playback range are not touched. A clip holds every frame and has no current one: a channel with no key takes its value on the clip's first frame, and so do a node's visibility and its keyable user attributes, which get no key |
 | Tangents | a clip defines none, so Maya's global default (`keyTangent -query -global`), as it is when the clip is built, given explicitly: a plain `AnimCurve(...)` is linear |
 | The statement | one `List(plugs) << [AnimCurve(...), ...]`: every row planned, then every curve written. Refused before any node is made: a NaN in a column that is keyed, a missing undo plug-in |
 | Undo, scope, selection | the curves and keys are in the build's one undo step. Inside `with container()` they join as the nodes do (`container=False`: neither). The selection behaves as it does without keys: `create_hierarchy` selects the new nodes, `load_hierarchy` keeps it |
@@ -1016,15 +1016,16 @@ one) build the hierarchy and key it, with no keyword: the type decides.
 | Joints that compensate | a clip's joints evaluate what its world matrices hold, scale included. A joint with segment scale compensate on takes its parent's scale out on every frame: under a joint of the clip it is wired, `parent.scale >> joint.inverseScale`, as `cmds.parent` wires one; a root solved under a scaled parent holds that parent's world scale in `inverseScale`, a plain value; under a root that does not compensate and gave its scale to that solve, it holds that root's scale in the clip, plain, or keyed where it moves. Under a transform of the clip it is left unwired, as Maya leaves it: it lands where Maya puts it, the source scene's place, which is not cgmath's `world_matrix` when that transform is scaled. A plain `HierarchyData` wires nothing (the gotcha below) |
 | Files | `load_hierarchy` reads a cgmath file; `create_hierarchy` takes the object. An asset (`.fbx`, `.glb`) reads as one pose, with no keys and no warning: a keyed one is `ClipData.load_fbx` or `ClipData.load_glb`, then `create_hierarchy` |
 | Units | a clip's values are read as a plain value is, in the scene's units: a scene in radians reads a clip's degrees as radians, keys and plain values alike |
-| Without keys | pass a plain `HierarchyData`: `clip.rest_pose`, when the clip has one (`ClipData.load_fbx` sets it) |
+| Without keys | pass the pose of one frame, a plain `HierarchyData`: `clip.frames[0]`, or `clip.at(n)` by frame number |
+| A part of a clip | is a clip, built and keyed as one: `clip.frames[10:20]` (those frames, on their own frame numbers), `clip[["spine", "arm"]]` or `clip.match("L_*")` (those nodes; one whose parent is left out is a root). One node, `clip["hips"]`, is that node on every frame, not a `TransformData`: `Transform.create` takes it on one frame, `clip.frames[i]["hips"]` |
 
 ```python
 from cgmath.hierarchy import ClipData
 
 cmds.file(new=True, force=True)
-ball                            = Transform.create(name="ball")
-clip                            = ClipData(ball.serialize_hierarchy(), frames=3, start_frame=1001, fps=24.0)
-clip.frames["ball"].translate_y = [0, 4, 0]  # every frame of one channel
+ball                     = Transform.create(name="ball")
+clip                     = ClipData(ball.serialize_hierarchy(), frames=3, start_frame=1001, fps=24.0)
+clip["ball"].translate_y = [0, 4, 0]  # every frame of one channel
 cmds.delete("ball")
 
 made = Transform.create_hierarchy(clip)  # built and keyed: the type decides
@@ -1036,7 +1037,8 @@ print(cmds.getAttr("ball.ty", time=1002), made[0].tx.get())           # 4.0 0.0
 **`node.key_hierarchy(clip)` keys a clip onto nodes that exist.** It is
 called on a node, as `serialize_hierarchy` is: the node and the transforms
 and joints below it take the keys. The rows are `create_hierarchy`'s; a
-plain `HierarchyData` poses, no key.
+plain `HierarchyData` poses, no key (the pose of one frame of a clip is
+one: `clip.frames[i]`, or `clip.at(n)` by frame number).
 
 | | |
 |---|---|

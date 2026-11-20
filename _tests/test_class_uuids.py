@@ -140,7 +140,7 @@ class TestHierarchy(_Case):
     def test_a_clip_adopts_too(self):
         data = _skeleton()
         clip = ClipData(data, frames=3, start_frame=1)
-        clip.frames["arm"].rotate_z = [0, 10, 20]
+        clip["arm"].rotate_z = [0, 10, 20]
         made = Transform.create_hierarchy(clip, uuids=True)
         self.assertEqual([_uuid(node) for node in made], [node.uuid for node in clip])
         self.assertEqual(cmds.ls(type="animCurve"), ["arm_rotateZ"])
@@ -640,7 +640,7 @@ class TestTheBlock(_Case):
     def test_key_hierarchy_keys_by_uuid_in_the_block(self):
         data = _skeleton()
         clip = ClipData(data, frames=3, start_frame=1)
-        clip.frames["spine"].translate_y = np.array([5.0, 6.0, 7.0])
+        clip["spine"].translate_y = np.array([5.0, 6.0, 7.0])
         with rig.uuids():
             nodes = Transform.create_hierarchy(data)
         extra = Joint.create(name="extra", parent=nodes[0])

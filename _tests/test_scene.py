@@ -77,9 +77,9 @@ def _scene(take=True, skinned=True, morphs=True):
             scene.add(MorphData("smile", offsets=np.array([[0, at, 0]]), indices=np.array([0]), at=at, weight=0.25,
                                 deformer="face_bs", mesh_uuid=data.uuid))
     if take:
-        clip                           = ClipData(scene.hierarchy, frames=4, start_frame=1)
-        clip.frames["tip"].translate_y = np.array([2.0, 3.0, 4.0, 5.0])
-        scene.clip                     = clip
+        clip                    = ClipData(scene.hierarchy, frames=4, start_frame=1)
+        clip["tip"].translate_y = np.array([2.0, 3.0, 4.0, 5.0])
+        scene.clip              = clip
     return scene
 
 
@@ -256,8 +256,8 @@ class TestKeyHierarchyByOrder(_KeyCase):
 
     def test_a_branch_takes_a_clip_of_its_own(self):
         _bare(_clip())
-        branch                        = ClipData(Transform("spine").serialize_hierarchy(), frames=3, start_frame=1, fps=_fps())
-        branch.frames["arm"].rotate_x = np.array([0.0, 20.0, 40.0])
+        branch                 = ClipData(Transform("spine").serialize_hierarchy(), frames=3, start_frame=1, fps=_fps())
+        branch["arm"].rotate_x = np.array([0.0, 20.0, 40.0])
         with self.assertNoLogs(_LOG, level="WARNING"):
             keyed = Transform("spine").key_hierarchy(branch)
         self.assertEqual([str(node) for node in keyed], ["spine", "arm"])
@@ -440,8 +440,8 @@ class TestKeyHierarchyChannels(_KeyCase):
     def test_a_transforms_data_on_a_joint_keys(self):
         top = _transforms()
         top.t.set(1, 2, 3)
-        clip                             = ClipData(top.serialize_hierarchy(), frames=3, start_frame=1, fps=_fps())
-        clip.frames["probe"].translate_y = np.array([0.0, 1.0, 2.0])
+        clip                      = ClipData(top.serialize_hierarchy(), frames=3, start_frame=1, fps=_fps())
+        clip["probe"].translate_y = np.array([0.0, 1.0, 2.0])
         cmds.delete("root")
         made = [Joint.create(name="root")]
         for name, parent in (("spine", 0), ("arm", 1), ("grp", 0), ("probe", 3)):
@@ -513,7 +513,7 @@ class TestKeyHierarchyChannels(_KeyCase):
                 lambda: Transform("root").key_hierarchy(clip, strict=False),
                 error=RuntimeError,
             )
-        clip.frames["probe"].translate_y = [0, 1, np.nan, 3, 4, 5]
+        clip["probe"].translate_y = [0, 1, np.nan, 3, 4, 5]
         for strict in (True, False):
             with self.subTest(strict=strict):
                 self.assert_nothing_made(

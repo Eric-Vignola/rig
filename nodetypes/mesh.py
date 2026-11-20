@@ -105,8 +105,10 @@ _MESH_LOAD_DOC = """Loads a mesh from cgmath files: one name, two forms.
             Data without colours: a new mesh has no colour set, an updated one
             keeps its own. False: skipped, not read.
         hierarchy: (both forms) By keyword only, as `create` takes it: the
-            HierarchyData or ClipData holding the transform the data sits
-            under. None: the scene's node of that UUID, else the identity.
+            HierarchyData (a rig, or one frame of a clip, ``clip.frames[i]``)
+            holding the transform the data sits under; a ClipData itself is
+            a TypeError, before the files are read. None: the scene's node
+            of that UUID, else the identity.
         uuids: (creating) By keyword only, a bool or None (anything else is
             a TypeError, before the files are read), as `create` takes it:
             None (the default), as ``with rig.uuids():`` or
@@ -428,10 +430,13 @@ class Mesh(Geometry):
                 the normals follow (see below). Without ``transform=``,
                 world-space data, which sits at identity, comes out the same
                 either way.
-            hierarchy: By keyword only: a HierarchyData or ClipData (at the
-                frame it is on) holding the transform the data's
-                ``parent_uuid`` names: where the data sits, by cgmath's rule
-                (the identity for a transform it lacks). None, the default:
+            hierarchy: By keyword only: a HierarchyData holding the transform
+                the data's ``parent_uuid`` names: where the data sits, by
+                cgmath's rule (the identity for a transform it lacks). Of a
+                clip, give the pose of one frame, which is a HierarchyData:
+                ``clip.frames[i]``, or ``clip.at(n)`` by frame number; a
+                ClipData itself holds every frame and gives no one place, a
+                TypeError before anything is made. None, the default:
                 the scene's node of that UUID, under which data serialized and
                 created in one scene sits as its source did, and the identity
                 when the scene has none (data from another scene: save it in
@@ -589,6 +594,7 @@ class Mesh(Geometry):
         elif uuids and transform is None and hierarchy is None:
             # with the data's uuids, the shape goes under the node of its parent_uuid
             transform = _files.node_of_uuid(getattr(mesh_data, "parent_uuid", None))
+        _files.one_pose("Mesh.create()", hierarchy)
         if transform is not None:
             transform = _shape_target("Mesh.create()", transform, world_space)
         if uvs:
@@ -1282,6 +1288,7 @@ class Mesh(Geometry):
         colors      = _restore_flag("Mesh.load", "colors", colors)
         world_space = _files.space_flag("Mesh.load", world_space, _files.CREATING_SPACE)
         uuids       = _files.uuid_flag("Mesh.load", uuids)
+        _files.one_pose("Mesh.load", hierarchy)
         if transform is not None:
             transform = _shape_target("Mesh.load", transform, world_space)  # before the files are read
         data, uv_data = _read_mesh_files("Mesh.load", mesh, uvs)
@@ -1302,6 +1309,7 @@ class Mesh(Geometry):
         normals     = _restore_flag(method, "normals", normals)
         colors      = _restore_flag(method, "colors", colors)
         world_space = _files.space_flag(method, world_space)
+        _files.one_pose(method, hierarchy)
         data, uv_data = _read_mesh_files(method, mesh, uvs)
         update = _mesh_update(self, method, mesh, data, uv_data, world_space, normals, colors, hierarchy)
         with _undo_chunk("rig.Mesh.load"):

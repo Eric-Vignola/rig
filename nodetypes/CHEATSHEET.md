@@ -723,14 +723,16 @@ except TypeError as e:
     print(str(e).split(" holds ")[1])                         # a MeshData; the hierarchy is a ClipData or a HierarchyData
 ```
 
-A `ClipData` (a `HierarchyData` that holds many frames) is built **and keyed**,
+A `ClipData` (a skeleton over many frames) is built **and keyed**,
 by `create_hierarchy` (the object) and `load_hierarchy` (the object, or a file
 that holds one; an asset reads as one pose: a keyed `.fbx` is
 `ClipData.load_fbx`, then `create_hierarchy`), with no keyword: the type
 decides. Only what changes gets keys: a column (x, y or z) of a node's scale,
 rotate, translate, rotate axis or joint orient with any difference across the
 frames gets one curve, with a key on every frame; a flat one is a plain value,
-with no curve, so a one-frame clip makes no curve. Key k lands on frame
+with no curve, so a one-frame clip makes no curve. A clip has no current frame:
+a channel with no key takes its value on the first frame, and so do a node's
+visibility and its keyable user attributes, which get no key. Key k lands on frame
 `start_frame + k` whatever the scene's rate: a clip at another fps logs one
 warning naming both, keys or none, and the scene's time unit and playback range
 are not touched. A clip defines no tangents, so the keys take Maya's global
@@ -748,17 +750,22 @@ joint of the clip it is wired, `parent.scale >> joint.inverseScale`, as
 `cmds.parent` wires one, and a root solved under a scaled parent holds that
 scale in `inverseScale`, a plain value (a plain `HierarchyData` wires nothing;
 a joint under a transform of the clip stays as Maya leaves it). To build a clip
-without keys, pass a plain `HierarchyData`: `clip.rest_pose`, when the clip has
-one (`ClipData.load_fbx` sets it).
+without keys, pass the pose of one frame, a plain `HierarchyData`:
+`clip.frames[0]`, or `clip.at(n)` by frame number. A part of a clip is a clip,
+built and keyed as one: `clip.frames[10:20]` (those frames, on their own frame
+numbers), `clip[["spine", "arm"]]` or `clip.match("L_*")` (those nodes; one
+whose parent is left out is a root). One node of a clip, `clip["hips"]`, is
+that node on every frame, not a `TransformData`: `Transform.create` takes it on
+one frame, `clip.frames[i]["hips"]`.
 
 ```python
 from cgmath.hierarchy import ClipData
 from rig import AnimCurve
 
-pose                             = root.serialize_hierarchy()
-clip                             = ClipData(pose, frames=4, start_frame=101, fps=24.0)
-clip.frames["root"].rotate_y     = [0, 10, 20, 30]  # every frame of one channel
-clip.frames["child"].translate_y = [5, 6, 7, 5]
+pose                      = root.serialize_hierarchy()
+clip                      = ClipData(pose, frames=4, start_frame=101, fps=24.0)
+clip["root"].rotate_y     = [0, 10, 20, 30]  # every frame of one channel
+clip["child"].translate_y = [5, 6, 7, 5]
 cmds.file(new=True, force=True)
 
 made = Transform.create_hierarchy(clip)  # built and keyed: the type decides
@@ -774,8 +781,8 @@ kept = Transform.create_hierarchy(clip, parent=grp, world_space=True)      # the
 print(kept[0].get_long_name(), kept[0].tx.get(), len(AnimCurve.of(kept)))  # |grp|root -10.0 2
 path = clip.save(os.path.join(folder, "walk.npz"))
 print(len(AnimCurve.of(Joint.load_hierarchy(path))))   # 2
-still = Transform.create_hierarchy(pose)               # a plain HierarchyData, as clip.rest_pose is: no keys
-print(still[1].ty.get(), AnimCurve.of(still))  # 5.0 List([])
+still = Transform.create_hierarchy(clip.frames[2])     # the pose of one frame, a plain HierarchyData: no keys
+print(still[1].ty.get(), AnimCurve.of(still))  # 7.0 List([])
 ```
 
 At its bind pose: `serialize_hierarchy(bindpose=True)` is what a serialize
@@ -1146,7 +1153,8 @@ except ValueError as e:
 
 Without `transform=`, the new transform goes where the data sits by default:
 where the transform its `parent_uuid` names is, in `hierarchy=` when given
-(a `HierarchyData`, or a `ClipData` at the frame it is on), else in the scene
+(a `HierarchyData`; of a clip, the pose of one frame, `clip.frames[i]`: a
+`ClipData` itself is a TypeError, before anything is made), else in the scene
 by its UUID; a transform the scene lacks, as a file from another scene names,
 sits at identity. `world_space=True` freezes the shape at its world positions
 instead: the placement goes in the points and the new transform sits at the

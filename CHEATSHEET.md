@@ -14,7 +14,7 @@ for `maya.cmds` and the node factories, [`nodetypes/`](nodetypes/CHEATSHEET.md)
 for the node classes and their typed methods.
 
 The data paths (`serialize`, `save` / `load`, `create(data)`) are written
-against cgmath 4.0.0rc1 (`02b8b75`, 2026-11-11); each round
+against cgmath 4.0.0rc1 (`4a9a226`, 2026-11-19); each round
 of rig names the cgmath commit it was verified on here and in
 [`GUIDE.md`](GUIDE.md#requirements).
 
@@ -4138,9 +4138,11 @@ curve. Key k lands on frame `start_frame + k` whatever the scene's rate; a clip
 at another fps logs one warning naming both, keys or none, and the scene's time
 unit and playback range are not touched. The keys take Maya's global default
 tangents, given explicitly (`AnimCurve(...)` alone is linear), in one
-`List(plugs) << [AnimCurve(...), ...]` inside the build's one undo step. A plain
-`HierarchyData` (`clip.rest_pose`) builds a clip without keys ([`nodetypes`
-section 6](nodetypes/CHEATSHEET.md#6-transform)).
+`List(plugs) << [AnimCurve(...), ...]` inside the build's one undo step. A clip
+holds every frame and has no current one: a channel with no key takes its value
+on the first frame. The pose of one frame, `clip.frames[i]` or `clip.at(n)` by
+frame number, is a plain `HierarchyData`: it builds the nodes as on that frame,
+without keys ([`nodetypes` section 6](nodetypes/CHEATSHEET.md#6-transform)).
 
 ```python
 from cgmath.hierarchy import ClipData
@@ -4152,8 +4154,8 @@ cmds.file(new=True, force=True)
 cmds.undoInfo(state=True, infinity=True)
 root = Joint.create(name="root")
 Joint.create(name="tip", parent=root).t.set(0, 5, 0)
-clip                        = ClipData(root.serialize_hierarchy(), frames=3, start_frame=1001, fps=24.0)
-clip.frames["tip"].rotate_z = [0, 45, 90]  # every frame of one channel
+clip                 = ClipData(root.serialize_hierarchy(), frames=3, start_frame=1001, fps=24.0)
+clip["tip"].rotate_z = [0, 45, 90]  # every frame of one channel
 cmds.delete("root")
 
 made = Transform.create_hierarchy(clip)  # built and keyed: the type decides

@@ -45,6 +45,14 @@ FORMATS = ("npz", "json", "pkl")
 # -- sources
 
 
+# what an older cgmath is told, after the method's name (`_files.require_pinned_cgmath`)
+_PIN = (
+    r" needs cgmath 4\.0\.0rc1 \(4a9a226, 2026-11-19\) or later, whose shapes carry a parent_uuid, whose "
+    r"meshes hold colors and hard_edges, whose curves and surfaces hold weights, whose scenes renew uuids and "
+    r"whose clips hold every frame \(a ClipData is no HierarchyData\); this cgmath is "
+)
+
+
 def _cube(name="body", ch=False):
     """A polyCube with a second UV set, moved: the transform."""
     t = cmds.polyCube(name=name, constructionHistory=ch)[0]
@@ -301,9 +309,7 @@ class TestFiles(_Case):
         t     = _cube()
         data  = NurbsCurve.create([(0, 0, 0), (1, 0, 0), (2, 1, 0), (3, 0, 0)], name="c").serialize()
         older = types.ModuleType("cgmath.hierarchy")  # no ShapeData in it
-        pin   = (r" needs cgmath 4\.0\.0rc1 \(02b8b75, 2026-11-11\) or later, whose shapes carry a "
-                 r"parent_uuid, whose meshes hold colors and hard_edges, whose curves and surfaces hold "
-                 r"weights and whose scenes renew uuids; this cgmath is ")
+        pin   = _PIN
         for label, call, head in (
             ("serialize", lambda: Mesh(t).serialize(), r"^Mesh\.serialize"),
             ("load", lambda: Mesh.load(self.path("none.npz")), r"^Mesh\.load"),
@@ -346,9 +352,7 @@ class TestFiles(_Case):
         missing = ("NurbsCurveData", "NurbsSurfaceData")
         older   = types.ModuleType("cgmath.geometry")
         older.__dict__.update({name: value for name, value in geometry.__dict__.items() if name not in missing})
-        pin = (r" needs cgmath 4\.0\.0rc1 \(02b8b75, 2026-11-11\) or later, whose shapes carry a "
-               r"parent_uuid, whose meshes hold colors and hard_edges, whose curves and surfaces hold "
-               r"weights and whose scenes renew uuids; this cgmath is ")
+        pin = _PIN
         for label, call, head in (
             ("curve serialize", lambda: curve.serialize(), r"^NurbsCurve\.serialize"),
             ("curve save", lambda: curve.save(self.path("c.npz")), r"^NurbsCurve\.serialize"),
@@ -365,6 +369,42 @@ class TestFiles(_Case):
                     call()
                 self.assertEqual(cmds.ls(), before)
                 self.assertEqual(os.listdir(self.dir), [])
+
+    def test_a_cgmath_whose_clip_is_a_hierarchy_is_refused_naming_the_pin(self):
+        """A cgmath before ad87ba3, whose ClipData is a HierarchyData standing on a current frame
+        (it says 4.0.0rc1 as the pin does, so the version tells nothing): every door that takes
+        cgmath data names the pin, a hierarchy's and a clip's among them, before anything is read
+        or made (the user's decision of 2026-11-19: the older cgmath is refused, not supported)."""
+        import sys
+        import types
+
+        import cgmath.hierarchy as hierarchy
+
+        t     = _cube()
+        top   = Transform.create(name="top")
+        data  = top.serialize_hierarchy()
+        path  = top.save_hierarchy(self.path("top.npz"))
+        clip  = hierarchy.ClipData(data, frames=2)
+        mesh  = Mesh(t).serialize(uvs=False)
+        older = types.ModuleType("cgmath.hierarchy")
+        older.__dict__.update(hierarchy.__dict__)
+        older.ClipData = type("ClipData", (hierarchy.HierarchyData,), {})
+        for label, call, head in (
+            ("create_hierarchy", lambda: Transform.create_hierarchy(data), r"^Transform\.create_hierarchy"),
+            ("create_hierarchy, a clip", lambda: Joint.create_hierarchy(clip), r"^Joint\.create_hierarchy"),
+            ("load_hierarchy, the data", lambda: Transform.load_hierarchy(data), r"^Transform\.load_hierarchy"),
+            ("load_hierarchy, a file", lambda: Transform.load_hierarchy(path), r"^Transform\.load_hierarchy"),
+            ("key_hierarchy", lambda: top.key_hierarchy(data), r"^Transform\.key_hierarchy"),
+            ("key_hierarchy, a clip", lambda: top.key_hierarchy(clip), r"^Transform\.key_hierarchy"),
+            ("a mesh's serialize", lambda: Mesh(t).serialize(), r"^Mesh\.serialize"),
+            ("a mesh's create", lambda: Mesh.create(mesh, world_space=True), r"^Mesh\.create\(\)"),
+        ):
+            with self.subTest(label), mock.patch.dict(sys.modules, {"cgmath.hierarchy": older}):
+                before = cmds.ls()
+                with self.assertRaisesRegex(ImportError, head + _PIN):
+                    call()
+                self.assertEqual(cmds.ls(), before)
+                self.assertEqual(cmds.ls(type="animCurve"), [])
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1261,8 +1301,8 @@ class TestHierarchy(_Case):
         clip = ClipData(data, frames=3)
         self.assertEqual(Transform.load_hierarchy(clip, uuids=False)[0].get_short_name(), "root3")
         self.assertEqual(cmds.ls(type="animCurve"), [])
-        clip.frames["spine"].translate_y = [5, 6, 7]
-        keyed                            = Transform.load_hierarchy(clip, uuids=False)
+        clip["spine"].translate_y = [5, 6, 7]
+        keyed                     = Transform.load_hierarchy(clip, uuids=False)
         self.assertEqual(keyed[0].get_short_name(), "root4")
         self.assertEqual(cmds.keyframe(str(AnimCurve.of(keyed[1])[0]), query=True, valueChange=True), [5, 6, 7])
 

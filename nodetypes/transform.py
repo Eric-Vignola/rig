@@ -38,10 +38,10 @@ _HIERARCHY_LOAD_DOC = """Loads a hierarchy from a cgmath file (a HierarchyData):
             ``.npz`` / ``.json`` / ``.pkl``), or the HierarchyData itself. A
             ClipData, the object or a file that holds one, is built and keyed,
             no keyword, as `create_hierarchy` says; a plain HierarchyData
-            (``clip.rest_pose``, when the clip has one) makes no keys. An asset
-            (``.fbx``, ``.glb``) reads as one pose, no keys and no warning: a
-            keyed one is ``ClipData.load_fbx`` or ``ClipData.load_glb``, then
-            `create_hierarchy`.
+            (the pose of one frame of a clip is one: ``clip.frames[i]``) makes
+            no keys. An asset (``.fbx``, ``.glb``) reads as one pose, no keys
+            and no warning: a keyed one is ``ClipData.load_fbx`` or
+            ``ClipData.load_glb``, then `create_hierarchy`.
         parent: An existing node to make the roots under (`create_hierarchy`'s
             ``parent``). None: the world.
         world_space: A bool (anything else is a TypeError, before the file is
@@ -192,6 +192,23 @@ def _set_values(node: DAGNode, data: TransformData) -> None:
     node.set_attrs(skip_missing=True, **data.to_attributes())
 
 
+def _frame_values(hierarchy: HierarchyData | ClipData) -> list[tuple[dict, dict]]:
+    """``(values, user attributes)`` per node of `hierarchy`, in the order of its ``.list``:
+    the plain values a node takes (a TransformData's ``to_attributes()``) and its user-defined
+    attributes. A HierarchyData's nodes hold them. A node of a ClipData answers for every
+    frame, so a clip's are read off the pose of its first frame (``clip.frames[0]``): what a
+    channel with no key takes, and with it what a clip holds frame by frame and rig does not
+    key, a node's visibility and its keyable user attributes. A clip of no frames holds the
+    one pose its nodes do. Plain dicts, read once: a pose is never copied, as its nodes'
+    names may hold their Maya nodes by then (a node does not copy)."""
+    from cgmath.hierarchy import ClipData
+
+    nodes = hierarchy.list
+    if isinstance(hierarchy, ClipData) and hierarchy.frame_count:
+        nodes = hierarchy.frames[0].list
+    return [(node.to_attributes(), node.user_defined_attributes) for node in nodes]
+
+
 def _changed_values(node: DAGNode, values: dict) -> dict:
     """The values of `values` (a TransformData's ``to_attributes()``) `node` does not hold
     already (to 1e-12), each a plug it has: what `key_hierarchy` sets, so a channel it leaves
@@ -246,10 +263,10 @@ def _free_values(node: DAGNode, changed: dict, rows: list[tuple]) -> tuple[dict,
 
 
 def _key_plan(
-    hierarchy: HierarchyData,
-    keyed:     set           | None = None,
-    strict:    bool          | None = None,
-    method:    str                  = "key_hierarchy",
+    hierarchy: HierarchyData | ClipData,
+    keyed:     set           | None     = None,
+    strict:    bool          | None     = None,
+    method:    str                      = "key_hierarchy",
 ) -> tuple[list, list, list]:
     """What `key_hierarchy` writes, checked before the first edit: ``(rows, changes, left)``.
     `hierarchy` is a copy whose nodes' names are the Maya nodes they key; with `keyed` (the
@@ -268,12 +285,12 @@ def _key_plan(
     for row in rows:
         keys.setdefault(id(row[0]), []).append(row)
 
+    # a node by its own object (``.list``): a clip hands out a new one per node on every pass
     lacking, locked, changes, dropped = [], [], [], set()
-    for data in hierarchy:
+    for data, (values, _) in zip(hierarchy.list, _frame_values(hierarchy)):
         if keyed is not None and id(data) not in keyed:
             continue
-        node   = data.name
-        values = data.to_attributes()
+        node = data.name
         if strict is not None and data.node_type == "joint":  # a transform's data sets nothing a joint lacks
             absent = [attr for attr in values if node.find_attr(attr, quiet=True) is None]
             if absent:
@@ -303,7 +320,7 @@ def _key_plan(
     return [row for row in rows if id(row) not in dropped], changes, left
 
 
-def _clip_rows(hierarchy: HierarchyData, solved: dict, only: set | None = None) -> list[tuple]:
+def _clip_rows(hierarchy: HierarchyData | ClipData, solved: dict, only: set | None = None) -> list[tuple]:
     """The keys a ClipData needs, ``(node data, attribute, keys)`` per column of its (F, N, 3)
     blocks with any difference across the frames, each with a key on every frame. A flat
     column has no row: `_set_values` sets it as a plain value (so a one-frame clip has
@@ -325,24 +342,25 @@ def _clip_rows(hierarchy: HierarchyData, solved: dict, only: set | None = None) 
 
     if not isinstance(hierarchy, ClipData) or not hierarchy.frame_count:
         return []
+    nodes  = hierarchy.list  # the clip's own node objects, one a column of its blocks
     frames = hierarchy.frames
     times  = hierarchy.start_frame + np.arange(hierarchy.frame_count)
     tangents = {
         "in_tangents":  cmds.keyTangent(query=True, g=True, inTangentType=True)[0],
         "out_tangents": cmds.keyTangent(query=True, g=True, outTangentType=True)[0],
     }
-    grain = np.array([_SOLVE_GRAIN if id(node) in solved else 0.0 for node in hierarchy])[:, None]
+    grain = np.array([_SOLVE_GRAIN if id(node) in solved else 0.0 for node in nodes])[:, None]
     rows  = []
     for channel in ClipData.FRAMED_CHANNELS:
         attr  = MAYA_ATTRIBUTE_MAP[channel]
         block = getattr(frames, channel.lstrip("_"))
         moved = ~(np.abs(block - block[0]) <= grain * (1.0 + np.abs(block[0])))
         for node, axis in np.argwhere(moved.any(axis=0)).tolist():
-            if only is not None and id(hierarchy[node]) not in only:
+            if only is not None and id(nodes[node]) not in only:
                 continue
             keys = AnimCurve(block[:, node, axis], times=times, **tangents)
-            rows.append((hierarchy[node], f"{attr}{'XYZ'[axis]}", keys))
-    for node in hierarchy:
+            rows.append((nodes[node], f"{attr}{'XYZ'[axis]}", keys))
+    for node in nodes:
         if only is not None and id(node) not in only:
             continue
         held = _held_scale(node, solved)
@@ -387,7 +405,7 @@ def _held_scale(node: Any, solved: dict) -> np.ndarray | None:
     return solved[id(parent)][1] if node.node_type == "joint" and node.segment_scale_compensate else None
 
 
-def _clip_inverse_scales(hierarchy: HierarchyData, solved: dict, only: set | None = None) -> None:
+def _clip_inverse_scales(hierarchy: ClipData, solved: dict, only: set | None = None) -> None:
     """Makes the joints of a ClipData evaluate what its world matrices hold (its nodes made):
     cgmath takes the parent's scale out of a joint whose segment scale compensate is on, on
     every frame, and Maya only out of a joint whose ``inverseScale`` holds it. A joint under
@@ -400,7 +418,7 @@ def _clip_inverse_scales(hierarchy: HierarchyData, solved: dict, only: set | Non
     `only` (the ids of the nodes `key_hierarchy` paired, on nodes it did not make) leaves out a
     joint that is not keyed or whose node has no ``inverseScale`` (it is no joint), and wires
     one only to a keyed parent whose node is its parent in Maya."""
-    for node in hierarchy:
+    for node in hierarchy.list:
         if node.node_type != "joint" or not node.segment_scale_compensate:
             continue
         if only is not None and id(node) not in only:
@@ -470,23 +488,24 @@ def _key_flag(method: str, flag: str, value: Any) -> bool:
     return bool(value)
 
 
-def _own_rows(hierarchy: HierarchyData, own: Any) -> list:
+def _own_rows(hierarchy: HierarchyData | ClipData, own: Any) -> list:
     """The nodes of `hierarchy` a node keys by uuid or by name: `own`, the node of the data
     that is the node itself, with the ones under it in the data, in the data's order; every
-    one when the data does not hold the node (`own` None: a group above the skeleton)."""
+    one when the data does not hold the node (`own` None: a group above the skeleton). Each
+    is the data's own node object (its ``.list``'s), `own` too."""
     if own is None:
-        return list(hierarchy)
-    below = {id(data) for data in own.get_branch()} | {id(own)}
-    return [data for data in hierarchy if id(data) in below]
+        return list(hierarchy.list)
+    below = {id(data) for data in own.get_branch().list} | {id(own)}
+    return [data for data in hierarchy.list if id(data) in below]
 
 
-def _pair_by_uuid(top: DAGNode, hierarchy: HierarchyData) -> tuple[list, list]:
+def _pair_by_uuid(top: DAGNode, hierarchy: HierarchyData | ClipData) -> tuple[list, list]:
     """``key_hierarchy(uuids=True)``: ``(pairs, missed)``, a ``(node data, Maya node)`` per
     expected node of `hierarchy` (`_own_rows`) whose uuid one node at or below `top` holds,
     and the others described."""
     long_top = type(top).get_long_name(top)
     held     = type(top)._raw_get_uuid(top).upper()
-    own      = next((data for data in hierarchy if data.uuid and str(data.uuid).upper() == held), None)
+    own      = next((data for data in hierarchy.list if data.uuid and str(data.uuid).upper() == held), None)
     pairs, missed = [], []
     for data in _own_rows(hierarchy, own):
         found = cmds.ls(str(data.uuid).upper(), long=True) if data.uuid else []
@@ -498,7 +517,7 @@ def _pair_by_uuid(top: DAGNode, hierarchy: HierarchyData) -> tuple[list, list]:
     return pairs, missed
 
 
-def _pair_by_name(top: DAGNode, hierarchy: HierarchyData) -> tuple[list, list]:
+def _pair_by_name(top: DAGNode, hierarchy: HierarchyData | ClipData) -> tuple[list, list]:
     """``key_hierarchy(index=False)``: ``(pairs, missed)``, a ``(node data, Maya node)`` per
     expected node of `hierarchy` (`_own_rows`: `top` is the one node of the data of its name,
     or none of them) whose name one node at or below `top` has, and the others described: no
@@ -507,7 +526,7 @@ def _pair_by_name(top: DAGNode, hierarchy: HierarchyData) -> tuple[list, list]:
     named    = {}
     for path in [long_top] + (cmds.listRelatives(long_top, allDescendents=True, type="transform", fullPath=True) or []):
         named.setdefault(path.rsplit("|", 1)[-1], []).append(path)
-    mine = [data for data in hierarchy if data.name == long_top.rsplit("|", 1)[-1]]
+    mine = [data for data in hierarchy.list if data.name == long_top.rsplit("|", 1)[-1]]
     rows = _own_rows(hierarchy, mine[0] if len(mine) == 1 else None)
     held = {}
     for data in rows:
@@ -1113,11 +1132,11 @@ class Transform(DAGNode):
     @_typed_creator
     def create_hierarchy(
         cls,
-        hierarchy:   HierarchyData,
-        parent:      Union[str, None] = None,
+        hierarchy:   HierarchyData    | ClipData,
+        parent:      Union[str, None]            = None,
         *,
-        world_space: bool             = False,
-        uuids:       bool | None      = None,
+        world_space: bool                        = False,
+        uuids:       bool             | None     = None,
     ) -> List:
         """Creates a hierarchy from a HierarchyData object, and keys a ClipData.
 
@@ -1176,12 +1195,15 @@ class Transform(DAGNode):
         changes gets keys: a column (x, y or z) of a node's scale, rotate,
         translate, rotate axis or joint orient with any difference across the
         frames gets one curve, with a key on every frame; a flat one is a plain
-        value, with no curve, so a one-frame clip makes no curve. Frame for
-        frame: key k lands on frame ``start_frame + k`` whatever the scene's
-        rate; a clip at another fps logs one warning naming both, keys or none,
-        and the scene's time unit and playback range are not touched. A clip
-        defines no tangents: the keys take Maya's global default (``keyTangent
-        -query -global``). With `parent` and ``world_space=True`` the roots are
+        value, with no curve, so a one-frame clip makes no curve. A channel
+        with no key takes its value on the clip's first frame; a node's
+        visibility and its keyable user attributes get no key, and take the
+        first frame's too. Frame for frame: key k lands on frame
+        ``start_frame + k`` whatever the scene's rate; a clip at another fps
+        logs one warning naming both, keys or none, and the scene's time unit
+        and playback range are not touched. A clip defines no tangents: the
+        keys take Maya's global default (``keyTangent -query -global``).
+        With `parent` and ``world_space=True`` the roots are
         solved on every frame, against the parent's matrix as it is now, so
         each frame's world matrix is the clip's, and their solved channels are
         keyed where they change; a parent with shear, and a non-uniformly
@@ -1202,12 +1224,17 @@ class Transform(DAGNode):
         where cgmath's ``world_matrix`` says when that transform is scaled). A
         plain HierarchyData wires nothing.
 
-        To build a clip without keys, pass a plain HierarchyData:
-        ``clip.rest_pose``, when the clip has one::
+        To build a clip without keys, pass the pose of one frame, a plain
+        HierarchyData: ``clip.frames[i]``, or ``clip.at(n)`` by frame number::
 
             clip = ClipData.load_fbx("walk.fbx")
             walk = Transform.create_hierarchy(clip)            # nodes and keys
-            pose = Transform.create_hierarchy(clip.rest_pose)  # nodes only
+            pose = Transform.create_hierarchy(clip.frames[0])  # nodes only
+
+        A part of a clip is a clip: ``clip.frames[10:20]`` (those frames, on
+        their own frame numbers), ``clip[["spine", "arm"]]`` or
+        ``clip.match("L_*")`` (those nodes; one whose parent is left out is a
+        root) builds and keys as a whole clip does.
 
         Inside ``with container()`` every node the call made joins the scope,
         a clip's curves too (``container=False`` leaves them all unregistered);
@@ -1230,11 +1257,11 @@ class Transform(DAGNode):
 
     def key_hierarchy(
         self,
-        clip:   HierarchyData,
+        clip:   ClipData | HierarchyData,
         *,
-        uuids:  bool | None   = None,
-        index:  bool          = True,
-        strict: bool          = True,
+        uuids:  bool     | None          = None,
+        index:  bool                     = True,
+        strict: bool                     = True,
     ) -> List:
         """Keys a ClipData onto this node and the nodes below it, the inverse of
         `create_hierarchy` building them. Called on a node, as
@@ -1251,7 +1278,11 @@ class Transform(DAGNode):
                 rows: a column that changes gets a curve with a key on every
                 frame, ``start_frame + k``; a flat one a plain value, the
                 tangents Maya's global default), or a plain HierarchyData, which
-                poses the nodes, no key. It is left as it was.
+                poses the nodes, no key (the pose of one frame of a clip is
+                one: ``clip.frames[i]``, or ``clip.at(n)`` by frame number). A
+                channel of a clip with no key takes its value on the clip's
+                first frame, and so does a node's visibility; no user
+                attribute is written. The data is left as it was.
             uuids: By keyword only, a bool or None. None (the default): as
                 ``with rig.uuids():`` or ``rig.set_options(uuids=)`` says,
                 False unless one does. False: the nodes are
@@ -1299,8 +1330,8 @@ class Transform(DAGNode):
         node's other axes and channels are set and keyed. Whatever `strict`
         is, a NaN in a column that is keyed is a ValueError and a missing
         undo plug-in a RuntimeError (`create_hierarchy`'s checks), a flag
-        that is no bool, a path and anything that is no HierarchyData a
-        TypeError, all before any edit.
+        that is no bool, a path and anything that is no ClipData and no
+        HierarchyData a TypeError, all before any edit.
 
         A joint that compensates takes its parent's scale
         (``parent.scale >> joint.inverseScale``, left as it is when wired)
@@ -1314,18 +1345,20 @@ class Transform(DAGNode):
         node's (``rig.Joint.key_hierarchy`` on a joint); the selection is
         left as it was.
         """
-        from cgmath.hierarchy import HierarchyData
+        from cgmath.hierarchy import ClipData, HierarchyData
         from rig._internal.list import List as _List
 
         method = f"{type(self).__name__}.key_hierarchy"
         if isinstance(clip, (str, os.PathLike)):
             raise TypeError(f"{method}() takes the data, not a file: ClipData.load(...) reads one")
-        if not isinstance(clip, HierarchyData):
+        _files.require_pinned_cgmath(method)
+        if not isinstance(clip, (HierarchyData, ClipData)):  # a clip is no HierarchyData
             raise TypeError(f"{method}() takes a ClipData or a HierarchyData, not a {type(clip).__name__}")
         uuids  = _key_flag(method, "uuids",  _files.scoped_uuids() if uuids is None else uuids)
         index  = _key_flag(method, "index",  index)
         strict = _key_flag(method, "strict", strict)
 
+        # the pairs hold the copy's own node objects (``.list``): their ids say which are keyed
         hierarchy = clip.copy()
         missed    = []
         notes     = []
@@ -1335,7 +1368,7 @@ class Transform(DAGNode):
             sought = "holding their uuid"
         elif index:
             nodes = _walk_hierarchy(self)[0]
-            pairs = list(zip(hierarchy, nodes))
+            pairs = list(zip(hierarchy.list, nodes))
             if len(nodes) != len(hierarchy):
                 notes.append(
                     f"{method}: the data holds {len(hierarchy)} node(s), {self} and what is below it "
@@ -1369,7 +1402,7 @@ class Transform(DAGNode):
         return _List([node for _, node in pairs])
 
     @staticmethod
-    def _key_found(hierarchy: HierarchyData, plan: tuple | None = None, keyed: set | None = None) -> None:
+    def _key_found(hierarchy: HierarchyData | ClipData, plan: tuple | None = None, keyed: set | None = None) -> None:
         """[Internal] `key_hierarchy`'s edits, its nodes found: `hierarchy` a copy whose nodes'
         names are the Maya nodes they key (``rig.scene.create_scene`` gives the nodes it made,
         every one keyed). `plan` is `_key_plan`'s, made here when not given: the keys and the
@@ -1434,16 +1467,26 @@ class Transform(DAGNode):
         ``name=`` takes the flattened scope's prefix, the data's name is kept
         (as ``Mesh.create`` keeps its data's and ``create_hierarchy`` its
         hierarchy's names)."""
-        from cgmath.hierarchy import SUPPORTED_NODE_TYPES, TransformData
+        from cgmath.hierarchy import SUPPORTED_NODE_TYPES, ClipData, HierarchyData, TransformData
 
         call = f"{cls.__name__}.create()"
         named = _positional_name(cls, inputs, built_from="TransformData")
         if named is not None:
             raise named
         if len(inputs) != 1 or not isinstance(inputs[0], TransformData):
+            # one node of a clip (``clip["hips"]``) is that node on every frame, no TransformData:
+            # it is cgmath's, neither a clip nor a pose, and a view whose owner is the clip
+            hint = ""
+            one  = inputs[0] if len(inputs) == 1 else None
+            mine = type(one).__module__.startswith("cgmath.") and not isinstance(one, (ClipData, HierarchyData))
+            if mine and isinstance(getattr(one, "owner", None), ClipData):
+                hint = (
+                    f": a node of a clip holds every frame; give it on one frame, "
+                    f"clip.frames[i][{one.name!r}], or clip.at(n)[{one.name!r}] by frame number"
+                )
             raise TypeError(
                 f"{call} takes name= and parent= as keywords, or one TransformData "
-                f"(got {_got(inputs)})"
+                f"(got {_got(inputs)}){hint}"
             )
         data  = inputs[0]
         uuids = _files.uuid_flag(call, uuids)
@@ -1509,11 +1552,11 @@ class Transform(DAGNode):
     @_typed_creator
     def _load_built(
         cls,
-        hierarchy:   HierarchyData,
-        parent:      Union[str, None] = None,
+        hierarchy:   HierarchyData | ClipData,
+        parent:      Union[str, None]         = None,
         *,
-        world_space: bool             = False,
-        uuids:       bool             = False,
+        world_space: bool                     = False,
+        uuids:       bool                     = False,
     ) -> list:
         """[Internal] `load_hierarchy`'s create, a typed creator (so it joins the
         container scope as `create_hierarchy` does): the new nodes, typed,
@@ -1523,19 +1566,27 @@ class Transform(DAGNode):
     @classmethod
     def _build_hierarchy(
         cls,
-        hierarchy:   HierarchyData,
+        hierarchy:   HierarchyData | ClipData,
         parent:      Union[str, None],
         world_space: bool,
         select:      bool,
-        uuids:       bool             = False,
+        uuids:       bool                     = False,
     ) -> list[str]:
         """[Internal] The body of `create_hierarchy` and `load_hierarchy`: makes
         the nodes of `hierarchy` (a ClipData keyed, `_clip_rows`) and returns their
         names, parents first. With `select` they end selected; without, the
         selection is put back as it was before (in its order). With `uuids`
         every node takes its data's uuid (`_files.adopt_uuid`), the uuids
-        checked free before any node is made (`_files.free_uuids`)."""
-        from cgmath.hierarchy import SUPPORTED_NODE_TYPES, ClipData, HierarchyData, generate_uuid
+        checked free before any node is made (`_files.free_uuids`).
+
+        A node is told by its own object, the copy's ``.list``'s: a ClipData
+        hands out a new object per node each time it is looped over or
+        indexed, and a HierarchyData loops over its ``.list``, so the one
+        spelling serves both. A clip's plain values are its first frame's
+        (`_frame_values`)."""
+        method = f"{cls.__name__}.{'create_hierarchy' if select else 'load_hierarchy'}"
+        _files.require_pinned_cgmath(method)
+        from cgmath.hierarchy import SUPPORTED_NODE_TYPES, ClipData, generate_uuid
 
         before = None if select else (cmds.ls(orderedSelection=True, long=True) or [])
 
@@ -1548,7 +1599,7 @@ class Transform(DAGNode):
         # parents come first, same as the creation loop below expects.
         skipped = {}
         dropped = set()
-        for node in hierarchy:
+        for node in hierarchy.list:
             if node.node_type in SUPPORTED_NODE_TYPES:
                 if id(node.get_parent()) not in dropped:
                     continue
@@ -1562,12 +1613,12 @@ class Transform(DAGNode):
 
         # the data's uuids, free before any node is made
         if uuids:
-            method = f"{cls.__name__}.{'create_hierarchy' if select else 'load_hierarchy'}"
-            _files.free_uuids(method, ((f"the node {node.name!r}", node.uuid) for node in hierarchy), _RENEW)
+            _files.free_uuids(method, ((f"the node {node.name!r}", node.uuid) for node in hierarchy.list), _RENEW)
 
         # if a parent is specified, make set the transforms relative to it
-        under  = {}  # id of a root -> the long name of the node outside the data it goes under
-        solved = {}  # id of a root solved under it -> its world scale, and the root's `_held_scale` or None
+        under  = {}    # id of a root -> the long name of the node outside the data it goes under
+        solved = {}    # id of a root solved under it -> its world scale, and the root's `_held_scale` or None
+        plain  = None  # each node's plain values and user attributes (`_frame_values`), read once the roots are solved
         if parent is not None:
             if parent in hierarchy:
                 for node in hierarchy.get_roots():
@@ -1591,23 +1642,30 @@ class Transform(DAGNode):
                 if isinstance(hierarchy, ClipData) and world_space and hierarchy.frame_count:
                     # each node's scale, before a solve writes it. This read also lines the new node
                     # up in the blocks: a solve that did would take its scale from before the line-up
-                    scales = dict(zip(map(id, hierarchy), np.array(hierarchy.frames.scale).swapaxes(0, 1)))
-                for node in hierarchy.get_roots()[1:]:
-                    node.set_parent(obj, world_space=world_space)
+                    scales = dict(zip(map(id, hierarchy.list), np.array(hierarchy.frames.scale).swapaxes(0, 1)))
+                # the solve is called on the data (a clip's root there is the node on every
+                # frame); the ids kept are of the root's own object
+                roots = hierarchy.get_roots()
+                for at, node in enumerate(roots.list[1:], 1):
+                    roots[at].set_parent(obj, world_space=world_space)
                     under[id(node)] = type(outside).get_long_name(outside)
                     if world_space:
                         # a root keeps its scale when it compensates or the parent has none to
                         # give it; any other takes the parent's in, and its joints hold its own
                         kept             = node.segment_scale_compensate or np.allclose(obj.scale, 1.0)
                         solved[id(node)] = (np.array(obj.scale, dtype=float), None if kept else scales.get(id(node)))
+                # the values as solved, read while the stand-in is in the data (it leads the list)
+                plain = _frame_values(hierarchy)[1:]
                 hierarchy.list.pop(0)
+        if plain is None:
+            plain = _frame_values(hierarchy)
 
         # a clip's keys, of the channels as solved: checked before any node is made
         rows = _clip_rows(hierarchy, solved)
 
         # create the hierarchy at identity before setting any attributes,
         # this is to avoid any default attrs being set by Maya.
-        for node in hierarchy:
+        for node in hierarchy.list:
             # use the parent's long name, the new node is created in world
             # and may shadow the parent's short name.
             parent = node.get_parent()
@@ -1630,24 +1688,23 @@ class Transform(DAGNode):
             # in case of scene duplicate during parenting.
             node.name = obj
 
-        # set attributes after hierarchy creation.
-        for i, node in enumerate(hierarchy):
-            _set_values(node.name, hierarchy[i])
+        # set attributes after hierarchy creation (what `_set_values` sets: a clip's are
+        # its first frame's, a channel with keys takes them below).
+        for node, (values, _) in zip(hierarchy.list, plain):
+            node.name.set_attrs(skip_missing=True, **values)
 
         # add user defined attrs once every transform is set,
         # so a bad attr can never leave the hierarchy at identity.
-        for i, node in enumerate(hierarchy):
-            node  = node.name
-            specs = hierarchy[i].user_defined_attributes
+        for node, (_, specs) in zip(hierarchy.list, plain):
             if specs:
-                cls._create_user_attrs(node, specs)
+                cls._create_user_attrs(node.name, specs)
 
         if isinstance(hierarchy, ClipData) and hierarchy.frame_count:
             _clip_inverse_scales(hierarchy, solved)
         _key_rows(rows)
 
         # return the created nodes
-        created = [str(x.name) for x in hierarchy]
+        created = [str(x.name) for x in hierarchy.list]
         if select:
             _cmds_edit.select(created)
         else:
